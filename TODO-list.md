@@ -35,9 +35,38 @@
 | Agent运行器 | 7 | 0 | 0 | 7 | 0 | 0% |
 | SDK扩展能力 | 19 | 0 | 0 | 19 | 0 | 0% |
 | 其他系统能力 | 52 | 7 | 0 | 44 | 1 | 13% |
+| **Star基类扩展** | **8** | **1** | **2** | **5** | **0** | **25%** |
+| **命令参数类型** | **8** | **1** | **0** | **7** | **0** | **12%** |
+| **过滤器组合** | **5** | **0** | **0** | **5** | **0** | **0%** |
+| **StarTools工具集** | **10** | **0** | **0** | **10** | **0** | **0%** |
+| **会话级管理** | **6** | **0** | **0** | **6** | **0** | **0%** |
+| **命令组系统** | **9** | **0** | **0** | **9** | **0** | **0%** |
+| **消息类型过滤** | **7** | **0** | **0** | **7** | **0** | **0%** |
+| **PluginKVStoreMixin** | **5** | **0** | **0** | **5** | **0** | **0%** |
+| **StarMetadata字段** | **2** | **0** | **0** | **2** | **0** | **0%** |
 | **总计** | **271** | **40** | **9** | **209** | **18** | **16%** |
 
 > 注：覆盖率 = `(已实现 + 部分实现 × 0.5) / 总计`，⚠️ 表示SDK已定义但Core端未实现
+
+---
+
+## 更新记录
+
+### 2025-03-15 更新
+- 新增 Star基类扩展方法对比（P2.5）
+- 新增 命令参数类型系统对比（P2.6）
+- 新增 过滤器组合与自定义对比（P2.7）
+- 新增 事件系统细节对比（P2.8）
+- 新增 平台适配器类型系统（P2.9）
+- 新增 StarTools工具集对比（P2.10）
+- 新增 会话级插件管理对比（P2.11）
+- 新增 命令组系统对比（P2.12）
+- 新增 消息类型过滤对比（P2.13）
+- 新增 PluginKVStoreMixin对比（P2.14）
+- 新增 StarMetadata完整字段对比（P2.15）
+- 更新覆盖率总览表格
+
+---
 
 ---
 
@@ -200,17 +229,50 @@
 | --- | --- | --- |
 | Plain (文本) | ✅ | 已支持 |
 | Image (图片) | ✅ | 已支持 |
-| At (@某人) | ❌ | @提及 |
-| AtAll (@全体) | ❌ | @全体成员 |
-| Reply (引用) | ❌ | 引用回复 |
-| Record (语音) | ❌ | 语音消息 |
-| Video (视频) | ❌ | 视频消息 |
-| File (文件) | ❌ | 文件附件 |
-| Face (表情) | ❌ | QQ 表情 |
-| Forward (转发) | ❌ | 合并转发 |
-| Poke (戳一戳) | ❌ | 戳一戳动作 |
-| Node (转发节点) | ❌ | 合并转发节点 |
-| Json (JSON) | ❌ | JSON 消息 |
+| **At (@某人)** | ❌ | @提及 |
+| **AtAll (@全体)** | ❌ | @全体成员 |
+| **Reply (引用)** | ❌ | 引用回复 |
+| **Record (语音)** | ❌ | 语音消息 |
+| **Video (视频)** | ❌ | 视频消息 |
+| **File (文件)** | ❌ | 文件附件 |
+| **Face (表情)** | ❌ | QQ 表情 |
+| **Forward (转发)** | ❌ | 合并转发 |
+| **Poke (戳一戳)** | ❌ | 戳一戳动作 |
+| **Node (转发节点)** | ❌ | 合并转发节点 |
+| **Nodes (多节点)** | ❌ | 多个转发节点 |
+| **Json (JSON)** | ❌ | JSON 消息 |
+| **RPS (猜拳)** | ❌ | 石头剪刀布 |
+| **Dice (骰子)** | ❌ | 骰子消息 |
+| **Shake (窗口抖动)** | ❌ | 窗口抖动 |
+| **Share (分享)** | ❌ | 链接分享卡片 |
+| **Contact (联系人)** | ❌ | 联系人推荐 |
+| **Location (位置)** | ❌ | 地理位置 |
+| **Music (音乐)** | ❌ | 音乐分享 |
+| **WechatEmoji (微信表情)** | ❌ | 微信表情包 |
+
+### 消息组件方法对比
+
+| 方法/功能 | 旧系统状态 | 说明 |
+| --- | --- | --- |
+| `Image.fromURL()` | ✅ | 从URL创建图片 |
+| `Image.fromFileSystem()` | ✅ | 从本地文件创建图片 |
+| `Image.fromBase64()` | ✅ | 从Base64创建图片 |
+| `Image.fromBytes()` | ✅ | 从字节创建图片 |
+| `Image.convert_to_file_path()` | ❌ | 转换为本地文件路径 |
+| `Image.convert_to_base64()` | ❌ | 转换为Base64编码 |
+| `Image.register_to_file_service()` | ❌ | 注册到文件服务 |
+| `Record.fromFileSystem()` | ❌ | 从文件系统创建语音 |
+| `Record.fromURL()` | ❌ | 从URL创建语音 |
+| `Record.convert_to_file_path()` | ❌ | 转换为本地文件路径 |
+| `Record.register_to_file_service()` | ❌ | 注册到文件服务 |
+| `Video.fromFileSystem()` | ❌ | 从文件系统创建视频 |
+| `Video.fromURL()` | ❌ | 从URL创建视频 |
+| `Video.convert_to_file_path()` | ❌ | 转换为本地文件路径 |
+| `File.get_file()` | ❌ | 异步获取文件 |
+| `File.register_to_file_service()` | ❌ | 注册到文件服务 |
+| `Node` / `Nodes` | ❌ | 合并转发消息构造 |
+| `toDict()` | ✅ | 同步转换为字典 |
+| `to_dict()` | ✅ | 异步转换为字典 |
 
 ---
 
@@ -441,6 +503,161 @@
 9. 知识库管理 API
 10. Platform 统计和状态
 
+### P2.5 - Star基类扩展方法（旧系统Star类特有）
+
+| 方法 | 状态 | 说明 | 建议实现 |
+| --- | --- | --- | --- |
+| `Star.text_to_image(text)` | ❌ | 文本转图片渲染 | 通过Capability暴露给SDK |
+| `Star.html_render(tmpl, data)` | ❌ | HTML模板渲染 | 通过Capability暴露给SDK |
+| `Star.initialize()` | 🔄 | 插件激活时调用（旧系统生命周期） | SDK使用`on_start()`替代 |
+| `Star.terminate()` | 🔄 | 插件禁用时调用（旧系统生命周期） | SDK使用`on_stop()`替代 |
+| `Star.__init_subclass__()` | ✅ | 自动注册插件到star_map | SDK已实现类似的`__init_subclass__` |
+| `Star.context` | ❌ | 插件上下文引用 | SDK通过handler参数传递ctx |
+| `Star._get_context_config()` | ❌ | 获取上下文配置 | SDK通过`ctx.metadata.get_plugin_config()` |
+
+### P2.6 - 命令参数类型系统（旧系统CommandFilter特有）
+
+| 参数类型 | 状态 | 说明 | 旧系统实现位置 |
+| --- | --- | --- | --- |
+| `str` 自动解析 | ✅ | 字符串参数 | `CommandFilter.validate_and_convert_params()` |
+| `int` 自动转换 | ❌ | 整数参数自动转换 | `CommandFilter.validate_and_convert_params()` |
+| `float` 自动转换 | ❌ | 浮点数参数自动转换 | `CommandFilter.validate_and_convert_params()` |
+| `bool` 自动转换 | ❌ | 布尔参数自动转换（支持true/false/yes/no/1/0） | `CommandFilter.validate_and_convert_params()` |
+| `Optional[T]` 支持 | ❌ | 可选类型参数 | `CommandFilter.validate_and_convert_params()` |
+| `GreedyStr` 贪婪匹配 | ❌ | 捕获剩余所有文本作为单个参数 | `CommandFilter.GreedyStr` |
+| `unwrap_optional()` | ❌ | 解析Optional类型注解的工具函数 | `command.py`中的工具函数 |
+| `print_types()` | ❌ | 打印命令参数类型信息用于帮助 | `CommandFilter.print_types()` |
+
+### P2.7 - 过滤器组合与自定义（旧系统Filter系统）
+
+| 功能 | 状态 | 说明 | 旧系统实现 |
+| --- | --- | --- | --- |
+| `CustomFilter` 基类 | ❌ | 自定义过滤器抽象基类 | `custom_filter.py` |
+| `CustomFilter.__and__()` | ❌ | 过滤器与运算（&） | `CustomFilterMeta.__and__()` |
+| `CustomFilter.__or__()` | ❌ | 过滤器或运算（\|） | `CustomFilterMeta.__or__()` |
+| `CustomFilterAnd` | ❌ | 与运算过滤器组合 | `custom_filter.py` |
+| `CustomFilterOr` | ❌ | 或运算过滤器组合 | `custom_filter.py` |
+| `raise_error` 参数 | ❌ | 权限不足时是否抛出错误 | `CustomFilter.__init__()` |
+
+### P2.8 - 事件系统细节对比
+
+| 旧系统特性 | 新SDK状态 | 说明 |
+| --- | --- | --- |
+| `EventType` 枚举（14种事件） | 🔄 | SDK有事件触发器但Core端未实现完整事件系统 |
+| `OnWaitingLLMRequestEvent` | ❌ | 等待调用LLM前的通知事件 |
+| `OnCallingFuncToolEvent` | ❌ | 调用函数工具时的事件 |
+| `OnUsingLLMToolEvent` | ❌ | 使用LLM工具时的事件 |
+| `OnLLMToolRespondEvent` | ❌ | LLM工具响应后的事件 |
+| `StarHandlerRegistry` | ❌ | Handler注册表（全局单例） |
+| Handler优先级排序 | ❌ | 按`priority`字段排序执行 |
+| Handler白名单过滤 | ❌ | 按插件名称过滤Handler |
+
+### P2.9 - 平台适配器类型系统
+
+| 平台类型 | 状态 | 说明 |
+| --- | --- | --- |
+| `PlatformAdapterType` 枚举 | ❌ | 支持15+种平台类型 |
+| `AIOCQHTTP` | ❌ | QQ机器人协议 |
+| `QQOFFICIAL` | ❌ | QQ官方API |
+| `TELEGRAM` | ❌ | Telegram |
+| `WECOM`/`WECOM_AI_BOT` | ❌ | 企业微信 |
+| `LARK` | ❌ | 飞书 |
+| `DINGTALK` | ❌ | 钉钉 |
+| `DISCORD` | ❌ | Discord |
+| `SLACK` | ❌ | Slack |
+| `KOOK` | ❌ | KOOK |
+| `VOCECHAT` | ❌ | VoceChat |
+| `WEIXIN_OFFICIAL_ACCOUNT` | ❌ | 微信公众号 |
+| `SATORI` | ❌ | Satori协议 |
+| `MISSKEY` | ❌ | Misskey |
+| `LINE` | ❌ | LINE |
+| `ADAPTER_NAME_2_TYPE` 映射 | ❌ | 平台名称到类型的映射 |
+
+### P2.10 - StarTools 工具集（旧系统特有，新SDK未实现）
+
+| 方法 | 状态 | 说明 | 使用场景 |
+| --- | --- | --- | --- |
+| `StarTools.send_message(session, chain)` | ❌ | 根据session主动发送消息 | 定时任务、后台通知 |
+| `StarTools.send_message_by_id(type, id, chain, platform)` | ❌ | 根据ID直接发送消息 | 跨会话发送 |
+| `StarTools.create_message(...)` | ❌ | 创建AstrBotMessage对象 | 构造人工消息事件 |
+| `StarTools.create_event(abm, platform)` | ❌ | 创建并提交事件到平台 | 触发处理流程 |
+| `StarTools.activate_llm_tool(name)` | ❌ | 激活LLM工具 | 动态控制工具 |
+| `StarTools.deactivate_llm_tool(name)` | ❌ | 停用LLM工具 | 动态控制工具 |
+| `StarTools.register_llm_tool(...)` | ❌ | 注册LLM工具 | 动态注册 |
+| `StarTools.unregister_llm_tool(name)` | ❌ | 注销LLM工具 | 动态注销 |
+| `StarTools.get_data_dir(plugin_name?)` | ❌ | 获取插件数据目录 | 文件存储 |
+| `StarTools._context` | ❌ | 类级别的Context引用 | 工具方法访问Core |
+
+### P2.11 - 会话级插件管理（SessionPluginManager）
+
+| 功能 | 状态 | 说明 |
+| --- | --- | --- |
+| `SessionPluginManager` 类 | ❌ | 会话级插件管理器 |
+| `is_plugin_enabled_for_session(session_id, plugin_name)` | ❌ | 检查插件在会话中是否启用 |
+| `filter_handlers_by_session(event, handlers)` | ❌ | 根据会话配置过滤处理器 |
+| `session_plugin_config` 配置 | ❌ | 会话插件配置存储 |
+| `enabled_plugins` 列表 | ❌ | 会话启用的插件列表 |
+| `disabled_plugins` 列表 | ❌ | 会话禁用的插件列表 |
+
+### P2.12 - 命令组系统（CommandGroupFilter）
+
+| 功能 | 状态 | 说明 | 示例 |
+| --- | --- | --- | --- |
+| `CommandGroupFilter` 类 | ❌ | 命令组过滤器 | `!group subcmd` |
+| `group_name` 属性 | ❌ | 命令组名称 | - |
+| `sub_command_filters` 列表 | ❌ | 子命令过滤器列表 | - |
+| `parent_group` 引用 | ❌ | 父命令组引用 | 支持嵌套 |
+| `add_sub_command_filter()` | ❌ | 添加子命令 | - |
+| `get_complete_command_names()` | ❌ | 获取完整命令名 | `group subcmd` |
+| `print_cmd_tree()` | ❌ | 打印命令树 | 帮助文档 |
+| `startswith()` | ❌ | 消息是否以命令组开头 | - |
+| `equals()` | ❌ | 消息是否完全匹配命令组 | - |
+
+### P2.13 - 消息类型过滤（EventMessageType）
+
+| 类型 | 状态 | 说明 |
+| --- | --- | --- |
+| `EventMessageType` 枚举 | ❌ | 消息类型枚举 |
+| `GROUP_MESSAGE` | ❌ | 群聊消息 |
+| `PRIVATE_MESSAGE` | ❌ | 私聊消息 |
+| `OTHER_MESSAGE` | ❌ | 其他消息 |
+| `ALL` | ❌ | 所有消息类型 |
+| `EventMessageTypeFilter` | ❌ | 消息类型过滤器 |
+| `MESSAGE_TYPE_2_EVENT_MESSAGE_TYPE` 映射 | ❌ | 类型转换映射 |
+
+### P2.14 - PluginKVStoreMixin（插件KV存储Mixin）
+
+| 方法 | 状态 | 说明 | 替代方案 |
+| --- | --- | --- | --- |
+| `PluginKVStoreMixin` 类 | ❌ | 为插件提供KV存储的Mixin | SDK的`ctx.db` |
+| `put_kv_data(key, value)` | ❌ | 存储键值对 | `ctx.db.set()` |
+| `get_kv_data(key, default)` | ❌ | 获取键值对 | `ctx.db.get()` |
+| `delete_kv_data(key)` | ❌ | 删除键值对 | `ctx.db.delete()` |
+| `plugin_id` 属性 | ❌ | 插件ID标识 | SDK自动处理 |
+
+### P2.15 - StarMetadata 完整字段对比
+
+| 字段 | 状态 | 说明 |
+| --- | --- | --- |
+| `name` | ✅ | 插件名称 |
+| `author` | ✅ | 插件作者 |
+| `desc` | ✅ | 插件描述 |
+| `version` | ✅ | 插件版本 |
+| `repo` | ✅ | 仓库地址 |
+| `star_cls_type` | ✅ | 插件类类型 |
+| `module_path` | ✅ | 模块路径 |
+| `star_cls` | ✅ | 插件类实例 |
+| `module` | ✅ | 模块对象 |
+| `root_dir_name` | ✅ | 根目录名称 |
+| `reserved` | ✅ | 是否保留插件 |
+| `activated` | ✅ | 是否激活 |
+| `config` | ✅ | 插件配置 |
+| `star_handler_full_names` | ✅ | Handler全名列表 |
+| `display_name` | ✅ | 显示名称 |
+| `logo_path` | ✅ | Logo路径 |
+| `support_platforms` | ❌ | 支持的平台列表 |
+| `astrbot_version` | ❌ | 要求的AstrBot版本范围 |
+
 ### P3 - SDK 架构扩展（可选增强）
 1. **CancelToken 扩展** - 取消原因、回调注册、组合取消
 2. **provide_capability 扩展** - 版本控制、依赖声明、中间件、速率限制
@@ -486,8 +703,8 @@
 2. `CustomFilter` - 自定义过滤器（支持与/或组合）
 3. `CommandGroupFilter` - 命令组（子命令路由）
 4. 命令参数自动类型解析（int/float/bool/GreedyStr）
-5. `PlatformAdapterTypeFilter` - 平台适配器类型过滤
-6. `EventMessageTypeFilter` - 消息类型过滤
+5. `PlatformAdapterTypeFilter` - 平台适配器类型过滤（15+平台）
+6. `EventMessageTypeFilter` - 消息类型过滤（GROUP/PRIVATE/OTHER）
 7. `PersonaManager` - 人格管理 API
 8. `ConversationManager` - 对话管理 API
 9. `KnowledgeBaseManager` - 知识库管理 API
@@ -498,6 +715,11 @@
 14. `Platform` 实体类（状态、统计、Webhook）
 15. `MessageSession` - 消息会话对象
 16. TTS/STT/Embedding/Rerank Provider 支持
+17. `StarTools` - 插件开发工具集（send_message_by_id, create_event等）
+18. `SessionPluginManager` - 会话级插件管理
+19. `PluginKVStoreMixin` - 插件KV存储Mixin
+20. `CommandFilter.print_types()` - 命令参数类型打印
+21. `Star.text_to_image()` / `Star.html_render()` - 渲染工具方法
 
 ---
 
