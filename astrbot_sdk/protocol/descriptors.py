@@ -1,0 +1,715 @@
+"""v4 协议描述符模型。
+
+`protocol` 是 v4 新引入的协议层抽象，不对应旧树(圣诞树)中的一个同名目录。这里
+定义的是跨进程握手和调度时使用的声明式元数据，而不是运行时的具体处理器/
+能力实现。
+"""
+
+from __future__ import annotations
+
+from typing import Annotated, Any, Literal
+
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+
+JSONSchema = dict[str, Any]
+RESERVED_CAPABILITY_NAMESPACES = ("handler", "system", "internal")
+RESERVED_CAPABILITY_PREFIXES = tuple(
+    f"{namespace}." for namespace in RESERVED_CAPABILITY_NAMESPACES
+)
+
+
+def _object_schema(
+    *,
+    required: tuple[str, ...] = (),
+    **properties: Any,
+) -> JSONSchema:
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(required),
+    }
+
+
+def _nullable(schema: JSONSchema) -> JSONSchema:
+    return {"anyOf": [schema, {"type": "null"}]}
+
+
+_OPTIONAL_CHAT_PROPERTIES: dict[str, Any] = {
+    "system": {"type": "string"},
+    "history": {"type": "array", "items": {"type": "object"}},
+    "model": {"type": "string"},
+    "temperature": {"type": "number"},
+    "image_urls": {"type": "array", "items": {"type": "string"}},
+    "tools": {"type": "array"},
+    "max_steps": {"type": "integer"},
+}
+
+LLM_CHAT_INPUT_SCHEMA = _object_schema(
+    required=("prompt",),
+    prompt={"type": "string"},
+    **_OPTIONAL_CHAT_PROPERTIES,
+)
+LLM_CHAT_OUTPUT_SCHEMA = _object_schema(
+    required=("text",),
+    text={"type": "string"},
+)
+LLM_CHAT_RAW_INPUT_SCHEMA = _object_schema(
+    required=("prompt",),
+    prompt={"type": "string"},
+    **_OPTIONAL_CHAT_PROPERTIES,
+)
+LLM_CHAT_RAW_OUTPUT_SCHEMA = _object_schema(
+    required=("text",),
+    text={"type": "string"},
+    usage=_nullable({"type": "object"}),
+    finish_reason=_nullable({"type": "string"}),
+    tool_calls={"type": "array", "items": {"type": "object"}},
+)
+LLM_STREAM_CHAT_INPUT_SCHEMA = _object_schema(
+    required=("prompt",),
+    prompt={"type": "string"},
+    **_OPTIONAL_CHAT_PROPERTIES,
+)
+LLM_STREAM_CHAT_OUTPUT_SCHEMA = _object_schema(
+    required=("text",),
+    text={"type": "string"},
+)
+MEMORY_SEARCH_INPUT_SCHEMA = _object_schema(
+    required=("query",),
+    query={"type": "string"},
+)
+MEMORY_SEARCH_OUTPUT_SCHEMA = _object_schema(
+    required=("items",),
+    items={"type": "array", "items": {"type": "object"}},
+)
+MEMORY_SAVE_INPUT_SCHEMA = _object_schema(
+    required=("key", "value"),
+    key={"type": "string"},
+    value={"type": "object"},
+)
+MEMORY_SAVE_OUTPUT_SCHEMA = _object_schema()
+MEMORY_GET_INPUT_SCHEMA = _object_schema(
+    required=("key",),
+    key={"type": "string"},
+)
+MEMORY_GET_OUTPUT_SCHEMA = _object_schema(
+    required=("value",),
+    value=_nullable({"type": "object"}),
+)
+MEMORY_DELETE_INPUT_SCHEMA = _object_schema(
+    required=("key",),
+    key={"type": "string"},
+)
+MEMORY_DELETE_OUTPUT_SCHEMA = _object_schema()
+MEMORY_SAVE_WITH_TTL_INPUT_SCHEMA = _object_schema(
+    required=("key", "value", "ttl_seconds"),
+    key={"type": "string"},
+    value={"type": "object"},
+    ttl_seconds={"type": "integer", "minimum": 1},
+)
+MEMORY_SAVE_WITH_TTL_OUTPUT_SCHEMA = _object_schema()
+MEMORY_GET_MANY_INPUT_SCHEMA = _object_schema(
+    required=("keys",),
+    keys={"type": "array", "items": {"type": "string"}},
+)
+MEMORY_GET_MANY_OUTPUT_SCHEMA = _object_schema(
+    required=("items",),
+    items={
+        "type": "array",
+        "items": _object_schema(
+            required=("key", "value"),
+            key={"type": "string"},
+            value=_nullable({"type": "object"}),
+        ),
+    },
+)
+MEMORY_DELETE_MANY_INPUT_SCHEMA = _object_schema(
+    required=("keys",),
+    keys={"type": "array", "items": {"type": "string"}},
+)
+MEMORY_DELETE_MANY_OUTPUT_SCHEMA = _object_schema(
+    required=("deleted_count",),
+    deleted_count={"type": "integer"},
+)
+MEMORY_STATS_INPUT_SCHEMA = _object_schema()
+MEMORY_STATS_OUTPUT_SCHEMA = _object_schema(
+    total_items={"type": "integer"},
+    total_bytes=_nullable({"type": "integer"}),
+)
+DB_GET_INPUT_SCHEMA = _object_schema(
+    required=("key",),
+    key={"type": "string"},
+)
+DB_GET_OUTPUT_SCHEMA = _object_schema(
+    required=("value",),
+    value=_nullable({}),
+)
+DB_SET_INPUT_SCHEMA = _object_schema(
+    required=("key", "value"),
+    key={"type": "string"},
+    value={},
+)
+DB_SET_OUTPUT_SCHEMA = _object_schema()
+DB_DELETE_INPUT_SCHEMA = _object_schema(
+    required=("key",),
+    key={"type": "string"},
+)
+DB_DELETE_OUTPUT_SCHEMA = _object_schema()
+DB_LIST_INPUT_SCHEMA = _object_schema(
+    prefix=_nullable({"type": "string"}),
+)
+DB_LIST_OUTPUT_SCHEMA = _object_schema(
+    required=("keys",),
+    keys={"type": "array", "items": {"type": "string"}},
+)
+DB_GET_MANY_INPUT_SCHEMA = _object_schema(
+    required=("keys",),
+    keys={"type": "array", "items": {"type": "string"}},
+)
+DB_GET_MANY_OUTPUT_SCHEMA = _object_schema(
+    required=("items",),
+    items={
+        "type": "array",
+        "items": _object_schema(
+            required=("key", "value"),
+            key={"type": "string"},
+            value=_nullable({}),
+        ),
+    },
+)
+DB_SET_MANY_INPUT_SCHEMA = _object_schema(
+    required=("items",),
+    items={
+        "type": "array",
+        "items": _object_schema(
+            required=("key", "value"),
+            key={"type": "string"},
+            value={},
+        ),
+    },
+)
+DB_SET_MANY_OUTPUT_SCHEMA = _object_schema()
+DB_WATCH_INPUT_SCHEMA = _object_schema(
+    prefix=_nullable({"type": "string"}),
+)
+DB_WATCH_OUTPUT_SCHEMA = _object_schema()
+SESSION_REF_SCHEMA = _object_schema(
+    required=("conversation_id",),
+    conversation_id={"type": "string"},
+    platform=_nullable({"type": "string"}),
+    raw=_nullable({"type": "object"}),
+)
+PLATFORM_SEND_INPUT_SCHEMA = _object_schema(
+    required=("session", "text"),
+    session={"type": "string"},
+    target=_nullable(SESSION_REF_SCHEMA),
+    text={"type": "string"},
+)
+PLATFORM_SEND_OUTPUT_SCHEMA = _object_schema(
+    required=("message_id",),
+    message_id={"type": "string"},
+)
+PLATFORM_SEND_IMAGE_INPUT_SCHEMA = _object_schema(
+    required=("session", "image_url"),
+    session={"type": "string"},
+    target=_nullable(SESSION_REF_SCHEMA),
+    image_url={"type": "string"},
+)
+PLATFORM_SEND_IMAGE_OUTPUT_SCHEMA = _object_schema(
+    required=("message_id",),
+    message_id={"type": "string"},
+)
+PLATFORM_SEND_CHAIN_INPUT_SCHEMA = _object_schema(
+    required=("session", "chain"),
+    session={"type": "string"},
+    target=_nullable(SESSION_REF_SCHEMA),
+    chain={"type": "array", "items": {"type": "object"}},
+)
+PLATFORM_SEND_CHAIN_OUTPUT_SCHEMA = _object_schema(
+    required=("message_id",),
+    message_id={"type": "string"},
+)
+PLATFORM_GET_MEMBERS_INPUT_SCHEMA = _object_schema(
+    required=("session",),
+    session={"type": "string"},
+    target=_nullable(SESSION_REF_SCHEMA),
+)
+PLATFORM_GET_MEMBERS_OUTPUT_SCHEMA = _object_schema(
+    required=("members",),
+    members={"type": "array", "items": {"type": "object"}},
+)
+HTTP_REGISTER_API_INPUT_SCHEMA = _object_schema(
+    required=("route", "methods", "handler_capability"),
+    route={"type": "string"},
+    methods={"type": "array", "items": {"type": "string"}},
+    handler_capability={"type": "string"},
+    description={"type": "string"},
+)
+HTTP_REGISTER_API_OUTPUT_SCHEMA = _object_schema()
+HTTP_UNREGISTER_API_INPUT_SCHEMA = _object_schema(
+    required=("route", "methods"),
+    route={"type": "string"},
+    methods={"type": "array", "items": {"type": "string"}},
+)
+HTTP_UNREGISTER_API_OUTPUT_SCHEMA = _object_schema()
+HTTP_LIST_APIS_INPUT_SCHEMA = _object_schema()
+HTTP_LIST_APIS_OUTPUT_SCHEMA = _object_schema(
+    required=("apis",),
+    apis={"type": "array", "items": {"type": "object"}},
+)
+METADATA_GET_PLUGIN_INPUT_SCHEMA = _object_schema(
+    required=("name",),
+    name={"type": "string"},
+)
+METADATA_GET_PLUGIN_OUTPUT_SCHEMA = _object_schema(
+    required=("plugin",),
+    plugin=_nullable({"type": "object"}),
+)
+METADATA_LIST_PLUGINS_INPUT_SCHEMA = _object_schema()
+METADATA_LIST_PLUGINS_OUTPUT_SCHEMA = _object_schema(
+    required=("plugins",),
+    plugins={"type": "array", "items": {"type": "object"}},
+)
+METADATA_GET_PLUGIN_CONFIG_INPUT_SCHEMA = _object_schema(
+    required=("name",),
+    name={"type": "string"},
+)
+METADATA_GET_PLUGIN_CONFIG_OUTPUT_SCHEMA = _object_schema(
+    required=("config",),
+    config=_nullable({"type": "object"}),
+)
+
+BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
+    "llm.chat": {
+        "input": LLM_CHAT_INPUT_SCHEMA,
+        "output": LLM_CHAT_OUTPUT_SCHEMA,
+    },
+    "llm.chat_raw": {
+        "input": LLM_CHAT_RAW_INPUT_SCHEMA,
+        "output": LLM_CHAT_RAW_OUTPUT_SCHEMA,
+    },
+    "llm.stream_chat": {
+        "input": LLM_STREAM_CHAT_INPUT_SCHEMA,
+        "output": LLM_STREAM_CHAT_OUTPUT_SCHEMA,
+    },
+    "memory.search": {
+        "input": MEMORY_SEARCH_INPUT_SCHEMA,
+        "output": MEMORY_SEARCH_OUTPUT_SCHEMA,
+    },
+    "memory.save": {
+        "input": MEMORY_SAVE_INPUT_SCHEMA,
+        "output": MEMORY_SAVE_OUTPUT_SCHEMA,
+    },
+    "memory.get": {
+        "input": MEMORY_GET_INPUT_SCHEMA,
+        "output": MEMORY_GET_OUTPUT_SCHEMA,
+    },
+    "memory.delete": {
+        "input": MEMORY_DELETE_INPUT_SCHEMA,
+        "output": MEMORY_DELETE_OUTPUT_SCHEMA,
+    },
+    "memory.save_with_ttl": {
+        "input": MEMORY_SAVE_WITH_TTL_INPUT_SCHEMA,
+        "output": MEMORY_SAVE_WITH_TTL_OUTPUT_SCHEMA,
+    },
+    "memory.get_many": {
+        "input": MEMORY_GET_MANY_INPUT_SCHEMA,
+        "output": MEMORY_GET_MANY_OUTPUT_SCHEMA,
+    },
+    "memory.delete_many": {
+        "input": MEMORY_DELETE_MANY_INPUT_SCHEMA,
+        "output": MEMORY_DELETE_MANY_OUTPUT_SCHEMA,
+    },
+    "memory.stats": {
+        "input": MEMORY_STATS_INPUT_SCHEMA,
+        "output": MEMORY_STATS_OUTPUT_SCHEMA,
+    },
+    "db.get": {
+        "input": DB_GET_INPUT_SCHEMA,
+        "output": DB_GET_OUTPUT_SCHEMA,
+    },
+    "db.set": {
+        "input": DB_SET_INPUT_SCHEMA,
+        "output": DB_SET_OUTPUT_SCHEMA,
+    },
+    "db.delete": {
+        "input": DB_DELETE_INPUT_SCHEMA,
+        "output": DB_DELETE_OUTPUT_SCHEMA,
+    },
+    "db.list": {
+        "input": DB_LIST_INPUT_SCHEMA,
+        "output": DB_LIST_OUTPUT_SCHEMA,
+    },
+    "db.get_many": {
+        "input": DB_GET_MANY_INPUT_SCHEMA,
+        "output": DB_GET_MANY_OUTPUT_SCHEMA,
+    },
+    "db.set_many": {
+        "input": DB_SET_MANY_INPUT_SCHEMA,
+        "output": DB_SET_MANY_OUTPUT_SCHEMA,
+    },
+    "db.watch": {
+        "input": DB_WATCH_INPUT_SCHEMA,
+        "output": DB_WATCH_OUTPUT_SCHEMA,
+    },
+    "platform.send": {
+        "input": PLATFORM_SEND_INPUT_SCHEMA,
+        "output": PLATFORM_SEND_OUTPUT_SCHEMA,
+    },
+    "platform.send_image": {
+        "input": PLATFORM_SEND_IMAGE_INPUT_SCHEMA,
+        "output": PLATFORM_SEND_IMAGE_OUTPUT_SCHEMA,
+    },
+    "platform.send_chain": {
+        "input": PLATFORM_SEND_CHAIN_INPUT_SCHEMA,
+        "output": PLATFORM_SEND_CHAIN_OUTPUT_SCHEMA,
+    },
+    "platform.get_members": {
+        "input": PLATFORM_GET_MEMBERS_INPUT_SCHEMA,
+        "output": PLATFORM_GET_MEMBERS_OUTPUT_SCHEMA,
+    },
+    "http.register_api": {
+        "input": HTTP_REGISTER_API_INPUT_SCHEMA,
+        "output": HTTP_REGISTER_API_OUTPUT_SCHEMA,
+    },
+    "http.unregister_api": {
+        "input": HTTP_UNREGISTER_API_INPUT_SCHEMA,
+        "output": HTTP_UNREGISTER_API_OUTPUT_SCHEMA,
+    },
+    "http.list_apis": {
+        "input": HTTP_LIST_APIS_INPUT_SCHEMA,
+        "output": HTTP_LIST_APIS_OUTPUT_SCHEMA,
+    },
+    "metadata.get_plugin": {
+        "input": METADATA_GET_PLUGIN_INPUT_SCHEMA,
+        "output": METADATA_GET_PLUGIN_OUTPUT_SCHEMA,
+    },
+    "metadata.list_plugins": {
+        "input": METADATA_LIST_PLUGINS_INPUT_SCHEMA,
+        "output": METADATA_LIST_PLUGINS_OUTPUT_SCHEMA,
+    },
+    "metadata.get_plugin_config": {
+        "input": METADATA_GET_PLUGIN_CONFIG_INPUT_SCHEMA,
+        "output": METADATA_GET_PLUGIN_CONFIG_OUTPUT_SCHEMA,
+    },
+}
+
+
+class _DescriptorBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class Permissions(_DescriptorBase):
+    """权限配置，控制处理器的访问权限。
+
+    与旧版对比：
+        旧版: 通过 extras_configs 字典配置
+            {"require_admin": true, "level": 1}
+        新版: 使用 Permissions 模型，类型安全
+
+    Attributes:
+        require_admin: 是否需要管理员权限
+        level: 权限等级，数值越高权限越大
+    """
+
+    require_admin: bool = False
+    level: int = 0
+
+
+class SessionRef(_DescriptorBase):
+    """结构化会话目标。
+
+    v4 运行时内部仍然保留 legacy `session` 字符串作为最低兼容层，
+    但对外模型允许同时携带平台与原始寻址信息，避免平台发送接口长期
+    只依赖一个不透明字符串。
+    """
+
+    conversation_id: str = Field(
+        validation_alias=AliasChoices("conversation_id", "session"),
+    )
+    platform: str | None = None
+    raw: dict[str, Any] | None = None
+
+    @property
+    def session(self) -> str:
+        return self.conversation_id
+
+    def to_payload(self) -> dict[str, Any]:
+        return self.model_dump(exclude_none=True)
+
+
+class CommandTrigger(_DescriptorBase):
+    """命令触发器，响应特定命令。
+
+    与旧版对比：
+        旧版: 使用 @command_handler("help") 装饰器注册
+        新版: 使用 CommandTrigger 声明式定义，支持别名
+
+    Attributes:
+        type: 触发器类型，固定为 "command"
+        command: 命令名称（不含前缀，如 "help"）
+        aliases: 命令别名列表
+        description: 命令描述，用于帮助文档
+        platforms: 允许的平台列表，为空表示所有平台
+        message_types: 限定的消息类型列表，为空表示不限
+    """
+
+    type: Literal["command"] = "command"
+    command: str
+    aliases: list[str] = Field(default_factory=list)
+    description: str | None = None
+    platforms: list[str] = Field(default_factory=list)
+    message_types: list[str] = Field(default_factory=list)
+
+
+class MessageTrigger(_DescriptorBase):
+    """消息触发器，描述消息类处理器的订阅条件。
+
+    与旧版对比：
+        旧版: 使用 @regex_handler(r"pattern") 或 @message_handler 装饰器
+        新版: 使用 MessageTrigger 声明式定义，支持正则、关键词和平台过滤
+
+    Attributes:
+        type: 触发器类型，固定为 "message"
+        regex: 正则表达式模式，匹配消息文本
+        keywords: 关键词列表，消息包含任一关键词即触发
+        platforms: 目标平台列表，为空表示所有平台
+        message_types: 限定的消息类型列表，为空表示不限
+
+    Note:
+        `regex` 和 `keywords` 可以同时为空，此时表示“任意消息均可触发”，
+        仅由平台过滤或上层运行时进一步筛选。
+    """
+
+    type: Literal["message"] = "message"
+    regex: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    platforms: list[str] = Field(default_factory=list)
+    message_types: list[str] = Field(default_factory=list)
+
+
+class EventTrigger(_DescriptorBase):
+    """事件触发器，响应特定类型的事件。
+
+    与旧版对比：
+        旧版: 使用整数 event_type，如 3 表示消息事件
+        新版: 使用字符串 event_type，如 "message" 或 "3"，更灵活
+
+    Attributes:
+        type: 触发器类型，固定为 "event"
+        event_type: 事件类型，字符串形式（如 "message"、"notice"）
+    """
+
+    type: Literal["event"] = "event"
+    event_type: str
+
+
+class ScheduleTrigger(_DescriptorBase):
+    """定时触发器，按 cron 表达式或固定间隔执行。
+
+    与旧版对比：
+        旧版: 使用 @scheduled("0 * * * *") 装饰器
+        新版: 使用 ScheduleTrigger 声明式定义
+
+    Attributes:
+        type: 触发器类型，固定为 "schedule"
+        cron: cron 表达式（如 "0 9 * * *" 表示每天 9 点）
+        interval_seconds: 执行间隔（秒）
+
+    Note:
+        cron 和 interval_seconds 必须且只能有一个非空。
+    """
+
+    type: Literal["schedule"] = "schedule"
+    cron: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("cron", "schedule"),
+    )
+    interval_seconds: int | None = None
+
+    @property
+    def schedule(self) -> str | None:
+        return self.cron
+
+    @model_validator(mode="after")
+    def validate_schedule(self) -> "ScheduleTrigger":
+        has_cron = self.cron is not None
+        has_interval = self.interval_seconds is not None
+        if has_cron == has_interval:
+            raise ValueError("cron 和 interval_seconds 必须且只能有一个非 null")
+        return self
+
+
+Trigger = Annotated[
+    CommandTrigger | MessageTrigger | EventTrigger | ScheduleTrigger,
+    Field(discriminator="type"),
+]
+"""触发器联合类型，使用 type 字段作为判别器自动解析具体类型。"""
+
+
+class HandlerDescriptor(_DescriptorBase):
+    """处理器描述符，描述一个事件处理函数的元信息。
+
+    与旧版对比：
+        旧版 handshake 响应中的处理器信息:
+            {
+                "event_type": 3,
+                "handler_full_name": "plugin.handler",
+                "handler_name": "handler",
+                "handler_module_path": "plugin",
+                "desc": "描述",
+                "extras_configs": {"priority": 0, "require_admin": false}
+            }
+
+        新版 HandlerDescriptor:
+            {
+                "id": "plugin.handler",
+                "trigger": {"type": "event", "event_type": "message"},
+                "priority": 0,
+                "permissions": {"require_admin": false, "level": 0}
+            }
+
+    Attributes:
+        id: 处理器唯一标识，通常是 "模块.函数名" 格式
+        trigger: 触发器配置，决定何时执行该处理器
+        kind: 处理器类别，默认普通 handler
+        contract: 运行时契约名，描述入参/执行语义
+        priority: 优先级，数值越大越先执行
+        permissions: 权限配置，控制谁可以触发该处理器
+    """
+
+    id: str
+    trigger: Trigger
+    kind: Literal["handler", "hook", "tool", "session"] = "handler"
+    contract: str | None = None
+    priority: int = 0
+    permissions: Permissions = Field(default_factory=Permissions)
+
+    @model_validator(mode="after")
+    def validate_contract_defaults(self) -> "HandlerDescriptor":
+        if self.contract is None:
+            if isinstance(self.trigger, ScheduleTrigger):
+                self.contract = "schedule"
+            else:
+                self.contract = "message_event"
+        return self
+
+
+class CapabilityDescriptor(_DescriptorBase):
+    """能力描述符，描述一个可调用的远程能力。
+
+    与旧版对比：
+        旧版: 无独立的能力描述，通过 method 名称隐式定义
+        新版: 使用 CapabilityDescriptor 显式声明能力，支持 JSON Schema 验证
+
+    能力命名规范：
+        - 使用 "namespace.action" 格式，如 "llm.chat"、"db.set"
+        - 内置能力以 "internal." 开头，如 "internal.legacy.call_context_function"
+
+    Attributes:
+        name: 能力名称，格式为 "namespace.action"
+        description: 能力描述，用于文档和调试
+        input_schema: 输入参数的 JSON Schema，用于验证
+        output_schema: 输出结果的 JSON Schema，用于验证
+        supports_stream: 是否支持流式响应
+        cancelable: 是否支持取消
+    """
+
+    name: str
+    description: str
+    input_schema: JSONSchema | None = None
+    output_schema: JSONSchema | None = None
+    supports_stream: bool = False
+    cancelable: bool = False
+
+    @model_validator(mode="after")
+    def validate_builtin_schema_governance(self) -> "CapabilityDescriptor":
+        builtin_schema = BUILTIN_CAPABILITY_SCHEMAS.get(self.name)
+        if builtin_schema is None:
+            return self
+        if self.input_schema is None or self.output_schema is None:
+            raise ValueError(
+                f"内建 capability {self.name} 必须同时提供 input_schema 和 output_schema"
+            )
+        if (
+            self.input_schema != builtin_schema["input"]
+            or self.output_schema != builtin_schema["output"]
+        ):
+            raise ValueError(
+                f"内建 capability {self.name} 的 schema 必须与协议注册表保持一致"
+            )
+        return self
+
+
+__all__ = [
+    "BUILTIN_CAPABILITY_SCHEMAS",
+    "CapabilityDescriptor",
+    "CommandTrigger",
+    "DB_DELETE_INPUT_SCHEMA",
+    "DB_DELETE_OUTPUT_SCHEMA",
+    "DB_GET_INPUT_SCHEMA",
+    "DB_GET_OUTPUT_SCHEMA",
+    "DB_GET_MANY_INPUT_SCHEMA",
+    "DB_GET_MANY_OUTPUT_SCHEMA",
+    "DB_LIST_INPUT_SCHEMA",
+    "DB_LIST_OUTPUT_SCHEMA",
+    "DB_SET_INPUT_SCHEMA",
+    "DB_SET_OUTPUT_SCHEMA",
+    "DB_SET_MANY_INPUT_SCHEMA",
+    "DB_SET_MANY_OUTPUT_SCHEMA",
+    "DB_WATCH_INPUT_SCHEMA",
+    "DB_WATCH_OUTPUT_SCHEMA",
+    "EventTrigger",
+    "HandlerDescriptor",
+    "HTTP_LIST_APIS_INPUT_SCHEMA",
+    "HTTP_LIST_APIS_OUTPUT_SCHEMA",
+    "HTTP_REGISTER_API_INPUT_SCHEMA",
+    "HTTP_REGISTER_API_OUTPUT_SCHEMA",
+    "HTTP_UNREGISTER_API_INPUT_SCHEMA",
+    "HTTP_UNREGISTER_API_OUTPUT_SCHEMA",
+    "JSONSchema",
+    "LLM_CHAT_INPUT_SCHEMA",
+    "LLM_CHAT_OUTPUT_SCHEMA",
+    "LLM_CHAT_RAW_INPUT_SCHEMA",
+    "LLM_CHAT_RAW_OUTPUT_SCHEMA",
+    "LLM_STREAM_CHAT_INPUT_SCHEMA",
+    "LLM_STREAM_CHAT_OUTPUT_SCHEMA",
+    "MEMORY_DELETE_INPUT_SCHEMA",
+    "MEMORY_DELETE_OUTPUT_SCHEMA",
+    "MEMORY_DELETE_MANY_INPUT_SCHEMA",
+    "MEMORY_DELETE_MANY_OUTPUT_SCHEMA",
+    "MEMORY_GET_INPUT_SCHEMA",
+    "MEMORY_GET_OUTPUT_SCHEMA",
+    "MEMORY_GET_MANY_INPUT_SCHEMA",
+    "MEMORY_GET_MANY_OUTPUT_SCHEMA",
+    "MEMORY_SAVE_INPUT_SCHEMA",
+    "MEMORY_SAVE_OUTPUT_SCHEMA",
+    "MEMORY_SAVE_WITH_TTL_INPUT_SCHEMA",
+    "MEMORY_SAVE_WITH_TTL_OUTPUT_SCHEMA",
+    "MEMORY_SEARCH_INPUT_SCHEMA",
+    "MEMORY_SEARCH_OUTPUT_SCHEMA",
+    "MEMORY_STATS_INPUT_SCHEMA",
+    "MEMORY_STATS_OUTPUT_SCHEMA",
+    "METADATA_GET_PLUGIN_CONFIG_INPUT_SCHEMA",
+    "METADATA_GET_PLUGIN_CONFIG_OUTPUT_SCHEMA",
+    "METADATA_GET_PLUGIN_INPUT_SCHEMA",
+    "METADATA_GET_PLUGIN_OUTPUT_SCHEMA",
+    "METADATA_LIST_PLUGINS_INPUT_SCHEMA",
+    "METADATA_LIST_PLUGINS_OUTPUT_SCHEMA",
+    "MessageTrigger",
+    "PLATFORM_GET_MEMBERS_INPUT_SCHEMA",
+    "PLATFORM_GET_MEMBERS_OUTPUT_SCHEMA",
+    "PLATFORM_SEND_CHAIN_INPUT_SCHEMA",
+    "PLATFORM_SEND_CHAIN_OUTPUT_SCHEMA",
+    "PLATFORM_SEND_IMAGE_INPUT_SCHEMA",
+    "PLATFORM_SEND_IMAGE_OUTPUT_SCHEMA",
+    "PLATFORM_SEND_INPUT_SCHEMA",
+    "PLATFORM_SEND_OUTPUT_SCHEMA",
+    "Permissions",
+    "RESERVED_CAPABILITY_NAMESPACES",
+    "RESERVED_CAPABILITY_PREFIXES",
+    "ScheduleTrigger",
+    "SESSION_REF_SCHEMA",
+    "SessionRef",
+    "Trigger",
+]
