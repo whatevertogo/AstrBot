@@ -183,6 +183,31 @@ class SdkPluginBridge:
             return
         raise ValueError(f"SDK plugin not found: {plugin_id}")
 
+    async def turn_off_plugin(self, plugin_id: str) -> None:
+        record = self._records.get(plugin_id)
+        if record is None:
+            raise ValueError(f"SDK plugin not found: {plugin_id}")
+        record.state = SDK_STATE_DISABLED
+        await self._cancel_plugin_requests(plugin_id)
+        await self._teardown_plugin(plugin_id)
+        record.failure_reason = ""
+        self._set_disabled_override(plugin_id, disabled=True)
+
+    async def turn_on_plugin(self, plugin_id: str) -> None:
+        discovered = discover_plugins(self.plugins_dir)
+        self.env_manager.plan(discovered.plugins)
+        for load_order, plugin in enumerate(discovered.plugins):
+            if plugin.name != plugin_id:
+                continue
+            self._set_disabled_override(plugin_id, disabled=False)
+            await self._load_or_reload_plugin(
+                plugin,
+                load_order=load_order,
+                reset_restart_budget=True,
+            )
+            return
+        raise ValueError(f"SDK plugin not found: {plugin_id}")
+
     def list_plugins(self) -> list[dict[str, Any]]:
         records = sorted(self._records.values(), key=lambda item: item.load_order)
         return [self._record_to_dashboard_item(record) for record in records]
@@ -528,7 +553,7 @@ class SdkPluginBridge:
         if record is None:
             return
         record.session = None
-        if record.state == SDK_STATE_RELOADING:
+        if record.state in {SDK_STATE_RELOADING, SDK_STATE_DISABLED}:
             return
         if not record.restart_attempted:
             record.restart_attempted = True
@@ -626,3 +651,16 @@ class SdkPluginBridge:
             ),
             encoding="utf-8",
         )
+
+    def _set_disabled_override(self, plugin_id: str, *, disabled: bool) -> None:
+        plugin_state = dict(self._state_overrides.get(plugin_id, {}))
+        if disabled:
+            plugin_state["disabled"] = True
+            self._state_overrides[plugin_id] = plugin_state
+        else:
+            plugin_state.pop("disabled", None)
+            if plugin_state:
+                self._state_overrides[plugin_id] = plugin_state
+            else:
+                self._state_overrides.pop(plugin_id, None)
+        self._persist_state_overrides()

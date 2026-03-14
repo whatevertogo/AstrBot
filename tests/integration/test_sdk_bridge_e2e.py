@@ -282,5 +282,26 @@ async def test_sdk_bridge_dispatches_demo_plugin_end_to_end(
         assert keyword_result.sent_message is True
         assert keyword_result.executed_handlers[0]["handler_id"].endswith("sdk_ping")
         assert fake_context.sent_messages[-1]["text"] == "sdk pong: please sdk ping now"
+
+        await bridge.turn_off_plugin("sdk_demo_echo")
+        plugins = bridge.list_plugins()
+        assert plugins[0]["state"] == "disabled"
+        assert plugins[0]["activated"] is False
+
+        disabled_event = _FakeEvent("sdkhello")
+        disabled_result = await bridge.dispatch_message(disabled_event)
+        assert disabled_result.sent_message is False
+        assert disabled_result.executed_handlers == []
+        assert disabled_result.skipped_reason == "no_match"
+
+        await bridge.turn_on_plugin("sdk_demo_echo")
+        plugins = bridge.list_plugins()
+        assert plugins[0]["state"] == "enabled"
+        assert plugins[0]["activated"] is True
+
+        reenabled_event = _FakeEvent("sdkhello")
+        reenabled_result = await bridge.dispatch_message(reenabled_event)
+        assert reenabled_result.sent_message is True
+        assert reenabled_result.executed_handlers[0]["handler_id"].endswith("sdkhello")
     finally:
         await bridge.stop()

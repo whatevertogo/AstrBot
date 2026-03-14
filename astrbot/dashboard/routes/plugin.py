@@ -743,8 +743,15 @@ class PluginRoute(Route):
         post_data = await request.get_json()
         plugin_name = post_data["name"]
         if self._is_sdk_plugin(plugin_name):
-            #TODO:
-            return Response().error("SDK 插件在 MVP 中不支持停用").__dict__, 400
+            sdk_bridge = self._sdk_bridge()
+            if sdk_bridge is None:
+                return Response().error("SDK bridge 未初始化").__dict__, 500
+            try:
+                await sdk_bridge.turn_off_plugin(plugin_name)
+            except ValueError as exc:
+                return Response().error(str(exc)).__dict__, 404
+            logger.info(f"停用 SDK 插件 {plugin_name} 。")
+            return Response().ok(None, "停用成功。").__dict__
         try:
             await self.plugin_manager.turn_off_plugin(plugin_name)
             logger.info(f"停用插件 {plugin_name} 。")
@@ -764,8 +771,15 @@ class PluginRoute(Route):
         post_data = await request.get_json()
         plugin_name = post_data["name"]
         if self._is_sdk_plugin(plugin_name):
-            #TODO:
-            return Response().error("SDK 插件在 MVP 中不支持启用").__dict__, 400
+            sdk_bridge = self._sdk_bridge()
+            if sdk_bridge is None:
+                return Response().error("SDK bridge 未初始化").__dict__, 500
+            try:
+                await sdk_bridge.turn_on_plugin(plugin_name)
+            except ValueError as exc:
+                return Response().error(str(exc)).__dict__, 404
+            logger.info(f"启用 SDK 插件 {plugin_name} 。")
+            return Response().ok(None, "启用成功。").__dict__
         try:
             await self.plugin_manager.turn_on_plugin(plugin_name)
             logger.info(f"启用插件 {plugin_name} 。")
