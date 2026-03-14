@@ -33,7 +33,8 @@
 | TTS/STT/Embedding | 6 | 0 | 0 | 6 | 0 | 0% |
 | Platform实体 | 6 | 0 | 0 | 6 | 0 | 0% |
 | Agent运行器 | 7 | 0 | 0 | 7 | 0 | 0% |
-| **总计** | **200** | **33** | **9** | **146** | **17** | **19%** |
+| SDK扩展能力 | 19 | 0 | 0 | 19 | 0 | 0% |
+| **总计** | **219** | **33** | **9** | **165** | **17** | **17%** |
 
 > 注：覆盖率 = `(已实现 + 部分实现 × 0.5) / 总计`，⚠️ 表示SDK已定义但Core端未实现
 
@@ -439,6 +440,15 @@
 9. 知识库管理 API
 10. Platform 统计和状态
 
+### P3 - SDK 架构扩展（可选增强）
+1. **CancelToken 扩展** - 取消原因、回调注册、组合取消
+2. **provide_capability 扩展** - 版本控制、依赖声明、中间件、速率限制
+3. **Handler kind 实现** - `hook`/`tool`/`session` 类型运行时支持
+4. **Permissions 扩展** - 角色系统、权限范围、用户白/黑名单
+5. **插件间 Capability** - 发现机制、流式调用、版本协商
+6. **事件类型标准化** - EventType 枚举、payload schema
+7. **依赖注入扩展** - 自定义类型注入器、配置注入
+
 ---
 
 ## 架构说明
@@ -487,3 +497,79 @@
 14. `Platform` 实体类（状态、统计、Webhook）
 15. `MessageSession` - 消息会话对象
 16. TTS/STT/Embedding/Rerank Provider 支持
+
+---
+
+## SDK 扩展能力（新 SDK 可进一步扩展）
+
+以下是基于当前 SDK 架构设计，可以进一步扩展的能力。
+
+### CancelToken 取消机制扩展
+
+| 扩展 | 状态 | 说明 |
+| --- | --- | --- |
+| `cancel(reason: str)` | ❌ | 取消时传递原因 |
+| `on_cancel(callback)` | ❌ | 注册取消回调，支持清理逻辑 |
+| `with_timeout(seconds)` | ❌ | 辅助方法：超时自动取消 |
+| `CancelToken.any(*tokens)` | ❌ | 组合取消：任一取消即触发 |
+| `CancelToken.all(*tokens)` | ❌ | 组合取消：全部取消才触发 |
+
+### provide_capability 能力导出扩展
+
+| 扩展 | 状态 | 说明 |
+| --- | --- | --- |
+| `version: str` | ❌ | 能力版本控制 |
+| `requires: list[str]` | ❌ | 声明依赖的其他 capability |
+| `middleware: list[Middleware]` | ❌ | 能力拦截器/中间件支持 |
+| `rate_limit: RateLimit` | ❌ | 速率限制声明 |
+| `cache_policy: CachePolicy` | ❌ | 缓存策略声明 |
+
+### Handler kind 类型实现
+
+| 类型 | 状态 | 说明 |
+| --- | --- | --- |
+| `handler` | ✅ | 已实现，标准消息处理器 |
+| `hook` | ❌ | 钩子类型（定义但未在运行时实现） |
+| `tool` | ❌ | LLM Function Calling 工具类型 |
+| `session` | ❌ | 会话级处理器类型 |
+
+### Permissions 权限系统扩展
+
+| 扩展 | 状态 | 说明 |
+| --- | --- | --- |
+| `roles: list[str]` | ❌ | 角色系统支持 |
+| `scopes: list[str]` | ❌ | 细粒度权限范围 |
+| `platforms: list[str]` | ❌ | 平台级权限限制 |
+| `allow_users: list[str]` | ❌ | 用户白名单 |
+| `deny_users: list[str]` | ❌ | 用户黑名单 |
+
+### 插件间 Capability 调用
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| `ctx.capability.discover()` | ❌ | 发现其他插件导出的 capability |
+| `ctx.capability.invoke(name, payload)` | ❌ | 调用其他插件的 capability（当前只支持同步） |
+| `ctx.capability.invoke_stream(name, payload)` | ❌ | 流式调用其他插件的 capability |
+| 版本协商 | ❌ | capability 版本兼容性检查 |
+
+### 事件类型标准化
+
+| 扩展 | 状态 | 说明 |
+| --- | --- | --- |
+| `EventType` 枚举 | ❌ | 标准化事件类型常量，避免拼写不一致 |
+| 事件 payload schema | ❌ | 每种事件的标准化 payload 结构定义 |
+
+### 依赖注入扩展
+
+| 扩展 | 状态 | 说明 |
+| --- | --- | --- |
+| 自定义类型注入器 | ❌ | 允许插件注册自定义类型的依赖注入 |
+| 配置注入 | ❌ | 自动注入插件配置项到 handler 参数 |
+| 依赖注入容器 | ❌ | 支持更复杂的依赖关系 |
+
+### 调度器验证
+
+| 项目 | 状态 | 说明 |
+| --- | --- | --- |
+| `@on_schedule` Core 端调度器 | ❓ | 需验证 Core 端是否有完整调度器实现 |
+| 持久化任务 | ❓ | 验证定时任务是否支持持久化 |
