@@ -34,7 +34,8 @@
 | Platform实体 | 6 | 0 | 0 | 6 | 0 | 0% |
 | Agent运行器 | 7 | 0 | 0 | 7 | 0 | 0% |
 | SDK扩展能力 | 19 | 0 | 0 | 19 | 0 | 0% |
-| **总计** | **219** | **33** | **9** | **165** | **17** | **17%** |
+| 其他系统能力 | 52 | 7 | 0 | 44 | 1 | 13% |
+| **总计** | **271** | **40** | **9** | **209** | **18** | **16%** |
 
 > 注：覆盖率 = `(已实现 + 部分实现 × 0.5) / 总计`，⚠️ 表示SDK已定义但Core端未实现
 
@@ -573,3 +574,137 @@
 | --- | --- | --- |
 | `@on_schedule` Core 端调度器 | ❓ | 需验证 Core 端是否有完整调度器实现 |
 | 持久化任务 | ❓ | 验证定时任务是否支持持久化 |
+
+---
+
+## 其他系统能力
+
+### 错误处理和异常类型
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| `AstrBotError` 基类 | ✅ | SDK 已定义，含 code/message/hint/retryable |
+| `ErrorCodes` 常量 | ✅ | SDK 已定义错误码枚举 |
+| `to_payload()` / `from_payload()` | ✅ | 错误序列化/反序列化（跨进程传递） |
+| `ProviderNotFoundError` | ❌ | Core 端特有异常类型 |
+
+### 日志系统
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| `ctx.logger` | ✅ | 绑定插件 ID 的日志器 |
+| `LogBroker` 日志代理 | ❌ | 日志缓存和订阅分发 |
+| `LogManager.GetLogger()` | ❌ | Core 端日志管理器 |
+| 日志订阅机制 | ❌ | 外部订阅日志消息队列 |
+
+### 文件服务
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| `FileTokenService` | ❌ | 临时文件令牌服务 |
+| `register_file(path, timeout) -> token` | ❌ | 注册文件获取下载令牌 |
+| `handle_file(token) -> path` | ❌ | 通过令牌获取文件路径 |
+| `File.register_to_file_service()` | ❌ | 消息组件注册到文件服务 |
+| `File.get_file()` | ❌ | 异步获取文件（支持 URL 下载） |
+
+### Webhook 处理
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| `Platform.unified_webhook()` | ❌ | 统一 Webhook 模式检查 |
+| `Platform.webhook_callback(request)` | ❌ | Webhook 回调处理 |
+| `/api/platform/webhook/{uuid}` 路由 | ❌ | Dashboard Webhook 路由 |
+
+### MCP (Model Context Protocol)
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| `MCPClient.connect_to_server()` | ❌ | 连接 MCP 服务器 |
+| `MCPClient.list_tools_and_save()` | ❌ | 列出并保存工具 |
+| `MCPClient.call_tool_with_reconnect()` | ❌ | 调用工具（带自动重连） |
+| `MCPTool` 包装器 | ❌ | MCP 工具转 Function Tool |
+
+### 事件总线
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| `EventBus` | ❌ | 事件分发和处理 |
+| `event_queue` | ❌ | 异步事件队列访问 |
+
+### 热重载
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| `ASTRBOT_RELOAD=1` 环境变量 | ❌ | 启用热重载 |
+| `_watch_plugins_changes()` | ❌ | 监视插件文件变化 |
+
+### 国际化 (i18n)
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| `ConfigMetadataI18n` | ❌ | 配置元数据国际化 |
+| `convert_to_i18n_keys()` | ❌ | 转换为 i18n 键 |
+
+### 插件依赖管理
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| `requirements.txt` 自动安装 | ❓ | Core 端已支持，SDK 需验证 |
+| `PluginVersionIncompatibleError` | ❌ | 版本不兼容异常 |
+| `PluginDependencyInstallError` | ❌ | 依赖安装失败异常 |
+| `_import_plugin_with_dependency_recovery()` | ❌ | 带依赖恢复的导入 |
+
+### 消息撤回
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| 消息撤回 API | ❌ | 撤回已发送消息（平台特定） |
+
+### 群组管理
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| `get_group(group_id?)` | ❌ | 获取群聊数据 |
+| 群成员列表获取 | ❌ | 依赖 `get_group()` |
+
+### 插件间通信
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| `get_registered_star(name)` | ✅ | 通过 `ctx.metadata.get_plugin()` 支持 |
+| `get_all_stars()` | ✅ | 通过 `ctx.metadata.list_plugins()` 支持 |
+| `StarHandlerRegistry` 访问 | ❌ | 直接访问 Handler 注册表 |
+| `get_handlers_by_event_type()` | ❌ | 按事件类型获取 Handler |
+| `get_handler_by_full_name()` | ❌ | 按全名获取 Handler |
+
+### 命令参数类型解析
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| `str` 参数 | ✅ | 字符串参数 |
+| `int` 参数 | ❌ | 整数参数自动转换 |
+| `float` 参数 | ❌ | 浮点数参数自动转换 |
+| `bool` 参数 | ❌ | 布尔参数自动转换 |
+| `Optional[T]` 参数 | ❌ | 可选类型参数 |
+| `GreedyStr` 参数 | ❌ | 贪婪字符串（剩余所有文本） |
+
+### Cron 定时任务管理
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| `CronJobManager.add_basic_job()` | ⚠️ | SDK 定义 `@on_schedule`，Core 端 MVP 不支持 |
+| `CronJobManager.add_active_job()` | ⚠️ | 主动 Agent 定时任务 |
+| `CronJobManager.update_job()` | ❌ | 更新任务 |
+| `CronJobManager.delete_job()` | ❌ | 删除任务 |
+| `CronJobManager.list_jobs()` | ❌ | 列出任务 |
+| 任务持久化 | ❌ | 定时任务持久化存储 |
+
+### Reply 消息组件属性
+
+| 属性 | 状态 | 说明 |
+| --- | --- | --- |
+| `Reply.id` | ❌ | 被引用消息 ID |
+| `Reply.chain` | ❌ | 被引用的消息段列表 |
+| `Reply.sender_id` | ❌ | 发送者 ID |
+| `Reply.sender_nickname` | ❌ | 发送者昵称 |
+| `Reply.message_str` | ❌ | 被引用消息的纯文本 |
