@@ -29,6 +29,7 @@ from astrbot.core.pipeline.scheduler import PipelineContext, PipelineScheduler
 from astrbot.core.platform.manager import PlatformManager
 from astrbot.core.platform_message_history_mgr import PlatformMessageHistoryManager
 from astrbot.core.provider.manager import ProviderManager
+from astrbot.core.sdk_bridge import SdkPluginBridge
 from astrbot.core.star.context import Context
 from astrbot.core.star.star_handler import EventType, star_handlers_registry, star_map
 from astrbot.core.star.star_manager import PluginManager
@@ -200,6 +201,10 @@ class AstrBotCoreLifecycle:
         # 扫描、注册插件、实例化插件类
         await self.plugin_manager.reload()
 
+        self.sdk_plugin_bridge = SdkPluginBridge(self.star_context)
+        self.star_context.sdk_plugin_bridge = self.sdk_plugin_bridge
+        await self.sdk_plugin_bridge.start()
+
         # 根据配置实例化各个 Provider
         await self.provider_manager.initialize()
 
@@ -324,6 +329,9 @@ class AstrBotCoreLifecycle:
         if self.cron_manager:
             await self.cron_manager.shutdown()
 
+        if getattr(self, "sdk_plugin_bridge", None) is not None:
+            await self.sdk_plugin_bridge.stop()
+
         for plugin in self.plugin_manager.context.get_all_stars():
             try:
                 await self.plugin_manager._terminate_plugin(plugin)
@@ -349,6 +357,8 @@ class AstrBotCoreLifecycle:
 
     async def restart(self) -> None:
         """重启 AstrBot 核心生命周期管理类, 终止各个管理器并重新加载平台实例"""
+        if getattr(self, "sdk_plugin_bridge", None) is not None:
+            await self.sdk_plugin_bridge.stop()
         await self.provider_manager.terminate()
         await self.platform_manager.terminate()
         await self.kb_manager.terminate()

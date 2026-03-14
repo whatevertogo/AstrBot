@@ -100,6 +100,8 @@ class Context:
         self.cron_manager = cron_manager
         """Cron job manager, initialized by core lifecycle."""
         self.subagent_orchestrator = subagent_orchestrator
+        self.sdk_plugin_bridge = None
+        """SDK plugin bridge, initialized by core lifecycle when available."""
 
     async def llm_generate(
         self,

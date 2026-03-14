@@ -16,6 +16,9 @@ class ProcessStage(Stage):
         self.ctx = ctx
         self.config = ctx.astrbot_config
         self.plugin_manager = ctx.plugin_manager
+        self.sdk_plugin_bridge = getattr(
+            ctx.plugin_manager.context, "sdk_plugin_bridge", None
+        )
 
         # initialize agent sub stage
         self.agent_sub_stage = AgentRequestSubStage()
@@ -48,6 +51,11 @@ class ProcessStage(Stage):
                         yield
                 else:
                     yield
+
+        if self.sdk_plugin_bridge is not None and not event.is_stopped():
+            sdk_result = await self.sdk_plugin_bridge.dispatch_message(event)
+            if sdk_result.sent_message or sdk_result.stopped:
+                yield
 
         # 调用 LLM 相关请求
         if not self.ctx.astrbot_config["provider_settings"].get("enable", True):
