@@ -1,4 +1,19 @@
-"""SDK-native filter declarations."""
+"""SDK-native filter declarations.
+
+本模块提供事件过滤器的声明式 API，用于在 handler 执行前进行条件判断。
+
+内置过滤器类型：
+- PlatformFilter: 按平台名称过滤（如 qq、wechat）
+- MessageTypeFilter: 按消息类型过滤（如 group、private）
+- CustomFilter: 用户自定义的同步布尔函数
+
+组合操作：
+- all_of(*filters): 所有过滤器都通过才执行（AND 逻辑）
+- any_of(*filters): 任一过滤器通过即可执行（OR 逻辑）
+- 支持 & 和 | 运算符进行链式组合
+
+过滤器在本地（SDK worker 进程内）求值，避免不必要的跨进程调用。
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,21 @@
-"""SDK-native command group helpers."""
+"""SDK-native command group helpers.
+
+本模块提供命令分组工具，用于组织具有层级关系的命令。
+
+CommandGroup 允许以嵌套方式定义命令树，例如：
+  admin
+    ├── user
+    │     ├── add
+    │     └── remove
+    └── config
+          ├── get
+          └── set
+
+特性：
+- 支持命令别名，自动展开父级路径的所有别名组合
+- 自动生成命令树的可视化输出 (print_cmd_tree)
+- 与 @on_command 装饰器无缝集成
+"""
 
 from __future__ import annotations
 

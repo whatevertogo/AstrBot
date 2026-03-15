@@ -1,4 +1,16 @@
-"""SDK-local rich message result objects."""
+"""SDK-local rich message result objects.
+
+本模块定义消息事件的结果对象，用于构建和返回富文本/多媒体消息。
+
+核心类：
+- MessageChain: 消息组件列表，支持同步/异步序列化为协议 payload
+- MessageEventResult: 事件处理结果，包含类型标记和消息链
+- EventResultType: 结果类型枚举（EMPTY / CHAIN）
+
+辅助函数：
+- coerce_message_chain: 将多种输入格式统一转换为 MessageChain，
+  支持 MessageEventResult、MessageChain、单个组件或组件列表
+"""
 
 from __future__ import annotations
 

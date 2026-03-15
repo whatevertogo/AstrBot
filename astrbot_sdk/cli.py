@@ -1,4 +1,17 @@
-"""AstrBot SDK 的命令行入口。"""
+"""AstrBot SDK 的命令行入口。
+
+本模块提供 astrbot-sdk 命令行工具的所有子命令，包括：
+- init: 创建新插件骨架，生成 plugin.yaml、main.py、README.md 等模板文件
+- validate: 校验插件清单、导入路径和 handler 发现是否正常
+- build: 将插件打包为 .zip 发布包
+- dev: 本地开发模式，支持 --local/--watch/--interactive 等调试选项
+- run: 启动插件主管进程（supervisor），通过 stdio 与 AstrBot 核心通信
+- worker: 内部命令，由 supervisor 调用以启动单个插件工作进程
+
+错误处理：
+所有 CLI 异常都会被分类并返回标准化的退出码和错误提示，
+便于 CI/CD 集成和用户快速定位问题。
+"""
 
 from __future__ import annotations
 

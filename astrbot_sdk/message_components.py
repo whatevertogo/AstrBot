@@ -1,8 +1,8 @@
 """SDK message component compatibility layer.
 
-This module intentionally avoids importing legacy core component modules at import time.
-The SDK worker should stay lightweight and must not depend on the host core bootstrap
-path just to construct message objects.
+该模块有意避免在导入时导入遗留核心组件模块。
+SDK工作线程应该保持轻量级并且不能依赖于主机核心引导程序
+仅用于构造消息对象的路径。
 """
 
 from __future__ import annotations

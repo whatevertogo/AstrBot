@@ -1,4 +1,19 @@
-"""Schedule-specific SDK types."""
+"""Schedule-specific SDK types.
+
+本模块定义定时任务相关的 SDK 类型，主要为 ScheduleContext 提供数据结构。
+
+ScheduleContext 包含：
+- schedule_id: 调度任务唯一标识
+- plugin_id: 所属插件 ID
+- handler_id: 对应 handler 的标识
+- trigger_kind: 触发类型（cron / interval / once）
+- cron: cron 表达式（仅 cron 类型）
+- interval_seconds: 间隔秒数（仅 interval 类型）
+- scheduled_at: 计划执行时间（仅 once 类型）
+
+使用方式：
+通过 @on_schedule 装饰器注册的 handler 可通过参数注入获取 ScheduleContext。
+"""
 
 from __future__ import annotations
 

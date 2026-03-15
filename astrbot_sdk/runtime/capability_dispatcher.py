@@ -1,4 +1,16 @@
-"""Capability invocation dispatcher."""
+"""Capability invocation dispatcher.
+
+本模块实现能力调用的分发器，负责：
+1. 接收能力调用请求，定位对应的已注册能力
+2. 构建调用上下文 (Context)，注入必要的依赖
+3. 支持同步和流式两种调用模式
+4. 管理活跃调用任务的生命周期和取消
+
+参数注入策略：
+按类型注入 Context / CancelToken / dict，或按参数名注入
+ctx / context / payload / input / data / cancel_token / token。
+若无法匹配则抛出详细的错误信息，帮助开发者定位问题。
+"""
 
 from __future__ import annotations
 

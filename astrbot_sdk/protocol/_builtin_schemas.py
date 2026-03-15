@@ -1,4 +1,13 @@
-"""Builtin protocol schema constants."""
+"""Builtin protocol schema constants.
+
+本模块定义了 AstrBot SDK v4 协议中所有内置能力的 JSON Schema。
+这些 Schema 用于：
+1. 验证能力调用的输入参数是否符合预期格式
+2. 生成能力描述文档，供插件开发者参考
+3. 确保跨进程/跨语言调用时的类型安全
+
+所有 Schema 遵循 JSON Schema 规范，支持基本类型检查、必填字段、数组元素约束等。
+"""
 
 from __future__ import annotations
 

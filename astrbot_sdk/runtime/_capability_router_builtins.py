@@ -1,4 +1,19 @@
-"""Built-in capability registration and handlers for CapabilityRouter."""
+"""Built-in capability registration and handlers for CapabilityRouter.
+
+本模块为 CapabilityRouter 提供内置能力的注册逻辑和处理函数实现。
+内置能力涵盖以下类别：
+- LLM: 对话、流式对话等大语言模型能力
+- Memory: 记忆存储、搜索、带 TTL 的键值对
+- DB: 持久化键值存储及变更监听
+- Platform: 跨平台消息发送、图片、消息链
+- HTTP: 动态 API 路由注册与管理
+- Metadata: 插件元数据查询
+- System: 数据目录、文本转图片、HTML 渲染、会话等待器等
+
+设计模式：
+通过 Mixin 类 (BuiltinCapabilityRouterMixin) 将内置能力注入到 CapabilityRouter，
+使其与用户自定义能力共享相同的注册和调用机制。
+"""
 
 from __future__ import annotations
 

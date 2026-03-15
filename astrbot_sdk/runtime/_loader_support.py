@@ -1,4 +1,16 @@
-"""Support helpers for runtime loader reflection and signature validation."""
+"""Support helpers for runtime loader reflection and signature validation.
+
+本模块提供运行时加载器所需的反射和签名验证工具函数，主要用于：
+1. 解析 handler/capability 函数签名，提取参数类型信息
+2. 识别需要注入的框架对象（如 Context、MessageEvent、ScheduleContext）
+3. 构建参数规格 (ParamSpec) 供协议层使用
+4. 验证 schedule handler 的签名合法性
+
+关键函数：
+- build_param_specs: 从 handler 签名构建参数规格列表
+- is_injected_parameter: 判断参数是否应由框架注入而非从命令行解析
+- validate_schedule_signature: 确保 schedule handler 只接受允许的注入参数
+"""
 
 from __future__ import annotations
 

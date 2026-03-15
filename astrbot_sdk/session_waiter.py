@@ -1,3 +1,22 @@
+"""Session-based conversational flow management.
+
+本模块实现会话等待器 (session_waiter)，用于构建多轮对话流程。
+
+核心组件：
+- SessionController: 控制会话生命周期，支持超时管理、会话保持、历史记录
+- SessionWaiterManager: 管理活跃的会话等待器，处理事件分发和注册/注销
+- @session_waiter 装饰器: 将普通 handler 转换为会话式 handler
+
+使用场景：
+当需要在用户首次触发后继续监听后续消息（如分步表单、问答游戏），
+可使用 @session_waiter 装饰器自动管理会话状态和超时。
+
+注意事项：
+在当前桥接设计中，不应在普通 SDK handler 内直接 await session_waiter，
+这会导致首次 dispatch 保持打开直到下一条消息到达。
+如需非阻塞的会话等待，应从后台任务启动或添加显式的调度/恢复机制。
+"""
+
 from __future__ import annotations
 
 import asyncio

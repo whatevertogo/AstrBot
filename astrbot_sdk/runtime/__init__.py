@@ -1,7 +1,14 @@
 """AstrBot SDK runtime public exports.
 
-Keep runtime imports lazy so submodule users do not pay the websocket/aiohttp import
-cost unless they actually need transport primitives.
+本模块提供运行时核心组件的公共导出，包括：
+- CapabilityRouter: 能力路由器，处理能力调用的分发和路由
+- HandlerDispatcher: 事件处理器分发器，将事件分发到注册的 handler
+- Peer: 与 AstrBot 核心通信的对等端抽象
+- Transport 系列: 进程间通信传输层实现（stdio/websocket）
+
+延迟加载策略：
+为避免导入时触发 websocket/aiohttp 等重型依赖，采用 __getattr__ 实现按需加载。
+这样轻量级导入（如仅使用类型提示）不会产生不必要的依赖开销。
 """
 
 from __future__ import annotations
