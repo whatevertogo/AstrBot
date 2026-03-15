@@ -1,22 +1,31 @@
-"""SDK 桥接层。
+"""SDK bridge package public exports."""
 
-将 astrbot_sdk (子进程插件架构) 接入 astrbot/core (同进程插件架构)。
+from __future__ import annotations
 
-主要组件：
-- CoreCapabilityBridge: 将 Core Context 的能力注册到 SDK CapabilityRouter
-- SdkPluginBridge: 管理 SupervisorRuntime，将 SDK handlers 注册到 Core
-- EventConverter: AstrMessageEvent ↔ SDK payload 双向转换
-- TriggerConverter: SDK Trigger → Core HandlerFilter 转换
-"""
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
 
-from .capability_bridge import CoreCapabilityBridge
-from .event_converter import EventConverter
-from .plugin_bridge import SdkPluginBridge
-from .trigger_converter import TriggerConverter
+if TYPE_CHECKING:
+    from .capability_bridge import CoreCapabilityBridge
+    from .event_converter import EventConverter
+    from .plugin_bridge import SdkPluginBridge
+    from .trigger_converter import TriggerConverter
 
 __all__ = [
     "CoreCapabilityBridge",
-    "SdkPluginBridge",
     "EventConverter",
+    "SdkPluginBridge",
     "TriggerConverter",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "CoreCapabilityBridge":
+        return import_module(".capability_bridge", __name__).CoreCapabilityBridge
+    if name == "EventConverter":
+        return import_module(".event_converter", __name__).EventConverter
+    if name == "SdkPluginBridge":
+        return import_module(".plugin_bridge", __name__).SdkPluginBridge
+    if name == "TriggerConverter":
+        return import_module(".trigger_converter", __name__).TriggerConverter
+    raise AttributeError(name)

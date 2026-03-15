@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from astrbot_sdk.message_components import component_to_payload_sync
+
 if TYPE_CHECKING:
     from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
@@ -48,6 +50,19 @@ class EventConverter:
         extras = event.get_extra()
         if isinstance(extras, dict) and extras:
             payload["extras"] = dict(extras)
+        messages = []
+        for component in event.get_messages():
+            try:
+                messages.append(component_to_payload_sync(component))
+            except Exception:
+                messages.append(
+                    {
+                        "type": "unknown",
+                        "data": {"value": str(component)},
+                    }
+                )
+        if messages:
+            payload["messages"] = messages
         return payload
 
     @staticmethod

@@ -10,8 +10,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, cast
 
+from ..message_components import BaseMessageComponent
+from ..message_result import MessageChain
 from ..message_session import MessageSession
 from ..protocol.descriptors import SessionRef
 from ._proxy import CapabilityProxy
@@ -101,7 +104,7 @@ class PlatformClient:
     async def send_chain(
         self,
         session: str | SessionRef | MessageSession,
-        chain: list[dict[str, Any]],
+        chain: MessageChain | Sequence[BaseMessageComponent] | Sequence[dict[str, Any]],
     ) -> dict[str, Any]:
         """发送富消息链。
 
@@ -113,9 +116,19 @@ class PlatformClient:
             发送结果
         """
         session_id, extra = self._build_target_payload(session)
+        if isinstance(chain, MessageChain):
+            chain_payload = await chain.to_payload_async()
+        elif isinstance(chain, Sequence) and all(
+            isinstance(item, BaseMessageComponent) for item in chain
+        ):
+            components = cast(Sequence[BaseMessageComponent], chain)
+            chain_payload = await MessageChain(list(components)).to_payload_async()
+        else:
+            payload_items = cast(Sequence[dict[str, Any]], chain)
+            chain_payload = [dict(item) for item in payload_items]
         return await self._proxy.call(
             "platform.send_chain",
-            {"session": session_id, "chain": chain, **extra},
+            {"session": session_id, "chain": chain_payload, **extra},
         )
 
     async def get_members(

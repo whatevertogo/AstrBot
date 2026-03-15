@@ -77,13 +77,23 @@ import asyncio
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from typing import IO
+from typing import IO, Any
 
-import aiohttp
-from aiohttp import web
 from loguru import logger
 
 MessageHandler = Callable[[str], Awaitable[None]]
+
+
+def _get_aiohttp():
+    import aiohttp
+
+    return aiohttp
+
+
+def _get_web():
+    from aiohttp import web
+
+    return web
 
 
 def _frame_stdio_payload(payload: str) -> str:
@@ -243,14 +253,15 @@ class WebSocketServerTransport(Transport):
         self._actual_port: int | None = None
         self._path = path
         self._heartbeat = heartbeat
-        self._app: web.Application | None = None
-        self._runner: web.AppRunner | None = None
-        self._site: web.TCPSite | None = None
-        self._ws: web.WebSocketResponse | None = None
+        self._app: Any | None = None
+        self._runner: Any | None = None
+        self._site: Any | None = None
+        self._ws: Any | None = None
         self._write_lock = asyncio.Lock()
         self._connected = asyncio.Event()
 
     async def start(self) -> None:
+        web = _get_web()
         self._closed.clear()
         self._connected.clear()
         self._app = web.Application()
@@ -283,7 +294,9 @@ class WebSocketServerTransport(Transport):
         async with self._write_lock:
             await self._ws.send_str(payload)
 
-    async def _handle_socket(self, request: web.Request) -> web.WebSocketResponse:
+    async def _handle_socket(self, request) -> Any:
+        web = _get_web()
+        aiohttp = _get_aiohttp()
         if self._ws is not None and not self._ws.closed:
             ws = web.WebSocketResponse()
             await ws.prepare(request)
@@ -330,11 +343,12 @@ class WebSocketClientTransport(Transport):
         super().__init__()
         self._url = url
         self._heartbeat = heartbeat
-        self._session: aiohttp.ClientSession | None = None
-        self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._session: Any | None = None
+        self._ws: Any | None = None
         self._reader_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
+        aiohttp = _get_aiohttp()
         self._closed.clear()
         self._session = aiohttp.ClientSession()
         self._ws = await self._session.ws_connect(
@@ -366,6 +380,7 @@ class WebSocketClientTransport(Transport):
 
     async def _read_loop(self) -> None:
         assert self._ws is not None
+        aiohttp = _get_aiohttp()
         try:
             async for msg in self._ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:

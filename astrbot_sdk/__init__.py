@@ -20,17 +20,45 @@ from .decorators import (
 )
 from .errors import AstrBotError
 from .events import MessageEvent
+from .message_components import (
+    At,
+    AtAll,
+    File,
+    Forward,
+    Image,
+    Plain,
+    Poke,
+    Record,
+    Reply,
+    UnknownComponent,
+    Video,
+)
+from .message_result import EventResultType, MessageChain, MessageEventResult
 from .message_session import MessageSession
 from .session_waiter import SessionController, session_waiter
 from .star import Star
 
 __all__ = [
     "AstrBotError",
+    "At",
+    "AtAll",
     "Context",
+    "EventResultType",
+    "File",
+    "Forward",
+    "Image",
     "MessageEvent",
+    "MessageEventResult",
+    "MessageChain",
     "MessageSession",
+    "Plain",
+    "Poke",
+    "Record",
+    "Reply",
     "SessionController",
     "Star",
+    "UnknownComponent",
+    "Video",
     "on_command",
     "on_event",
     "on_message",

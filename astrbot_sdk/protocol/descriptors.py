@@ -242,6 +242,45 @@ SESSION_REF_SCHEMA = _object_schema(
     platform=_nullable({"type": "string"}),
     raw=_nullable({"type": "object"}),
 )
+SYSTEM_EVENT_REACT_INPUT_SCHEMA = _object_schema(
+    required=("emoji",),
+    target=_nullable(SESSION_REF_SCHEMA),
+    emoji={"type": "string"},
+)
+SYSTEM_EVENT_REACT_OUTPUT_SCHEMA = _object_schema(
+    required=("supported",),
+    supported={"type": "boolean"},
+)
+SYSTEM_EVENT_SEND_TYPING_INPUT_SCHEMA = _object_schema(
+    target=_nullable(SESSION_REF_SCHEMA),
+)
+SYSTEM_EVENT_SEND_TYPING_OUTPUT_SCHEMA = _object_schema(
+    required=("supported",),
+    supported={"type": "boolean"},
+)
+SYSTEM_EVENT_SEND_STREAMING_INPUT_SCHEMA = _object_schema(
+    target=_nullable(SESSION_REF_SCHEMA),
+    use_fallback={"type": "boolean"},
+)
+SYSTEM_EVENT_SEND_STREAMING_OUTPUT_SCHEMA = _object_schema(
+    required=("supported",),
+    supported={"type": "boolean"},
+    stream_id=_nullable({"type": "string"}),
+)
+SYSTEM_EVENT_SEND_STREAMING_CHUNK_INPUT_SCHEMA = _object_schema(
+    required=("stream_id", "chain"),
+    stream_id={"type": "string"},
+    chain={"type": "array", "items": {"type": "object"}},
+)
+SYSTEM_EVENT_SEND_STREAMING_CHUNK_OUTPUT_SCHEMA = _object_schema()
+SYSTEM_EVENT_SEND_STREAMING_CLOSE_INPUT_SCHEMA = _object_schema(
+    required=("stream_id",),
+    stream_id={"type": "string"},
+)
+SYSTEM_EVENT_SEND_STREAMING_CLOSE_OUTPUT_SCHEMA = _object_schema(
+    required=("supported",),
+    supported={"type": "boolean"},
+)
 PLATFORM_SEND_INPUT_SCHEMA = _object_schema(
     required=("session", "text"),
     session={"type": "string"},
@@ -454,6 +493,26 @@ BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
     "system.session_waiter.unregister": {
         "input": SYSTEM_SESSION_WAITER_UNREGISTER_INPUT_SCHEMA,
         "output": SYSTEM_SESSION_WAITER_UNREGISTER_OUTPUT_SCHEMA,
+    },
+    "system.event.react": {
+        "input": SYSTEM_EVENT_REACT_INPUT_SCHEMA,
+        "output": SYSTEM_EVENT_REACT_OUTPUT_SCHEMA,
+    },
+    "system.event.send_typing": {
+        "input": SYSTEM_EVENT_SEND_TYPING_INPUT_SCHEMA,
+        "output": SYSTEM_EVENT_SEND_TYPING_OUTPUT_SCHEMA,
+    },
+    "system.event.send_streaming": {
+        "input": SYSTEM_EVENT_SEND_STREAMING_INPUT_SCHEMA,
+        "output": SYSTEM_EVENT_SEND_STREAMING_OUTPUT_SCHEMA,
+    },
+    "system.event.send_streaming_chunk": {
+        "input": SYSTEM_EVENT_SEND_STREAMING_CHUNK_INPUT_SCHEMA,
+        "output": SYSTEM_EVENT_SEND_STREAMING_CHUNK_OUTPUT_SCHEMA,
+    },
+    "system.event.send_streaming_close": {
+        "input": SYSTEM_EVENT_SEND_STREAMING_CLOSE_INPUT_SCHEMA,
+        "output": SYSTEM_EVENT_SEND_STREAMING_CLOSE_OUTPUT_SCHEMA,
     },
 }
 
@@ -774,5 +833,15 @@ __all__ = [
     "ScheduleTrigger",
     "SESSION_REF_SCHEMA",
     "SessionRef",
+    "SYSTEM_EVENT_REACT_INPUT_SCHEMA",
+    "SYSTEM_EVENT_REACT_OUTPUT_SCHEMA",
+    "SYSTEM_EVENT_SEND_STREAMING_CHUNK_INPUT_SCHEMA",
+    "SYSTEM_EVENT_SEND_STREAMING_CHUNK_OUTPUT_SCHEMA",
+    "SYSTEM_EVENT_SEND_STREAMING_CLOSE_INPUT_SCHEMA",
+    "SYSTEM_EVENT_SEND_STREAMING_CLOSE_OUTPUT_SCHEMA",
+    "SYSTEM_EVENT_SEND_STREAMING_INPUT_SCHEMA",
+    "SYSTEM_EVENT_SEND_STREAMING_OUTPUT_SCHEMA",
+    "SYSTEM_EVENT_SEND_TYPING_INPUT_SCHEMA",
+    "SYSTEM_EVENT_SEND_TYPING_OUTPUT_SCHEMA",
     "Trigger",
 ]

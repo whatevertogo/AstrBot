@@ -48,6 +48,12 @@ from .runtime.loader import (
 from .star import Star
 
 
+def _clone_payload_mapping(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    return {str(key): item for key, item in value.items()}
+
+
 class _PluginLoadError(RuntimeError):
     """本地 harness 初始化阶段的已知插件加载失败。"""
 
@@ -98,11 +104,7 @@ class RecordedSend:
                 if isinstance(payload.get("chain"), list)
                 else None
             ),
-            target=(
-                dict(payload.get("target"))
-                if isinstance(payload.get("target"), dict)
-                else None
-            ),
+            target=_clone_payload_mapping(payload.get("target")),
             raw=dict(payload),
         )
 
@@ -482,6 +484,10 @@ class MockContext(RuntimeContext):
     @property
     def sent_messages(self) -> list[RecordedSend]:
         return list(self.platform_sink.records)
+
+    @property
+    def event_actions(self) -> list[dict[str, Any]]:
+        return list(self.router.event_actions)
 
 
 class MockMessageEvent(MessageEvent):

@@ -10,7 +10,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from quart import Quart
+from quart import Quart, jsonify, request
+from quart import Response as QuartResponse
 
 
 def _install_optional_dependency_stubs() -> None:
@@ -92,11 +93,10 @@ def _install_optional_dependency_stubs() -> None:
 
 _install_optional_dependency_stubs()
 
+from astrbot.core.message.components import Plain
 from astrbot.core.platform.message_type import MessageType
-from astrbot.core.sdk_bridge import capability_bridge as capability_bridge_module
 from astrbot.core.sdk_bridge import plugin_bridge as plugin_bridge_module
 from astrbot.core.sdk_bridge.plugin_bridge import SdkPluginBridge
-from astrbot.dashboard.server import AstrBotDashboard
 
 
 class _FakeSharedPreferences:
@@ -184,10 +184,14 @@ class _FakeEvent:
         self._stopped = False
         self._extras: dict[str, object] = {}
         self._has_send_oper = False
+        self._messages = [Plain(text, convert=False)]
         self.call_llm = False
         self.is_wake = True
         self.is_at_or_wake_command = True
         self.unified_msg_origin = "test-platform:friend:local-session"
+        self.reactions: list[str] = []
+        self.typing_calls = 0
+        self.streaming_chunks: list[str] = []
 
     def get_message_type(self) -> MessageType:
         return MessageType.FRIEND_MESSAGE
@@ -219,6 +223,9 @@ class _FakeEvent:
     def get_message_outline(self) -> str:
         return self._text
 
+    def get_messages(self):
+        return list(self._messages)
+
     def get_extra(self, key: str | None = None, default=None):
         if key is None:
             return self._extras
@@ -236,20 +243,75 @@ class _FakeEvent:
     async def get_group(self):
         return None
 
+    async def react(self, emoji: str) -> None:
+        self.reactions.append(emoji)
+        self._has_send_oper = True
 
-def _build_dashboard_with_sdk_route(fake_context, bridge: SdkPluginBridge) -> AstrBotDashboard:
-    dashboard = AstrBotDashboard.__new__(AstrBotDashboard)
-    dashboard.core_lifecycle = SimpleNamespace(
+    async def send_typing(self) -> None:
+        self.typing_calls += 1
+
+    async def send_streaming(self, generator, use_fallback: bool = False) -> None:
+        async for chain in generator:
+            self.streaming_chunks.append(
+                chain.get_plain_text(with_other_comps_mark=True)
+            )
+        self._has_send_oper = True
+
+
+def _build_sdk_plugin_response(output: dict) -> QuartResponse:
+    status = int(output.get("status", 200))
+    headers = output.get("headers")
+    if headers is None:
+        headers = {}
+    if not isinstance(headers, dict):
+        raise ValueError("SDK HTTP handler headers must be an object")
+
+    body = output.get("body")
+    if isinstance(body, (dict, list)):
+        response = jsonify(body)
+        response.status_code = status
+        response.headers.setdefault("Content-Type", "application/json")
+    elif isinstance(body, str):
+        response = QuartResponse(
+            body,
+            status=status,
+            content_type="text/plain; charset=utf-8",
+        )
+    elif body is None:
+        response = QuartResponse("", status=status)
+    else:
+        raise ValueError("SDK HTTP handler body must be object, array, string or null")
+
+    for key, value in headers.items():
+        response.headers[str(key)] = str(value)
+    return response
+
+
+def _build_dashboard_with_sdk_route(fake_context, bridge: SdkPluginBridge):
+    app = Quart("sdk-dashboard-e2e")
+    lifecycle = SimpleNamespace(
         star_context=fake_context,
         sdk_plugin_bridge=bridge,
     )
-    dashboard.app = Quart("sdk-dashboard-e2e")
-    dashboard.app.add_url_rule(
+
+    async def srv_plug_route(subpath, *args, **kwargs):
+        for route, view_handler, methods, _ in fake_context.registered_web_apis:
+            if route == f"/{subpath}" and request.method in methods:
+                return await view_handler(*args, **kwargs)
+        output = await lifecycle.sdk_plugin_bridge.dispatch_http_request(
+            f"/{subpath}",
+            request.method,
+        )
+        if output is not None:
+            return _build_sdk_plugin_response(output)
+        return jsonify({"status": "error", "message": "未找到该路由"})
+
+    app.add_url_rule(
         "/api/plug/<path:subpath>",
-        view_func=dashboard.srv_plug_route,
+        view_func=srv_plug_route,
         methods=["GET", "POST"],
     )
-    return dashboard
+    return SimpleNamespace(app=app, core_lifecycle=lifecycle)
 
 
 @pytest.mark.integration
@@ -274,9 +336,16 @@ async def test_sdk_bridge_dispatches_demo_plugin_end_to_end(
         "get_astrbot_data_path",
         lambda: str(temp_data_dir),
     )
-    monkeypatch.setattr(capability_bridge_module, "sp", fake_sp)
 
     bridge = SdkPluginBridge(fake_context)
+    capability_bridge_module = sys.modules[
+        bridge.capability_bridge.__class__.__module__
+    ]
+    monkeypatch.setattr(
+        capability_bridge_module,
+        "_get_runtime_sp",
+        lambda: fake_sp,
+    )
     bridge.env_manager.prepare_environment = lambda plugin: Path(sys.executable)
     fake_context.sdk_plugin_bridge = bridge
 
@@ -328,6 +397,48 @@ async def test_sdk_bridge_dispatches_demo_plugin_end_to_end(
         assert keyword_result.sent_message is True
         assert keyword_result.executed_handlers[0]["handler_id"].endswith("sdk_ping")
         assert fake_context.sent_messages[-1]["text"] == "sdk pong: please sdk ping now"
+
+        chain_event = _FakeEvent("sdkchain")
+        chain_result = await bridge.dispatch_message(chain_event)
+        assert chain_result.sent_message is True
+        assert chain_result.executed_handlers[0]["handler_id"].endswith("sdkchain")
+        chain_message = fake_context.sent_messages[-1]["message_chain"]
+        assert chain_message.get_plain_text(with_other_comps_mark=True).startswith(
+            "sdk chain"
+        )
+
+        messages_event = _FakeEvent("sdkmessages")
+        messages_result = await bridge.dispatch_message(messages_event)
+        assert messages_result.sent_message is True
+        assert "outline=sdkmessages" in str(fake_context.sent_messages[-1]["text"])
+        assert "count=1" in str(fake_context.sent_messages[-1]["text"])
+        assert "first=Plain" in str(fake_context.sent_messages[-1]["text"])
+
+        extras_event = _FakeEvent("sdkextras")
+        extras_result = await bridge.dispatch_message(extras_event)
+        assert extras_result.sent_message is True
+        assert (
+            fake_context.sent_messages[-1]["text"]
+            == "before=value size=1 after=missing"
+        )
+
+        typing_event = _FakeEvent("sdktyping")
+        typing_result = await bridge.dispatch_message(typing_event)
+        assert typing_result.sent_message is True
+        assert typing_event.typing_calls == 1
+        assert fake_context.sent_messages[-1]["text"] == "sdk typing supported=True"
+
+        react_event = _FakeEvent("sdkreact")
+        react_result = await bridge.dispatch_message(react_event)
+        assert react_result.sent_message is True
+        assert react_event.reactions == ["👍"]
+        assert fake_context.sent_messages[-1]["text"] == "sdk react supported=True"
+
+        stream_event = _FakeEvent("sdkstream")
+        stream_result = await bridge.dispatch_message(stream_event)
+        assert stream_result.sent_message is True
+        assert stream_event.streaming_chunks == ["sdk", " stream"]
+        assert fake_context.sent_messages[-1]["text"] == "sdk stream supported=True"
 
         await bridge.dispatch_system_event("astrbot_loaded")
         await bridge.dispatch_system_event(
@@ -427,9 +538,16 @@ async def test_dashboard_sdk_plug_route_end_to_end(
         "get_astrbot_data_path",
         lambda: str(temp_data_dir),
     )
-    monkeypatch.setattr(capability_bridge_module, "sp", fake_sp)
 
     bridge = SdkPluginBridge(fake_context)
+    capability_bridge_module = sys.modules[
+        bridge.capability_bridge.__class__.__module__
+    ]
+    monkeypatch.setattr(
+        capability_bridge_module,
+        "_get_runtime_sp",
+        lambda: fake_sp,
+    )
     bridge.env_manager.prepare_environment = lambda plugin: Path(sys.executable)
     fake_context.sdk_plugin_bridge = bridge
 

@@ -2,23 +2,49 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from astrbot.api import sp
-from astrbot.core import html_renderer
-from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.message.components import ComponentTypes, Image, Plain
 from astrbot.core.message.message_event_result import MessageChain
-from astrbot.core.provider.entities import LLMResponse
+from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from astrbot_sdk._invocation_context import current_caller_plugin_id
 from astrbot_sdk.errors import AstrBotError
 from astrbot_sdk.runtime.capability_router import CapabilityRouter, StreamExecution
 
 if TYPE_CHECKING:
+    from astrbot.core.agent.tool import ToolSet
+    from astrbot.core.provider.entities import LLMResponse
     from astrbot.core.star.context import Context as StarContext
+
+
+def _get_runtime_sp():
+    from astrbot.core import sp
+
+    return sp
+
+
+def _get_runtime_html_renderer():
+    from astrbot.core import html_renderer
+
+    return html_renderer
+
+
+def _get_runtime_tool_types():
+    from astrbot.core.agent.tool import FunctionTool, ToolSet
+
+    return FunctionTool, ToolSet
+
+
+@dataclass(slots=True)
+class _EventStreamState:
+    request_context: Any
+    queue: asyncio.Queue[MessageChain | None]
+    task: asyncio.Task[None]
 
 
 class CoreCapabilityBridge(CapabilityRouter):
@@ -27,6 +53,7 @@ class CoreCapabilityBridge(CapabilityRouter):
     def __init__(self, *, star_context: StarContext, plugin_bridge) -> None:
         self._star_context = star_context
         self._plugin_bridge = plugin_bridge
+        self._event_streams: dict[str, _EventStreamState] = {}
         super().__init__()
         self._register_system_capabilities()
 
@@ -216,7 +243,8 @@ class CoreCapabilityBridge(CapabilityRouter):
 
     @staticmethod
     def _build_toolset(tools_payload: list[Any]) -> ToolSet:
-        tool_set = ToolSet()
+        function_tool_cls, tool_set_cls = _get_runtime_tool_types()
+        tool_set = tool_set_cls()
         for item in tools_payload:
             if not isinstance(item, dict):
                 raise AstrBotError.invalid_input("llm tools items must be objects")
@@ -239,7 +267,7 @@ class CoreCapabilityBridge(CapabilityRouter):
             if not isinstance(parameters, dict):
                 parameters = {"type": "object", "properties": {}}
             tool_set.add_tool(
-                FunctionTool(
+                function_tool_cls(
                     name=name,
                     description=description,
                     parameters=parameters,
@@ -291,7 +319,7 @@ class CoreCapabilityBridge(CapabilityRouter):
     ) -> dict[str, Any]:
         plugin_id = self._resolve_plugin_id(request_id)
         return {
-            "value": await sp.get_async(
+            "value": await _get_runtime_sp().get_async(
                 "plugin",
                 plugin_id,
                 str(payload.get("key", "")),
@@ -306,7 +334,7 @@ class CoreCapabilityBridge(CapabilityRouter):
         _token,
     ) -> dict[str, Any]:
         plugin_id = self._resolve_plugin_id(request_id)
-        await sp.put_async(
+        await _get_runtime_sp().put_async(
             "plugin",
             plugin_id,
             str(payload.get("key", "")),
@@ -321,7 +349,11 @@ class CoreCapabilityBridge(CapabilityRouter):
         _token,
     ) -> dict[str, Any]:
         plugin_id = self._resolve_plugin_id(request_id)
-        await sp.remove_async("plugin", plugin_id, str(payload.get("key", "")))
+        await _get_runtime_sp().remove_async(
+            "plugin",
+            plugin_id,
+            str(payload.get("key", "")),
+        )
         return {}
 
     async def _db_list(
@@ -333,7 +365,7 @@ class CoreCapabilityBridge(CapabilityRouter):
         plugin_id = self._resolve_plugin_id(request_id)
         prefix = payload.get("prefix")
         prefix_value = str(prefix) if isinstance(prefix, str) else None
-        items = await sp.range_get_async("plugin", plugin_id, None)
+        items = await _get_runtime_sp().range_get_async("plugin", plugin_id, None)
         keys = sorted(
             item.key
             for item in items
@@ -357,7 +389,12 @@ class CoreCapabilityBridge(CapabilityRouter):
             items.append(
                 {
                     "key": key_text,
-                    "value": await sp.get_async("plugin", plugin_id, key_text, None),
+                    "value": await _get_runtime_sp().get_async(
+                        "plugin",
+                        plugin_id,
+                        key_text,
+                        None,
+                    ),
                 }
             )
         return {"items": items}
@@ -375,7 +412,7 @@ class CoreCapabilityBridge(CapabilityRouter):
         for item in items_payload:
             if not isinstance(item, dict):
                 raise AstrBotError.invalid_input("db.set_many items must be objects")
-            await sp.put_async(
+            await _get_runtime_sp().put_async(
                 "plugin",
                 plugin_id,
                 str(item.get("key", "")),
@@ -457,7 +494,7 @@ class CoreCapabilityBridge(CapabilityRouter):
         value = payload.get("value")
         if not isinstance(value, dict):
             raise AstrBotError.invalid_input("memory.save requires an object value")
-        await sp.put_async(
+        await _get_runtime_sp().put_async(
             self.MEMORY_SCOPE,
             plugin_id,
             str(payload.get("key", "")),
@@ -472,7 +509,7 @@ class CoreCapabilityBridge(CapabilityRouter):
         _token,
     ) -> dict[str, Any]:
         plugin_id = self._resolve_plugin_id(request_id)
-        value = await sp.get_async(
+        value = await _get_runtime_sp().get_async(
             self.MEMORY_SCOPE,
             plugin_id,
             str(payload.get("key", "")),
@@ -487,7 +524,7 @@ class CoreCapabilityBridge(CapabilityRouter):
         _token,
     ) -> dict[str, Any]:
         plugin_id = self._resolve_plugin_id(request_id)
-        await sp.remove_async(
+        await _get_runtime_sp().remove_async(
             self.MEMORY_SCOPE,
             plugin_id,
             str(payload.get("key", "")),
@@ -507,7 +544,7 @@ class CoreCapabilityBridge(CapabilityRouter):
                 "memory.save_with_ttl requires an object value"
             )
         ttl_seconds = int(payload.get("ttl_seconds", 0))
-        await sp.put_async(
+        await _get_runtime_sp().put_async(
             self.MEMORY_SCOPE,
             plugin_id,
             str(payload.get("key", "")),
@@ -528,7 +565,12 @@ class CoreCapabilityBridge(CapabilityRouter):
         items = []
         for key in keys_payload:
             key_text = str(key)
-            stored = await sp.get_async(self.MEMORY_SCOPE, plugin_id, key_text, None)
+            stored = await _get_runtime_sp().get_async(
+                self.MEMORY_SCOPE,
+                plugin_id,
+                key_text,
+                None,
+            )
             if (
                 isinstance(stored, dict)
                 and "value" in stored
@@ -551,10 +593,19 @@ class CoreCapabilityBridge(CapabilityRouter):
         deleted_count = 0
         for key in keys_payload:
             key_text = str(key)
-            existing = await sp.get_async(self.MEMORY_SCOPE, plugin_id, key_text, None)
+            existing = await _get_runtime_sp().get_async(
+                self.MEMORY_SCOPE,
+                plugin_id,
+                key_text,
+                None,
+            )
             if existing is None:
                 continue
-            await sp.remove_async(self.MEMORY_SCOPE, plugin_id, key_text)
+            await _get_runtime_sp().remove_async(
+                self.MEMORY_SCOPE,
+                plugin_id,
+                key_text,
+            )
             deleted_count += 1
         return {"deleted_count": deleted_count}
 
@@ -643,43 +694,10 @@ class CoreCapabilityBridge(CapabilityRouter):
             raise AstrBotError.invalid_input(
                 "platform.send_chain requires a chain array"
             )
-        components = []
-        for item in chain_payload:
-            if not isinstance(item, dict):
-                continue
-            comp_type = str(item.get("type", "")).lower()
-            data = item.get("data", {})
-            if comp_type in {"text", "plain"} and isinstance(data, dict):
-                components.append(Plain(str(data.get("text", "")), convert=False))
-                continue
-            if comp_type == "image" and isinstance(data, dict):
-                file_value = str(data.get("file", ""))
-                if file_value.startswith(("http://", "https://")):
-                    components.append(Image.fromURL(file_value))
-                elif file_value:
-                    file_path = (
-                        file_value[8:]
-                        if file_value.startswith("file:///")
-                        else file_value
-                    )
-                    components.append(Image.fromFileSystem(file_path))
-                continue
-            component_cls = ComponentTypes.get(comp_type)
-            if component_cls is None:
-                components.append(
-                    Plain(json.dumps(item, ensure_ascii=False), convert=False)
-                )
-                continue
-            try:
-                if isinstance(data, dict):
-                    components.append(component_cls(**data))
-                else:
-                    components.append(Plain(str(item), convert=False))
-            except Exception:
-                components.append(
-                    Plain(json.dumps(item, ensure_ascii=False), convert=False)
-                )
-        await self._star_context.send_message(session, MessageChain(components))
+        await self._star_context.send_message(
+            session,
+            self._build_core_message_chain(chain_payload),
+        )
         return {"message_id": self._plugin_bridge.mark_platform_send(dispatch_token)}
 
     async def _platform_get_members(
@@ -831,13 +849,22 @@ class CoreCapabilityBridge(CapabilityRouter):
         return self._plugin_bridge.resolve_request_plugin_id(request_id)
 
     async def _load_memory_entries(self, plugin_id: str) -> dict[str, Any]:
-        items = await sp.range_get_async(self.MEMORY_SCOPE, plugin_id, None)
+        items = await _get_runtime_sp().range_get_async(
+            self.MEMORY_SCOPE,
+            plugin_id,
+            None,
+        )
         entries: dict[str, Any] = {}
         for item in items:
             key = str(getattr(item, "key", ""))
             if not key:
                 continue
-            entries[key] = await sp.get_async(self.MEMORY_SCOPE, plugin_id, key, None)
+            entries[key] = await _get_runtime_sp().get_async(
+                self.MEMORY_SCOPE,
+                plugin_id,
+                key,
+                None,
+            )
         return entries
 
     def _register_system_capabilities(self) -> None:
@@ -872,6 +899,43 @@ class CoreCapabilityBridge(CapabilityRouter):
             call_handler=self._system_session_waiter_unregister,
             exposed=False,
         )
+        self.register(
+            self._builtin_descriptor("system.event.react", "Send sdk event reaction"),
+            call_handler=self._system_event_react,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.send_typing",
+                "Send sdk event typing state",
+            ),
+            call_handler=self._system_event_send_typing,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.send_streaming",
+                "Send sdk event streaming chunks",
+            ),
+            call_handler=self._system_event_send_streaming,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.send_streaming_chunk",
+                "Push sdk event streaming chunk",
+            ),
+            call_handler=self._system_event_send_streaming_chunk,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.send_streaming_close",
+                "Close sdk event streaming session",
+            ),
+            call_handler=self._system_event_send_streaming_close,
+            exposed=False,
+        )
 
     async def _system_get_data_dir(
         self,
@@ -897,7 +961,7 @@ class CoreCapabilityBridge(CapabilityRouter):
                 template_name = config_obj.get("t2i_active_template")
             except Exception:
                 template_name = None
-        result = await html_renderer.render_t2i(
+        result = await _get_runtime_html_renderer().render_t2i(
             str(payload.get("text", "")),
             return_url=bool(payload.get("return_url", True)),
             template_name=template_name,
@@ -918,7 +982,7 @@ class CoreCapabilityBridge(CapabilityRouter):
             raise AstrBotError.invalid_input(
                 "system.html_render options must be an object or null"
             )
-        result = await html_renderer.render_custom_template(
+        result = await _get_runtime_html_renderer().render_custom_template(
             str(payload.get("tmpl", "")),
             data,
             return_url=bool(payload.get("return_url", True)),
@@ -952,6 +1016,118 @@ class CoreCapabilityBridge(CapabilityRouter):
         )
         return {}
 
+    async def _system_event_react(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        request_context = self._resolve_event_request_context(request_id, payload)
+        if request_context is None or request_context.cancelled:
+            return {"supported": False}
+        self._plugin_bridge.before_platform_send(request_context.dispatch_token)
+        await request_context.event.react(str(payload.get("emoji", "")))
+        return {
+            "supported": bool(
+                self._plugin_bridge.mark_platform_send(request_context.dispatch_token)
+            )
+        }
+
+    async def _system_event_send_typing(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        request_context = self._resolve_event_request_context(request_id, payload)
+        if request_context is None or request_context.cancelled:
+            return {"supported": False}
+        if type(request_context.event).send_typing is AstrMessageEvent.send_typing:
+            return {"supported": False}
+        await request_context.event.send_typing()
+        return {"supported": True}
+
+    async def _system_event_send_streaming(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        request_context = self._resolve_event_request_context(request_id, payload)
+        if request_context is None or request_context.cancelled:
+            return {"supported": False}
+        if (
+            type(request_context.event).send_streaming
+            is AstrMessageEvent.send_streaming
+        ):
+            return {"supported": False}
+        self._plugin_bridge.before_platform_send(request_context.dispatch_token)
+        queue: asyncio.Queue[MessageChain | None] = asyncio.Queue()
+
+        async def iterator() -> AsyncIterator[MessageChain]:
+            while True:
+                chunk = await queue.get()
+                if chunk is None or request_context.cancelled:
+                    return
+                yield chunk
+                await asyncio.sleep(0)
+
+        stream_id = uuid.uuid4().hex
+        task = asyncio.create_task(
+            request_context.event.send_streaming(
+                iterator(),
+                use_fallback=bool(payload.get("use_fallback", False)),
+            )
+        )
+        self._event_streams[stream_id] = _EventStreamState(
+            request_context=request_context,
+            queue=queue,
+            task=task,
+        )
+        return {"supported": True, "stream_id": stream_id}
+
+    async def _system_event_send_streaming_chunk(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        stream_state = self._event_streams.get(str(payload.get("stream_id", "")))
+        if stream_state is None:
+            raise AstrBotError.invalid_input("Unknown sdk event streaming session")
+        if stream_state.request_context.cancelled:
+            raise AstrBotError.cancelled("The SDK request has been cancelled")
+        chain_payload = payload.get("chain")
+        if not isinstance(chain_payload, list):
+            raise AstrBotError.invalid_input(
+                "system.event.send_streaming_chunk requires a chain array"
+            )
+        await stream_state.queue.put(self._build_core_message_chain(chain_payload))
+        return {}
+
+    async def _system_event_send_streaming_close(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        stream_id = str(payload.get("stream_id", ""))
+        stream_state = self._event_streams.pop(stream_id, None)
+        if stream_state is None:
+            raise AstrBotError.invalid_input("Unknown sdk event streaming session")
+        await stream_state.queue.put(None)
+        try:
+            await stream_state.task
+        finally:
+            self._event_streams.pop(stream_id, None)
+        return {
+            "supported": bool(
+                self._plugin_bridge.mark_platform_send(
+                    stream_state.request_context.dispatch_token
+                )
+            )
+        }
+
     def _resolve_dispatch_target(
         self,
         request_id: str,
@@ -978,3 +1154,62 @@ class CoreCapabilityBridge(CapabilityRouter):
             dispatch_token = request_context.dispatch_token
         session = str(payload.get("session", ""))
         return session, dispatch_token
+
+    def _resolve_event_request_context(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+    ):
+        target_payload = payload.get("target")
+        dispatch_token = ""
+        if isinstance(target_payload, dict):
+            raw_payload = target_payload.get("raw")
+            if isinstance(raw_payload, dict):
+                dispatch_token = str(raw_payload.get("dispatch_token", ""))
+                if not dispatch_token:
+                    nested_raw = raw_payload.get("raw")
+                    if isinstance(nested_raw, dict):
+                        dispatch_token = str(nested_raw.get("dispatch_token", ""))
+        if dispatch_token:
+            return self._plugin_bridge.get_request_context_by_token(dispatch_token)
+        return self._plugin_bridge.resolve_request_session(request_id)
+
+    @staticmethod
+    def _build_core_message_chain(chain_payload: list[dict[str, Any]]) -> MessageChain:
+        components = []
+        for item in chain_payload:
+            if not isinstance(item, dict):
+                continue
+            comp_type = str(item.get("type", "")).lower()
+            data = item.get("data", {})
+            if comp_type in {"text", "plain"} and isinstance(data, dict):
+                components.append(Plain(str(data.get("text", "")), convert=False))
+                continue
+            if comp_type == "image" and isinstance(data, dict):
+                file_value = str(data.get("file") or data.get("url") or "")
+                if file_value.startswith(("http://", "https://")):
+                    components.append(Image.fromURL(file_value))
+                elif file_value:
+                    file_path = (
+                        file_value[8:]
+                        if file_value.startswith("file:///")
+                        else file_value
+                    )
+                    components.append(Image.fromFileSystem(file_path))
+                continue
+            component_cls = ComponentTypes.get(comp_type)
+            if component_cls is None:
+                components.append(
+                    Plain(json.dumps(item, ensure_ascii=False), convert=False)
+                )
+                continue
+            try:
+                if isinstance(data, dict):
+                    components.append(component_cls(**data))
+                else:
+                    components.append(Plain(str(item), convert=False))
+            except Exception:
+                components.append(
+                    Plain(json.dumps(item, ensure_ascii=False), convert=False)
+                )
+        return MessageChain(components)

@@ -1,21 +1,25 @@
-"""AstrBot SDK 的高级运行时原语。
+"""AstrBot SDK runtime public exports.
 
-这里仅暴露相对稳定的运行时构件：协议 `Peer`、传输抽象以及能力/处理器分发器。
-大多数插件作者应优先使用顶层 `astrbot_sdk`。
-
-`loader` / `bootstrap` 等编排细节保留在各自子模块中，不作为根级稳定契约。
+Keep runtime imports lazy so submodule users do not pay the websocket/aiohttp import
+cost unless they actually need transport primitives.
 """
 
-from .capability_router import CapabilityRouter, StreamExecution
-from .handler_dispatcher import HandlerDispatcher
-from .peer import Peer
-from .transport import (
-    MessageHandler,
-    StdioTransport,
-    Transport,
-    WebSocketClientTransport,
-    WebSocketServerTransport,
-)
+from __future__ import annotations
+
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .capability_router import CapabilityRouter, StreamExecution
+    from .handler_dispatcher import HandlerDispatcher
+    from .peer import Peer
+    from .transport import (
+        MessageHandler,
+        StdioTransport,
+        Transport,
+        WebSocketClientTransport,
+        WebSocketServerTransport,
+    )
 
 __all__ = [
     "CapabilityRouter",
@@ -28,3 +32,25 @@ __all__ = [
     "WebSocketClientTransport",
     "WebSocketServerTransport",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name in {"CapabilityRouter", "StreamExecution"}:
+        module = import_module(".capability_router", __name__)
+        return getattr(module, name)
+    if name == "HandlerDispatcher":
+        module = import_module(".handler_dispatcher", __name__)
+        return getattr(module, name)
+    if name == "Peer":
+        module = import_module(".peer", __name__)
+        return getattr(module, name)
+    if name in {
+        "MessageHandler",
+        "StdioTransport",
+        "Transport",
+        "WebSocketClientTransport",
+        "WebSocketServerTransport",
+    }:
+        module = import_module(".transport", __name__)
+        return getattr(module, name)
+    raise AttributeError(name)

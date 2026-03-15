@@ -34,6 +34,8 @@ from .._invocation_context import caller_plugin_scope
 from ..context import CancelToken, Context
 from ..errors import AstrBotError
 from ..events import MessageEvent
+from ..message_components import BaseMessageComponent
+from ..message_result import MessageChain, MessageEventResult, coerce_message_chain
 from ..protocol.descriptors import CommandTrigger, MessageTrigger
 from ..session_waiter import SessionWaiterManager
 from ..star import Star
@@ -54,8 +56,12 @@ class HandlerDispatcher:
         handler_id = str(message.input.get("handler_id", ""))
         if handler_id == "__sdk_session_waiter__":
             plugin_id = self._plugin_id
-            ctx = Context(peer=self._peer, plugin_id=plugin_id, cancel_token=cancel_token)
-            event = MessageEvent.from_payload(message.input.get("event", {}), context=ctx)
+            ctx = Context(
+                peer=self._peer, plugin_id=plugin_id, cancel_token=cancel_token
+            )
+            event = MessageEvent.from_payload(
+                message.input.get("event", {}), context=ctx
+            )
             event.bind_reply_handler(self._create_reply_handler(ctx, event))
             task = asyncio.create_task(self._session_waiters.dispatch(event))
             self._active[message.id] = (task, cancel_token)
@@ -357,6 +363,23 @@ class HandlerDispatcher:
             return True
         if isinstance(item, dict) and "text" in item:
             await event.reply(str(item["text"]))
+            return True
+        if isinstance(item, MessageEventResult):
+            chain = item.chain
+            if chain.components:
+                await event.reply_chain(chain)
+                return True
+            return False
+        chain = coerce_message_chain(item)
+        if chain is not None:
+            if chain.components:
+                await event.reply_chain(chain)
+                return True
+            return False
+        if isinstance(item, list) and all(
+            isinstance(component, BaseMessageComponent) for component in item
+        ):
+            await event.reply_chain(MessageChain(list(item)))
             return True
         # 支持带 text 属性的对象
         text = getattr(item, "text", None)

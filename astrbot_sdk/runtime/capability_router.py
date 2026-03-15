@@ -150,12 +150,30 @@ class _RegisteredPlugin:
     config: dict[str, Any]
 
 
+def _clone_target_payload(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    return {str(key): item for key, item in value.items()}
+
+
+def _clone_chain_payload(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        {str(key): item for key, item in chunk.items()}
+        for chunk in value
+        if isinstance(chunk, dict)
+    ]
+
+
 class CapabilityRouter:
     def __init__(self) -> None:
         self._registrations: dict[str, _CapabilityRegistration] = {}
         self.db_store: dict[str, Any] = {}
         self.memory_store: dict[str, dict[str, Any]] = {}
         self.sent_messages: list[dict[str, Any]] = []
+        self.event_actions: list[dict[str, Any]] = []
+        self._event_streams: dict[str, dict[str, Any]] = {}
         self.http_api_store: list[dict[str, Any]] = []
         self._plugins: dict[str, _RegisteredPlugin] = {}
         self._system_data_root = Path.cwd() / ".astrbot_sdk_testing" / "plugin_data"
@@ -963,6 +981,40 @@ class CapabilityRouter:
             call_handler=self._system_session_waiter_unregister,
             exposed=False,
         )
+        self.register(
+            self._builtin_descriptor("system.event.react", "发送事件表情回应"),
+            call_handler=self._system_event_react,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor("system.event.send_typing", "发送输入中状态"),
+            call_handler=self._system_event_send_typing,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.send_streaming",
+                "发送事件流式消息",
+            ),
+            call_handler=self._system_event_send_streaming,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.send_streaming_chunk",
+                "推送事件流式消息分片",
+            ),
+            call_handler=self._system_event_send_streaming_chunk,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.send_streaming_close",
+                "关闭事件流式消息会话",
+            ),
+            call_handler=self._system_event_send_streaming_close,
+            exposed=False,
+        )
 
     async def _system_get_data_dir(
         self, _request_id: str, _payload: dict[str, Any], _token
@@ -1015,6 +1067,71 @@ class CapabilityRouter:
         if not plugin_waiters:
             self._session_waiters.pop(plugin_id, None)
         return {}
+
+    async def _system_event_react(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        self.event_actions.append(
+            {
+                "action": "react",
+                "emoji": str(payload.get("emoji", "")),
+                "target": _clone_target_payload(payload.get("target")),
+            }
+        )
+        return {"supported": True}
+
+    async def _system_event_send_typing(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        self.event_actions.append(
+            {
+                "action": "send_typing",
+                "target": _clone_target_payload(payload.get("target")),
+            }
+        )
+        return {"supported": True}
+
+    async def _system_event_send_streaming(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        stream_id = f"mock-stream-{len(self._event_streams) + 1}"
+        self._event_streams[stream_id] = {
+            "target": _clone_target_payload(payload.get("target")),
+            "chunks": [],
+            "use_fallback": bool(payload.get("use_fallback", False)),
+        }
+        return {"supported": True, "stream_id": stream_id}
+
+    async def _system_event_send_streaming_chunk(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        stream = self._event_streams.get(str(payload.get("stream_id", "")))
+        if stream is None:
+            raise AstrBotError.invalid_input("Unknown sdk event streaming session")
+        chain = payload.get("chain")
+        if not isinstance(chain, list):
+            raise AstrBotError.invalid_input(
+                "system.event.send_streaming_chunk requires a chain array"
+            )
+        stream["chunks"].append({"chain": _clone_chain_payload(chain)})
+        return {}
+
+    async def _system_event_send_streaming_close(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        stream_id = str(payload.get("stream_id", ""))
+        stream = self._event_streams.pop(stream_id, None)
+        if stream is None:
+            raise AstrBotError.invalid_input("Unknown sdk event streaming session")
+        self.event_actions.append(
+            {
+                "action": "send_streaming",
+                "target": stream["target"],
+                "chunks": list(stream["chunks"]),
+                "use_fallback": bool(stream["use_fallback"]),
+            }
+        )
+        return {"supported": True}
 
     # ------------------------------------------------------------------
     # Schema validation
