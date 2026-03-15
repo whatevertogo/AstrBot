@@ -654,6 +654,7 @@
 | **额外信息** | ✅ | `set_extra()`, `get_extra()`, `clear_extra()` |
 
 > **平台兼容性说明**：
+> #TODO:我们需要限制平台的能力
 > - `send_streaming()` - ✅ 所有平台支持（aiocqhttp, discord, dingtalk, lark, line, misskey, qqofficial, satori, slack, telegram, webchat, wecom, wecom_ai_bot, weixin_official_account）
 > - `react()` - ⚠️ 仅 Discord、飞书(Lark)、Telegram 支持，其他平台返回 `False`
 > - `send_typing()` - ⚠️ 仅 Telegram 支持，其他平台返回 `False`
