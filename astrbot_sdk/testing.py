@@ -18,11 +18,13 @@ import inspect
 import re
 import shlex
 import typing
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, TextIO, get_type_hints
+from typing import Any, TextIO, get_type_hints
 
-from .context import CancelToken, Context as RuntimeContext
+from .context import CancelToken
+from .context import Context as RuntimeContext
 from .errors import AstrBotError
 from .events import MessageEvent
 from .protocol.descriptors import (
@@ -72,7 +74,7 @@ class RecordedSend:
         return self.session_id
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> "RecordedSend":
+    def from_payload(cls, payload: dict[str, Any]) -> RecordedSend:
         if "text" in payload:
             kind = "text"
         elif "image_url" in payload:
@@ -188,7 +190,7 @@ class InMemoryMemory:
 class MockLLMClient:
     """在真实 LLMClient 之上补一层测试控制能力。"""
 
-    def __init__(self, client: Any, router: "MockCapabilityRouter") -> None:
+    def __init__(self, client: Any, router: MockCapabilityRouter) -> None:
         self._client = client
         self._router = router
 
@@ -283,6 +285,9 @@ class MockCapabilityRouter(CapabilityRouter):
                 },
                 "finish_reason": "stop",
                 "tool_calls": [],
+                "role": "assistant",
+                "reasoning_content": None,
+                "reasoning_signature": None,
             }
         if capability == "llm.stream_chat":
             text = self._take_llm_stream_response(str(payload.get("prompt", "")))
@@ -575,7 +580,7 @@ class PluginHarness:
         group_id: str | None = None,
         event_type: str = "message",
         platform_sink: StdoutPlatformSink | None = None,
-    ) -> "PluginHarness":
+    ) -> PluginHarness:
         return cls(
             LocalRuntimeConfig(
                 plugin_dir=Path(plugin_dir),
@@ -588,7 +593,7 @@ class PluginHarness:
             platform_sink=platform_sink,
         )
 
-    async def __aenter__(self) -> "PluginHarness":
+    async def __aenter__(self) -> PluginHarness:
         await self.start()
         return self
 

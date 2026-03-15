@@ -37,6 +37,9 @@ def _nullable(schema: JSONSchema) -> JSONSchema:
 _OPTIONAL_CHAT_PROPERTIES: dict[str, Any] = {
     "system": {"type": "string"},
     "history": {"type": "array", "items": {"type": "object"}},
+    "contexts": {"type": "array", "items": {"type": "object"}},
+    "provider_id": {"type": "string"},
+    "tool_calls_result": {"type": "array", "items": {"type": "object"}},
     "model": {"type": "string"},
     "temperature": {"type": "number"},
     "image_urls": {"type": "array", "items": {"type": "string"}},
@@ -64,6 +67,9 @@ LLM_CHAT_RAW_OUTPUT_SCHEMA = _object_schema(
     usage=_nullable({"type": "object"}),
     finish_reason=_nullable({"type": "string"}),
     tool_calls={"type": "array", "items": {"type": "object"}},
+    role=_nullable({"type": "string"}),
+    reasoning_content=_nullable({"type": "string"}),
+    reasoning_signature=_nullable({"type": "string"}),
 )
 LLM_STREAM_CHAT_INPUT_SCHEMA = _object_schema(
     required=("prompt",),
@@ -532,7 +538,7 @@ class ScheduleTrigger(_DescriptorBase):
         return self.cron
 
     @model_validator(mode="after")
-    def validate_schedule(self) -> "ScheduleTrigger":
+    def validate_schedule(self) -> ScheduleTrigger:
         has_cron = self.cron is not None
         has_interval = self.interval_seconds is not None
         if has_cron == has_interval:
@@ -586,7 +592,7 @@ class HandlerDescriptor(_DescriptorBase):
     permissions: Permissions = Field(default_factory=Permissions)
 
     @model_validator(mode="after")
-    def validate_contract_defaults(self) -> "HandlerDescriptor":
+    def validate_contract_defaults(self) -> HandlerDescriptor:
         if self.contract is None:
             if isinstance(self.trigger, ScheduleTrigger):
                 self.contract = "schedule"
@@ -623,7 +629,7 @@ class CapabilityDescriptor(_DescriptorBase):
     cancelable: bool = False
 
     @model_validator(mode="after")
-    def validate_builtin_schema_governance(self) -> "CapabilityDescriptor":
+    def validate_builtin_schema_governance(self) -> CapabilityDescriptor:
         builtin_schema = BUILTIN_CAPABILITY_SCHEMAS.get(self.name)
         if builtin_schema is None:
             return self

@@ -73,6 +73,9 @@ class CoreCapabilityBridge(CapabilityRouter):
             "usage": usage,
             "finish_reason": "tool_calls" if response.tools_call_ids else "stop",
             "tool_calls": response.to_openai_tool_calls(),
+            "role": response.role,
+            "reasoning_content": response.reasoning_content or None,
+            "reasoning_signature": response.reasoning_signature,
         }
 
     async def _llm_stream_chat(
@@ -81,20 +84,55 @@ class CoreCapabilityBridge(CapabilityRouter):
         payload: dict[str, Any],
         token,
     ) -> StreamExecution:
-        response = await self._call_llm(payload, request_id=request_id)
-        text = response.completion_text
+        provider, request_kwargs = self._resolve_llm_request(
+            payload,
+            request_id=request_id,
+        )
 
-        async def iterator() -> AsyncIterator[dict[str, Any]]:
-            for char in text:
+        async def fallback_iterator() -> AsyncIterator[dict[str, Any]]:
+            response = await provider.text_chat(**request_kwargs)
+            for char in response.completion_text:
                 token.raise_if_cancelled()
                 await asyncio.sleep(0)
                 yield {"text": char}
 
+        async def iterator() -> AsyncIterator[dict[str, Any]]:
+            try:
+                stream = provider.text_chat_stream(**request_kwargs)
+                yielded_text = False
+                async for response in stream:
+                    token.raise_if_cancelled()
+                    text = response.completion_text
+                    if response.is_chunk:
+                        if text:
+                            yielded_text = True
+                            yield {"text": text}
+                        continue
+                    if text:
+                        if yielded_text:
+                            yield {"_final_text": text}
+                        else:
+                            yielded_text = True
+                            yield {"text": text, "_final_text": text}
+                    else:
+                        yield {"_final_text": text}
+            except NotImplementedError:
+                async for item in fallback_iterator():
+                    yield item
+
+        def finalize(chunks: list[dict[str, Any]]) -> dict[str, Any]:
+            final_text = None
+            for item in reversed(chunks):
+                if "_final_text" in item:
+                    final_text = str(item.get("_final_text", ""))
+                    break
+            if final_text is None:
+                final_text = "".join(str(item.get("text", "")) for item in chunks)
+            return {"text": final_text}
+
         return StreamExecution(
             iterator=iterator(),
-            finalize=lambda chunks: {
-                "text": "".join(item.get("text", "") for item in chunks)
-            },
+            finalize=finalize,
         )
 
     async def _call_llm(
@@ -103,34 +141,65 @@ class CoreCapabilityBridge(CapabilityRouter):
         *,
         request_id: str,
     ) -> LLMResponse:
-        prompt = str(payload.get("prompt", ""))
-        history = payload.get("history")
-        contexts = (
-            [dict(item) for item in history] if isinstance(history, list) else None
+        provider, request_kwargs = self._resolve_llm_request(
+            payload,
+            request_id=request_id,
         )
-        image_urls = payload.get("image_urls")
-        image_list = (
-            [str(item) for item in image_urls] if isinstance(image_urls, list) else None
-        )
+        return await provider.text_chat(**request_kwargs)
+
+    def _resolve_llm_request(
+        self,
+        payload: dict[str, Any],
+        *,
+        request_id: str,
+    ) -> tuple[Any, dict[str, Any]]:
         request_context = self._plugin_bridge.resolve_request_session(request_id)
-        provider = self._star_context.get_using_provider(
-            request_context.event.unified_msg_origin
-            if request_context is not None
-            else None,
-        )
+        provider_id = payload.get("provider_id")
+        if provider_id:
+            provider = self._star_context.get_provider_by_id(str(provider_id))
+        else:
+            provider = self._star_context.get_using_provider(
+                request_context.event.unified_msg_origin
+                if request_context is not None
+                else None,
+            )
         if provider is None:
             raise AstrBotError.internal_error(
                 "No active chat provider is available",
                 hint="Please configure a chat provider in AstrBot first",
             )
-        return await provider.text_chat(
-            prompt=prompt,
-            image_urls=image_list,
-            contexts=contexts,
-            system_prompt=str(payload.get("system", "")),
-            model=(str(payload["model"]) if payload.get("model") else None),
-            temperature=payload.get("temperature"),
+        return provider, self._normalize_llm_payload(payload)
+
+    @staticmethod
+    def _normalize_llm_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        contexts_payload = payload.get("contexts")
+        if contexts_payload is None:
+            contexts_payload = payload.get("history")
+        contexts = (
+            [dict(item) for item in contexts_payload]
+            if isinstance(contexts_payload, list)
+            else None
         )
+        image_urls = payload.get("image_urls")
+        tool_calls_result = payload.get("tool_calls_result")
+        request_kwargs: dict[str, Any] = {
+            "prompt": str(payload.get("prompt", "")),
+            "image_urls": (
+                [str(item) for item in image_urls]
+                if isinstance(image_urls, list)
+                else None
+            ),
+            "contexts": contexts,
+            "tool_calls_result": (
+                [dict(item) for item in tool_calls_result]
+                if isinstance(tool_calls_result, list)
+                else None
+            ),
+            "system_prompt": str(payload.get("system", "")),
+            "model": (str(payload["model"]) if payload.get("model") else None),
+            "temperature": payload.get("temperature"),
+        }
+        return request_kwargs
 
     def _register_db_capabilities(self) -> None:
         self.register(

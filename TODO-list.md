@@ -66,6 +66,11 @@
 - 新增 StarMetadata完整字段对比（P2.15）
 - 更新覆盖率总览表格
 
+### 2026-03-15 更新
+- LLM Client 新增 `provider_id` / `contexts` / `tool_calls_result` 能力登记
+- `llm.stream_chat` 改为真实流式优先，只有 `NotImplementedError` 才降级
+- 补充 `Context` / `MessageEvent` / 平台错误跟踪 / 会话级 LLM/TTS 开关等缺口
+
 ---
 
 ---
@@ -77,11 +82,13 @@
 | 方法 | 状态 | 说明 |
 | --- | --- | --- |
 | `chat(prompt, system?, history?, model?, temperature?)` | ✅ | 发送聊天，返回文本 |
-| `chat_raw(prompt, ...)` | ✅ | 返回完整响应（含 usage、tool_calls） |
-| `stream_chat(prompt, ...)` | ⚠️ | 流式聊天（Core端是假流式：等待完整响应后逐字符返回） |
+| `chat_raw(prompt, ...)` | ✅ | 返回完整响应（含 usage、tool_calls，兼容 `role/reasoning_*` 可选扩展） |
+| `stream_chat(prompt, ...)` | ✅ | 真实流式优先，仅 `NotImplementedError` 时降级为完整响应切片流 |
 | `chat(image_urls=[...])` | 🔄 | 多模态：图片输入 |
 | `chat(tools=[...])` | 🔄 | 工具调用 |
-| `chat(contexts=[...])` | 🔄 | 自定义上下文 |
+| `chat(contexts=[...])` | ✅ | 自定义上下文，且优先于 `history` |
+| `chat(provider_id="...")` | ✅ | 显式指定聊天 Provider |
+| `chat(tool_calls_result=[...])` | 🔄 | 工具执行结果透传，不校验 tool_call 语义一致性 |
 | `chat(audio_urls=[...])` | ❌ | 多模态：音频输入 |
 
 ### DBClient (KV 存储)
@@ -175,6 +182,15 @@
 | `image_result(url)` | ❌ | 创建图片结果 |
 | `chain_result(chain)` | ❌ | 创建消息链结果 |
 | `get_group()` | ❌ | 获取群聊数据 |
+| `request_llm()` | ❌ | 触发默认 LLM 请求 |
+| `set_result()` | ❌ | 设置处理结果 |
+| `get_result()` | ❌ | 获取处理结果 |
+| `clear_result()` | ❌ | 清空处理结果 |
+| `make_result()` | ❌ | 构造标准结果对象 |
+| `should_call_llm()` | ❌ | 标记/查询是否继续默认 LLM |
+| `get_platform_id()` | ❌ | 获取平台实例 ID |
+| `get_message_type()` | ❌ | 获取消息类型 |
+| `get_session_id()` | ❌ | 获取会话 ID |
 
 ---
 
@@ -294,12 +310,15 @@
 | `deactivate_llm_tool()` | 无 | ❌ | 停用工具 |
 | `add_llm_tools()` | 无 | ❌ | 添加工具 |
 | `get_using_provider()` | 无 | ❌ | 获取 Provider |
+| `get_current_chat_provider_id()` | 无 | ❌ | 获取当前会话正在使用的聊天 Provider ID |
 | `get_all_providers()` | 无 | ❌ | 列出 Provider |
 | `get_all_tts_providers()` | 无 | ❌ | 列出 TTS Provider |
 | `get_all_stt_providers()` | 无 | ❌ | 列出 STT Provider |
+| `get_all_embedding_providers()` | 无 | ❌ | 列出 Embedding Provider |
 | `get_using_tts_provider()` | 无 | ❌ | TTS Provider |
 | `get_using_stt_provider()` | 无 | ❌ | STT Provider |
 | `register_web_api()` | `ctx.http.register_api()` | ⚠️ | 注册 API（Core端不支持） |
+| `register_commands()` | 无 | ❌ | 注册命令描述/帮助信息 |
 | `register_task()` | 无 | ❌ | 注册后台任务 |
 | `get_platform()` | 无 | ❌ | 获取平台 |
 | `get_platform_inst()` | 无 | ❌ | 获取平台实例 |
@@ -434,6 +453,10 @@
 | --- | --- | --- |
 | `PlatformStatus` 枚举 | ❌ | 平台状态（PENDING/RUNNING/ERROR/STOPPED） |
 | `PlatformError` | ❌ | 平台错误信息 |
+| `Platform.record_error()` | ❌ | 记录平台错误 |
+| `Platform.last_error` | ❌ | 最近一次平台错误 |
+| `Platform.errors` | ❌ | 平台错误历史 |
+| `Platform.clear_errors()` | ❌ | 清空平台错误历史 |
 | `Platform.send_by_session()` | ❌ | 通过会话发送消息 |
 | `Platform.commit_event()` | ❌ | 提交事件到队列 |
 | `Platform.get_client()` | ❌ | 获取平台客户端对象 |
@@ -598,6 +621,19 @@
 | `session_plugin_config` 配置 | ❌ | 会话插件配置存储 |
 | `enabled_plugins` 列表 | ❌ | 会话启用的插件列表 |
 | `disabled_plugins` 列表 | ❌ | 会话禁用的插件列表 |
+
+### P2.11.1 - 会话级 LLM/TTS 开关（SessionServiceManager）
+
+| 功能 | 状态 | 说明 |
+| --- | --- | --- |
+| `SessionServiceManager` 类 | ❌ | 会话级服务开关管理器 |
+| `is_llm_enabled_for_session(session_id)` | ❌ | 检查会话是否启用 LLM |
+| `set_llm_status_for_session(session_id, enabled)` | ❌ | 设置会话 LLM 开关 |
+| `should_process_llm_request(session_id)` | ❌ | 判断是否处理默认 LLM 请求 |
+| `is_tts_enabled_for_session(session_id)` | ❌ | 检查会话是否启用 TTS |
+| `set_tts_status_for_session(session_id, enabled)` | ❌ | 设置会话 TTS 开关 |
+| `should_process_tts_request(session_id)` | ❌ | 判断是否处理 TTS 请求 |
+| `is_session_enabled(session_id)` | ❌ | 汇总判断会话服务是否可用 |
 
 ### P2.12 - 命令组系统（CommandGroupFilter）
 
