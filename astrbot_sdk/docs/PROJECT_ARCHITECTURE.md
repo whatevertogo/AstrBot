@@ -822,39 +822,6 @@ class MyPlugin(Star):
         return {"result": x * 2}
 ```
 
-### 旧版兼容插件
-
-#### plugin.yaml
-
-```yaml
-name: my_old_plugin
-version: 1.0.0
-components:
-  - class: main:MyOldPlugin
-```
-
-#### main.py
-
-```python
-from astrbot.api.star import Star
-from astrbot.api.event import AstrMessageEvent
-
-class MyOldPlugin(Star):
-    # 旧版装饰器仍然支持
-    @command_handler("old_hello")
-    def old_hello_handler(self, event: AstrMessageEvent):
-        # 旧版 API 调用
-        reply = self.call_context_function("llm_generate", prompt="你好")
-        event.reply(reply)
-
-    # 生命周期钩子
-    async def on_start(self):
-        self.put_kv_data("started", True)
-
-    async def on_stop(self):
-        self.put_kv_data("started", False)
-```
-
 ### 生命周期钩子
 
 | 钩子 | 说明 |
