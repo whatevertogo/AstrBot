@@ -128,6 +128,16 @@ class RespondStage(Stage):
         # 如果所有组件都为空
         return True
 
+    @staticmethod
+    def _message_outline_for_sdk_event(
+        chain: MessageChain | list[BaseMessageComponent] | None,
+    ) -> str:
+        if isinstance(chain, MessageChain):
+            return chain.get_plain_text(with_other_comps_mark=True)
+        if isinstance(chain, list):
+            return MessageChain(chain).get_plain_text(with_other_comps_mark=True)
+        return ""
+
     def is_seg_reply_required(self, event: AstrMessageEvent) -> bool:
         """检查是否需要分段回复"""
         if not self.enable_seg:
@@ -305,8 +315,8 @@ class RespondStage(Stage):
                         "message_type": event.get_message_type().value,
                         "sender_name": event.get_sender_name(),
                         "self_id": event.get_self_id(),
-                        "message_outline": result.chain.get_plain_text(
-                            with_other_comps_mark=True
+                        "message_outline": self._message_outline_for_sdk_event(
+                            result.chain
                         ),
                     },
                 )

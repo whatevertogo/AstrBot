@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 import types
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -40,6 +41,10 @@ def _install_optional_dependency_stubs() -> None:
 
 _install_optional_dependency_stubs()
 
+from astrbot.core.message.components import Plain
+from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.pipeline.respond.stage import RespondStage
+from astrbot.core.sdk_bridge.event_converter import EventConverter
 from astrbot_sdk import MessageSession
 from astrbot_sdk.events import MessageEvent
 from astrbot_sdk.testing import MockContext
@@ -122,3 +127,77 @@ def test_message_session_round_trip() -> None:
     assert session.message_type == "group"
     assert session.session_id == "room-7"
     assert str(session) == "demo-platform:group:room-7"
+
+
+class _EventConverterProbe:
+    def __init__(self) -> None:
+        self.is_wake = False
+        self.is_at_or_wake_command = False
+        self.unified_msg_origin = "demo-platform:private:user-1"
+        self._extras = {
+            "serializable": {"value": 1},
+            "callback": partial(str.upper, "demo"),
+        }
+
+    def get_message_type(self):
+        return types.SimpleNamespace(value="private")
+
+    def get_platform_id(self) -> str:
+        return "demo-platform-id"
+
+    def get_message_str(self) -> str:
+        return "demo text"
+
+    def get_sender_id(self) -> str:
+        return "user-1"
+
+    def get_group_id(self) -> str | None:
+        return None
+
+    def get_platform_name(self) -> str:
+        return "demo-platform"
+
+    def get_self_id(self) -> str:
+        return "bot-1"
+
+    def get_sender_name(self) -> str:
+        return "Tester"
+
+    def is_admin(self) -> bool:
+        return False
+
+    def get_message_outline(self) -> str:
+        return "demo outline"
+
+    def get_extra(self, key: str | None = None, default=None):
+        if key is None:
+            return self._extras
+        return self._extras.get(key, default)
+
+    def get_messages(self):
+        return [Plain("demo", convert=False)]
+
+
+@pytest.mark.unit
+def test_event_converter_sanitizes_non_serializable_extras() -> None:
+    payload = EventConverter.core_to_sdk(
+        _EventConverterProbe(),
+        dispatch_token="dispatch-1",
+        plugin_id="sdk-demo",
+        request_id="req-1",
+    )
+
+    assert payload["extras"] == {"serializable": {"value": 1}}
+    assert "callback" not in payload["extras"]
+
+
+@pytest.mark.unit
+def test_respond_stage_sdk_outline_supports_list_and_message_chain() -> None:
+    chain_list = [Plain("hello", convert=False), Plain(" world", convert=False)]
+
+    assert RespondStage._message_outline_for_sdk_event(chain_list) == "hello  world"
+    assert (
+        RespondStage._message_outline_for_sdk_event(MessageChain(chain_list))
+        == "hello  world"
+    )
+    assert RespondStage._message_outline_for_sdk_event(None) == ""

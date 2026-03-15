@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 from astrbot_sdk.message_components import component_to_payload_sync
@@ -10,6 +11,41 @@ if TYPE_CHECKING:
 
 class EventConverter:
     """Convert legacy AstrBot events into SDK payloads."""
+
+    _DROP_VALUE = object()
+
+    @classmethod
+    def _sanitize_extra_value(cls, value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, (list, tuple)):
+            items = []
+            for item in value:
+                sanitized = cls._sanitize_extra_value(item)
+                if sanitized is not cls._DROP_VALUE:
+                    items.append(sanitized)
+            return items
+        if isinstance(value, dict):
+            sanitized_dict: dict[str, Any] = {}
+            for key, item in value.items():
+                sanitized = cls._sanitize_extra_value(item)
+                if sanitized is not cls._DROP_VALUE:
+                    sanitized_dict[str(key)] = sanitized
+            return sanitized_dict
+        try:
+            json.dumps(value)
+        except (TypeError, ValueError):
+            return cls._DROP_VALUE
+        return value
+
+    @classmethod
+    def _sanitize_extras(cls, extras: dict[str, Any]) -> dict[str, Any]:
+        sanitized: dict[str, Any] = {}
+        for key, value in extras.items():
+            normalized = cls._sanitize_extra_value(value)
+            if normalized is not cls._DROP_VALUE:
+                sanitized[str(key)] = normalized
+        return sanitized
 
     @staticmethod
     def core_to_sdk(
@@ -49,7 +85,9 @@ class EventConverter:
         }
         extras = event.get_extra()
         if isinstance(extras, dict) and extras:
-            payload["extras"] = dict(extras)
+            sanitized_extras = EventConverter._sanitize_extras(extras)
+            if sanitized_extras:
+                payload["extras"] = sanitized_extras
         messages = []
         for component in event.get_messages():
             try:

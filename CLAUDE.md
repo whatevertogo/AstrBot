@@ -13,6 +13,8 @@
 - `astrbot_sdk.decorators.on_message` currently must be called as `@on_message()` or `@on_message(...)`. Using bare `@on_message` binds the decorated function as the first positional argument and crashes plugin loading with `on_message() takes 0 positional arguments but 1 was given`.
 - `astrbot_sdk.events.MessageEvent.send_streaming()` cannot preserve streaming semantics by buffering the whole async generator into a single payload. The v4 protocol is server-streaming only, so SDK-to-core event streaming must use an explicit open/push/close bridge or another chunked handoff.
 - Legacy core `File` components serialize their local path as `data.file_`, while SDK `File` helpers prefer `data.file` and sometimes `data.url`. Any bridge or round-trip logic touching file segments must normalize all three keys instead of assuming a single field name.
+- Legacy `AstrMessageEvent._extras` can contain runtime-only objects such as `functools.partial`. SDK worker payloads must sanitize extras before crossing the subprocess JSON boundary instead of copying the whole extras dict verbatim.
+- `RespondStage` cannot assume `event.get_result().chain` is always a `MessageChain` instance. In real legacy flows it is often the raw component list, so SDK `after_message_sent` hooks must derive outlines from either shape.
 
 
 旧插件走旧逻辑，新插件走sdk，保证旧逻辑依旧能使用的情况下写新sdk桥接或者astrbot适配
