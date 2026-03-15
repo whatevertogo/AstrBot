@@ -15,6 +15,7 @@
 - Legacy core `File` components serialize their local path as `data.file_`, while SDK `File` helpers prefer `data.file` and sometimes `data.url`. Any bridge or round-trip logic touching file segments must normalize all three keys instead of assuming a single field name.
 - Legacy `AstrMessageEvent._extras` can contain runtime-only objects such as `functools.partial`. SDK worker payloads must sanitize extras before crossing the subprocess JSON boundary instead of copying the whole extras dict verbatim.
 - `RespondStage` cannot assume `event.get_result().chain` is always a `MessageChain` instance. In real legacy flows it is often the raw component list, so SDK `after_message_sent` hooks must derive outlines from either shape.
+- `astrbot_sdk.runtime.loader.discover_plugins()` currently treats `requirements.txt` as mandatory for every SDK plugin directory. A plugin with a valid `plugin.yaml` but no `requirements.txt` is silently skipped from the dashboard/runtime as an invalid manifest.
 
 
 旧插件走旧逻辑，新插件走sdk，保证旧逻辑依旧能使用的情况下写新sdk桥接或者astrbot适配
