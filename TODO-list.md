@@ -19,9 +19,9 @@
 | Metadata Client | 4 | 4 | 0 | 0 | 0 | 100% |
 | Memory Client | 8 | 8 | 0 | 0 | 0 | 100% |
 | HTTP Client | 3 | 3 | 0 | 0 | 0 | 100% |
-| MessageEvent | 30 | 9 | 1 | 20 | 0 | 32% |
+| MessageEvent | 41 | 23 | 0 | 18 | 0 | 56% |
 | 装饰器/触发器 | 17 | 6 | 2 | 5 | 4 | 41% |
-| 事件类型 | 14 | 1 | 0 | 13 | 0 | 7% |
+| 事件类型 | 14 | 4 | 0 | 10 | 0 | 29% |
 | 消息组件 | 13 | 2 | 0 | 11 | 0 | 15% |
 | Legacy Context | 22 | 4 | 2 | 16 | 0 | 23% |
 | 工具方法 | 6 | 0 | 0 | 6 | 0 | 0% |
@@ -546,15 +546,18 @@
 7. **MessageEvent** 基础属性 - `text`, `platform`, `session_id`, `user_id`, `group_id`, `raw`
 8. **基础回复方法** - `reply()`, `reply_image()`, `reply_chain()`, `plain_result()`
 
-#### P0.1 - 阻塞迁移的关键能力
-1. **Memory Client** - AI 插件核心能力（当前 Core 端简化实现）
-2. **HTTP Client** - Web API 注册（Core 端 MVP 不支持）
-3. **MessageEvent 扩展属性/方法** - `is_private_chat()`, `is_admin()`, `self_id`, `message_type`, `unified_msg_origin`, `platform_id`, `sender_name`
-4. **事件控制** - `stop_event()`, `continue_event()`, `is_stopped()`
-5. **基础事件类型** - `astrbot_loaded`, `platform_loaded`, `after_message_sent`
-6. **工具方法** - `get_data_dir()`, `text_to_image()`, `html_render()`
-7. **会话等待** - `SessionWaiter`, `SessionController`（交互式插件必需）
-8. **Provider 实体** - `MessageSession`（跨会话发送必需）
+#### P0.1 - 阻塞迁移的关键能力 ✅ 已完成
+
+| 项目 | 状态 | 实现说明 |
+|------|------|---------|
+| **Memory Client** | ✅ | 8个方法全部实现，使用 JSON 文件存储（`capability_bridge.py`） |
+| **HTTP Client** | ✅ | 3个方法全部实现，支持路由注册/注销/列表（`plugin_bridge.py`） |
+| **MessageEvent 扩展** | ✅ | `self_id`, `platform_id`, `message_type`, `sender_name`, `is_admin`, `unified_msg_origin`, `is_private_chat()` 等 |
+| **事件控制** | ✅ | `stop_event()`, `continue_event()`, `is_stopped()` |
+| **基础事件类型** | ✅ | `astrbot_loaded`, `platform_loaded`, `after_message_sent` |
+| **工具方法** | ✅ | `get_data_dir()`, `text_to_image()`, `html_render()` |
+| **会话等待** | ✅ | `SessionWaiter`, `SessionController`，支持注册/注销/分发 |
+| **Provider 实体** | ✅ | `MessageSession` 类，支持 `from_str()` 解析 |
 
 #### P0.2 - 消息和交互能力
 1. **消息组件** - `At`, `AtAll`, `Reply`, `Record`, `Video`, `File`, `Poke`, `Forward`
