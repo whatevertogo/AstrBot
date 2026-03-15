@@ -34,9 +34,16 @@ from .._invocation_context import caller_plugin_scope
 from ..context import CancelToken, Context
 from ..errors import AstrBotError
 from ..events import MessageEvent
+from ..filters import LocalFilterBinding
 from ..message_components import BaseMessageComponent
 from ..message_result import MessageChain, MessageEventResult, coerce_message_chain
-from ..protocol.descriptors import CommandTrigger, MessageTrigger
+from ..protocol.descriptors import (
+    CommandTrigger,
+    MessageTrigger,
+    ParamSpec,
+    ScheduleTrigger,
+)
+from ..schedule import ScheduleContext
 from ..session_waiter import SessionWaiterManager
 from ..star import Star
 from .capability_router import StreamExecution
@@ -78,6 +85,9 @@ class HandlerDispatcher:
         ctx = Context(peer=self._peer, plugin_id=plugin_id, cancel_token=cancel_token)
         event = MessageEvent.from_payload(message.input.get("event", {}), context=ctx)
         event.bind_reply_handler(self._create_reply_handler(ctx, event))
+        schedule_context = self._build_schedule_context(
+            loaded, message.input.get("event", {})
+        )
 
         # 提取 args 用于兼容 handler 签名
         raw_args = message.input.get("args") or {}
@@ -86,7 +96,15 @@ class HandlerDispatcher:
             args = self._derive_args(loaded, event)
 
         with caller_plugin_scope(plugin_id):
-            task = asyncio.create_task(self._run_handler(loaded, event, ctx, args))
+            task = asyncio.create_task(
+                self._run_handler(
+                    loaded,
+                    event,
+                    ctx,
+                    args,
+                    schedule_context=schedule_context,
+                )
+            )
         self._active[message.id] = (task, cancel_token)
         try:
             return await task
@@ -129,17 +147,31 @@ class HandlerDispatcher:
         event: MessageEvent,
         ctx: Context,
         args: dict[str, Any] | None = None,
+        *,
+        schedule_context: ScheduleContext | None = None,
     ) -> dict[str, Any]:
         summary = {"sent_message": False, "stop": False, "call_llm": False}
         try:
+            if not self._run_local_filters(
+                loaded.local_filters,
+                event=event,
+                ctx=ctx,
+            ):
+                return summary
+            parsed_args = (
+                self._parse_handler_args(loaded.descriptor.param_specs, args or {})
+                if loaded.descriptor.param_specs
+                else dict(args or {})
+            )
             result = loaded.callable(
                 *self._build_args(
                     loaded.callable,
                     event,
                     ctx,
-                    args,
+                    parsed_args,
                     plugin_id=self._resolve_plugin_id(loaded),
                     handler_ref=loaded.descriptor.id,
+                    schedule_context=schedule_context,
                 )
             )
             if inspect.isasyncgen(result):
@@ -177,16 +209,35 @@ class HandlerDispatcher:
     ) -> dict[str, Any]:
         trigger = loaded.descriptor.trigger
         if isinstance(trigger, CommandTrigger):
+            param_specs = loaded.descriptor.param_specs
             for command_name in [trigger.command, *trigger.aliases]:
                 remainder = self._match_command_name(event.text, command_name)
                 if remainder is not None:
-                    return self._build_command_args(loaded.callable, remainder)
+                    if param_specs:
+                        return self._build_command_args(param_specs, remainder)
+                    return self._build_command_args(
+                        [
+                            ParamSpec(name=name, type="str")
+                            for name in self._legacy_arg_parameter_names(
+                                loaded.callable
+                            )
+                        ],
+                        remainder,
+                    )
             return {}
         if isinstance(trigger, MessageTrigger) and trigger.regex:
             match = re.search(trigger.regex, event.text)
             if match is None:
                 return {}
-            return self._build_regex_args(loaded.callable, match)
+            if loaded.descriptor.param_specs:
+                return self._build_regex_args(loaded.descriptor.param_specs, match)
+            return self._build_regex_args(
+                [
+                    ParamSpec(name=name, type="str")
+                    for name in self._legacy_arg_parameter_names(loaded.callable)
+                ],
+                match,
+            )
         return {}
 
     def _build_args(
@@ -198,6 +249,7 @@ class HandlerDispatcher:
         *,
         plugin_id: str | None = None,
         handler_ref: str | None = None,
+        schedule_context: ScheduleContext | None = None,
     ) -> list[Any]:
         """构建 handler 参数列表。"""
         from loguru import logger
@@ -224,7 +276,9 @@ class HandlerDispatcher:
             # 1. 优先按类型注解注入
             param_type = type_hints.get(parameter.name)
             if param_type is not None:
-                injected = self._inject_by_type(param_type, event, ctx)
+                injected = self._inject_by_type(
+                    param_type, event, ctx, schedule_context
+                )
 
             # 2. Fallback 按名字注入
             if injected is None:
@@ -232,6 +286,8 @@ class HandlerDispatcher:
                     injected = event
                 elif parameter.name in {"ctx", "context"}:
                     injected = ctx
+                elif parameter.name in {"sched", "schedule"}:
+                    injected = schedule_context
                 elif parameter.name in args:
                     injected = args[parameter.name]
 
@@ -259,7 +315,11 @@ class HandlerDispatcher:
         return injected_args
 
     def _inject_by_type(
-        self, param_type: Any, event: MessageEvent, ctx: Context
+        self,
+        param_type: Any,
+        event: MessageEvent,
+        ctx: Context,
+        schedule_context: ScheduleContext | None,
     ) -> Any:
         """根据类型注解注入参数。"""
         # 处理 Optional[Type] 情况
@@ -286,6 +346,10 @@ class HandlerDispatcher:
             isinstance(param_type, type) and issubclass(param_type, Context)
         ):
             return ctx
+        if param_type is ScheduleContext or (
+            isinstance(param_type, type) and issubclass(param_type, ScheduleContext)
+        ):
+            return schedule_context
 
         return None
 
@@ -398,33 +462,105 @@ class HandlerDispatcher:
         return None
 
     @classmethod
-    def _build_command_args(cls, handler, remainder: str) -> dict[str, Any]:
-        names = cls._legacy_arg_parameter_names(handler)
-        if not names or not remainder:
+    def _build_command_args(
+        cls, param_specs: list[ParamSpec], remainder: str
+    ) -> dict[str, Any]:
+        if not param_specs or not remainder:
             return {}
-        if len(names) == 1:
-            return {names[0]: remainder}
+        if len(param_specs) == 1:
+            return {param_specs[0].name: remainder}
         parts = cls._split_command_remainder(remainder)
-        return {
-            name: parts[index] for index, name in enumerate(names) if index < len(parts)
-        }
+        values: dict[str, Any] = {}
+        for index, spec in enumerate(param_specs):
+            if index >= len(parts):
+                break
+            if spec.type == "greedy_str":
+                values[spec.name] = " ".join(parts[index:])
+                break
+            values[spec.name] = parts[index]
+        return values
 
     @classmethod
-    def _build_regex_args(cls, handler, match: re.Match[str]) -> dict[str, Any]:
+    def _build_regex_args(
+        cls, param_specs: list[ParamSpec], match: re.Match[str]
+    ) -> dict[str, Any]:
         named = {
             key: value for key, value in match.groupdict().items() if value is not None
         }
-        names = [
-            name
-            for name in cls._legacy_arg_parameter_names(handler)
-            if name not in named
-        ]
+        names = [spec.name for spec in param_specs if spec.name not in named]
         positional = [value for value in match.groups() if value is not None]
         for index, value in enumerate(positional):
             if index >= len(names):
                 break
             named[names[index]] = value
         return named
+
+    @staticmethod
+    def _parse_handler_args(
+        param_specs: list[ParamSpec],
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        parsed: dict[str, Any] = {}
+        for spec in param_specs:
+            if spec.name not in args:
+                if spec.type == "optional":
+                    parsed[spec.name] = None
+                    continue
+                if spec.required:
+                    raise TypeError(f"缺少参数: {spec.name}")
+                continue
+            parsed[spec.name] = HandlerDispatcher._convert_param(spec, args[spec.name])
+        return parsed
+
+    @staticmethod
+    def _convert_param(spec: ParamSpec, value: Any) -> Any:
+        if spec.type in {"str", "greedy_str"}:
+            return str(value)
+        if spec.type == "int":
+            return int(str(value))
+        if spec.type == "float":
+            return float(str(value))
+        if spec.type == "bool":
+            normalized = str(value).strip().lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "off"}:
+                return False
+            raise TypeError(f"无法解析布尔参数 {spec.name}: {value!r}")
+        if spec.type == "optional":
+            if value is None:
+                return None
+            inner = ParamSpec(
+                name=spec.name,
+                type=spec.inner_type or "str",
+                required=False,
+            )
+            return HandlerDispatcher._convert_param(inner, value)
+        return value
+
+    @staticmethod
+    def _run_local_filters(
+        bindings: list[LocalFilterBinding],
+        *,
+        event: MessageEvent,
+        ctx: Context,
+    ) -> bool:
+        for binding in bindings:
+            if not binding.evaluate(event=event, ctx=ctx):
+                return False
+        return True
+
+    @staticmethod
+    def _build_schedule_context(
+        loaded: LoadedHandler,
+        event_payload: dict[str, Any],
+    ) -> ScheduleContext | None:
+        if not isinstance(loaded.descriptor.trigger, ScheduleTrigger):
+            return None
+        try:
+            return ScheduleContext.from_payload(event_payload)
+        except Exception:
+            return None
 
     @staticmethod
     def _split_command_remainder(remainder: str) -> list[str]:

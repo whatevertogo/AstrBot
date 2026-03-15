@@ -346,6 +346,7 @@ async def test_sdk_bridge_dispatches_demo_plugin_end_to_end(
         "_get_runtime_sp",
         lambda: fake_sp,
     )
+    bridge.env_manager.plan = lambda plugins: None
     bridge.env_manager.prepare_environment = lambda plugin: Path(sys.executable)
     fake_context.sdk_plugin_bridge = bridge
 
@@ -548,6 +549,7 @@ async def test_dashboard_sdk_plug_route_end_to_end(
         "_get_runtime_sp",
         lambda: fake_sp,
     )
+    bridge.env_manager.plan = lambda plugins: None
     bridge.env_manager.prepare_environment = lambda plugin: Path(sys.executable)
     fake_context.sdk_plugin_bridge = bridge
 

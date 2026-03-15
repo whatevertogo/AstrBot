@@ -11,8 +11,13 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot_sdk.events import MessageEvent as SdkMessageEvent
 from astrbot_sdk.protocol.descriptors import (
     CommandTrigger,
+    CompositeFilterSpec,
     HandlerDescriptor,
+    LocalFilterRefSpec,
     MessageTrigger,
+    MessageTypeFilterSpec,
+    ParamSpec,
+    PlatformFilterSpec,
 )
 
 
@@ -56,32 +61,120 @@ class TriggerConverter:
 
     @classmethod
     def _build_command_args(cls, handler, remainder: str) -> dict[str, Any]:
-        names = cls._legacy_arg_parameter_names(handler)
-        if not names or not remainder:
+        param_specs = getattr(handler, "param_specs", None)
+        if not isinstance(param_specs, list):
+            names = cls._legacy_arg_parameter_names(handler)
+            if not names or not remainder:
+                return {}
+            if len(names) == 1:
+                return {names[0]: remainder}
+            parts = cls._split_command_remainder(remainder)
+            return {
+                name: parts[index]
+                for index, name in enumerate(names)
+                if index < len(parts)
+            }
+        if not param_specs or not remainder:
             return {}
-        if len(names) == 1:
-            return {names[0]: remainder}
+        if len(param_specs) == 1:
+            return {param_specs[0].name: remainder}
         parts = cls._split_command_remainder(remainder)
-        return {
-            name: parts[index] for index, name in enumerate(names) if index < len(parts)
-        }
+        args: dict[str, Any] = {}
+        for index, spec in enumerate(param_specs):
+            if index >= len(parts):
+                break
+            if spec.type == "greedy_str":
+                args[spec.name] = " ".join(parts[index:])
+                break
+            args[spec.name] = parts[index]
+        return args
 
     @classmethod
     def _build_regex_args(cls, handler, match: re.Match[str]) -> dict[str, Any]:
         named = {
             key: value for key, value in match.groupdict().items() if value is not None
         }
-        names = [
-            name
-            for name in cls._legacy_arg_parameter_names(handler)
-            if name not in named
-        ]
+        param_specs = getattr(handler, "param_specs", None)
+        if isinstance(param_specs, list):
+            names = [spec.name for spec in param_specs if spec.name not in named]
+        else:
+            names = [
+                name
+                for name in cls._legacy_arg_parameter_names(handler)
+                if name not in named
+            ]
         positional = [value for value in match.groups() if value is not None]
         for index, value in enumerate(positional):
             if index >= len(names):
                 break
             named[names[index]] = value
         return named
+
+    @classmethod
+    def _build_descriptor_command_args(
+        cls,
+        param_specs: list[ParamSpec],
+        remainder: str,
+    ) -> dict[str, Any]:
+        if not param_specs or not remainder:
+            return {}
+        if len(param_specs) == 1:
+            return {param_specs[0].name: remainder}
+        parts = cls._split_command_remainder(remainder)
+        args: dict[str, Any] = {}
+        for index, spec in enumerate(param_specs):
+            if index >= len(parts):
+                break
+            if spec.type == "greedy_str":
+                args[spec.name] = " ".join(parts[index:])
+                break
+            args[spec.name] = parts[index]
+        return args
+
+    @classmethod
+    def _build_descriptor_regex_args(
+        cls,
+        param_specs: list[ParamSpec],
+        match: re.Match[str],
+    ) -> dict[str, Any]:
+        named = {
+            key: value for key, value in match.groupdict().items() if value is not None
+        }
+        names = [spec.name for spec in param_specs if spec.name not in named]
+        positional = [value for value in match.groups() if value is not None]
+        for index, value in enumerate(positional):
+            if index >= len(names):
+                break
+            named[names[index]] = value
+        return named
+
+    @classmethod
+    def _match_filters(
+        cls,
+        descriptor: HandlerDescriptor,
+        event: AstrMessageEvent,
+    ) -> bool:
+        for filter_spec in descriptor.filters:
+            if not cls._match_filter_spec(filter_spec, event):
+                return False
+        return True
+
+    @classmethod
+    def _match_filter_spec(cls, filter_spec, event: AstrMessageEvent) -> bool:
+        if isinstance(filter_spec, PlatformFilterSpec):
+            return event.get_platform_name() in filter_spec.platforms
+        if isinstance(filter_spec, MessageTypeFilterSpec):
+            return cls._message_type_name(event) in filter_spec.message_types
+        if isinstance(filter_spec, LocalFilterRefSpec):
+            return True
+        if isinstance(filter_spec, CompositeFilterSpec):
+            results = [
+                cls._match_filter_spec(child, event) for child in filter_spec.children
+            ]
+            if filter_spec.kind == "and":
+                return all(results)
+            return any(results)
+        return True
 
     @classmethod
     def _legacy_arg_parameter_names(cls, handler) -> list[str]:
@@ -151,15 +244,10 @@ class TriggerConverter:
 
         if descriptor.permissions.require_admin and not event.is_admin():
             return None
+        if not cls._match_filters(descriptor, event):
+            return None
 
         if isinstance(trigger, CommandTrigger):
-            if trigger.platforms and event.get_platform_name() not in trigger.platforms:
-                return None
-            if (
-                trigger.message_types
-                and cls._message_type_name(event) not in trigger.message_types
-            ):
-                return None
             text = event.get_message_str().strip()
             for command_name in [trigger.command, *trigger.aliases]:
                 if not command_name:
@@ -173,7 +261,10 @@ class TriggerConverter:
                     args=(
                         cls._build_command_args(handler, remainder)
                         if handler is not None
-                        else {}
+                        else cls._build_descriptor_command_args(
+                            descriptor.param_specs,
+                            remainder,
+                        )
                     ),
                     priority=descriptor.priority,
                     load_order=load_order,
@@ -182,13 +273,6 @@ class TriggerConverter:
             return None
 
         if isinstance(trigger, MessageTrigger):
-            if trigger.platforms and event.get_platform_name() not in trigger.platforms:
-                return None
-            if (
-                trigger.message_types
-                and cls._message_type_name(event) not in trigger.message_types
-            ):
-                return None
             text = event.get_message_str()
             if trigger.regex:
                 match = re.search(trigger.regex, text)
@@ -197,6 +281,10 @@ class TriggerConverter:
                 args = (
                     cls._build_regex_args(handler, match) if handler is not None else {}
                 )
+                if handler is None:
+                    args = cls._build_descriptor_regex_args(
+                        descriptor.param_specs, match
+                    )
             else:
                 if trigger.keywords and not any(
                     keyword in text for keyword in trigger.keywords

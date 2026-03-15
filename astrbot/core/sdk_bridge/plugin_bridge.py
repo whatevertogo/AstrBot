@@ -141,9 +141,11 @@ class SdkPluginBridge:
         self._records: dict[str, SdkPluginRecord] = {}
         self._request_contexts: dict[str, _RequestContext] = {}
         self._request_id_to_token: dict[str, str] = {}
+        self._request_plugin_ids: dict[str, str] = {}
         self._plugin_requests: dict[str, dict[str, _InFlightRequest]] = {}
         self._http_routes: dict[str, list[SdkHttpRoute]] = {}
         self._session_waiters: dict[str, set[str]] = {}
+        self._schedule_job_ids: dict[str, set[str]] = {}
 
     async def start(self) -> None:
         if self._started:
@@ -164,9 +166,11 @@ class SdkPluginBridge:
         self._records.clear()
         self._request_contexts.clear()
         self._request_id_to_token.clear()
+        self._request_plugin_ids.clear()
         self._plugin_requests.clear()
         self._http_routes.clear()
         self._session_waiters.clear()
+        self._schedule_job_ids.clear()
         self._started = False
         self._stopping = False
 
@@ -471,6 +475,7 @@ class SdkPluginBridge:
             )
             self._request_contexts[dispatch_token] = request_context
             self._request_id_to_token[request_id] = dispatch_token
+            self._request_plugin_ids[request_id] = record.plugin_id
             self._plugin_requests.setdefault(record.plugin_id, {})[request_id] = (
                 _InFlightRequest(
                     request_id=request_id,
@@ -499,6 +504,7 @@ class SdkPluginBridge:
                 )
                 self._request_contexts.pop(dispatch_token, None)
                 self._request_id_to_token.pop(request_id, None)
+                self._request_plugin_ids.pop(request_id, None)
 
             if inflight is not None and inflight.logical_cancelled:
                 continue
@@ -530,9 +536,12 @@ class SdkPluginBridge:
 
     def resolve_request_plugin_id(self, request_id: str) -> str:
         token = self._request_id_to_token.get(request_id)
-        if token is None or token not in self._request_contexts:
-            raise AstrBotError.invalid_input(f"Unknown SDK request id: {request_id}")
-        return self._request_contexts[token].plugin_id
+        if token is not None and token in self._request_contexts:
+            return self._request_contexts[token].plugin_id
+        plugin_id = self._request_plugin_ids.get(request_id)
+        if plugin_id is not None:
+            return plugin_id
+        raise AstrBotError.invalid_input(f"Unknown SDK request id: {request_id}")
 
     def resolve_request_session(self, request_id: str) -> _RequestContext | None:
         token = self._request_id_to_token.get(request_id)
@@ -706,14 +715,13 @@ class SdkPluginBridge:
                     and descriptor.trigger.event_type not in SUPPORTED_SYSTEM_EVENTS
                 ):
                     unsupported_features.add("event_trigger")
-                if isinstance(descriptor.trigger, ScheduleTrigger):
-                    unsupported_features.add("schedule_trigger")
                 record.handlers.append(
                     SdkHandlerRef(
                         descriptor=descriptor,
                         declaration_order=index,
                     )
                 )
+            await self._register_schedule_handlers(record)
             record.unsupported_features = sorted(unsupported_features)
             record.state = (
                 SDK_STATE_UNSUPPORTED_PARTIAL
@@ -733,12 +741,132 @@ class SdkPluginBridge:
         record = self._records.get(plugin_id)
         self._http_routes.pop(plugin_id, None)
         self._session_waiters.pop(plugin_id, None)
+        await self._unregister_schedule_jobs(plugin_id)
         if record is None or record.session is None:
             return
         try:
             await record.session.stop()
         finally:
             record.session = None
+
+    async def _register_schedule_handlers(self, record: SdkPluginRecord) -> None:
+        cron_manager = getattr(self.star_context, "cron_manager", None)
+        if cron_manager is None:
+            return
+        for handler in record.handlers:
+            trigger = handler.descriptor.trigger
+            if not isinstance(trigger, ScheduleTrigger):
+                continue
+            schedule_key = f"{record.plugin_id}:{handler.handler_id}"
+            job = await cron_manager.add_basic_job(
+                name=schedule_key,
+                cron_expression=trigger.cron,
+                interval_seconds=trigger.interval_seconds,
+                handler=self._build_schedule_runner(
+                    plugin_id=record.plugin_id,
+                    handler_id=handler.handler_id,
+                    trigger=trigger,
+                ),
+                description=f"SDK schedule handler {handler.handler_id}",
+                enabled=True,
+                persistent=False,
+            )
+            self._schedule_job_ids.setdefault(record.plugin_id, set()).add(job.job_id)
+
+    async def _unregister_schedule_jobs(self, plugin_id: str) -> None:
+        cron_manager = getattr(self.star_context, "cron_manager", None)
+        if cron_manager is None:
+            return
+        for job_id in list(self._schedule_job_ids.pop(plugin_id, set())):
+            try:
+                await cron_manager.delete_job(job_id)
+            except Exception:
+                logger.debug("Failed to remove SDK schedule job {}", job_id)
+
+    def _build_schedule_runner(
+        self,
+        *,
+        plugin_id: str,
+        handler_id: str,
+        trigger: ScheduleTrigger,
+    ):
+        async def _run() -> None:
+            await self._invoke_schedule_handler(
+                plugin_id=plugin_id,
+                handler_id=handler_id,
+                trigger=trigger,
+            )
+
+        return _run
+
+    async def _invoke_schedule_handler(
+        self,
+        *,
+        plugin_id: str,
+        handler_id: str,
+        trigger: ScheduleTrigger,
+    ) -> None:
+        record = self._records.get(plugin_id)
+        if (
+            record is None
+            or record.session is None
+            or record.state
+            in {SDK_STATE_DISABLED, SDK_STATE_FAILED, SDK_STATE_RELOADING}
+        ):
+            return
+        request_id = f"sdk_schedule_{plugin_id}_{uuid.uuid4().hex}"
+        self._request_plugin_ids[request_id] = plugin_id
+        payload = self._build_schedule_payload(
+            plugin_id=plugin_id,
+            handler_id=handler_id,
+            trigger=trigger,
+        )
+        try:
+            await record.session.invoke_handler(
+                handler_id,
+                payload,
+                request_id=request_id,
+                args={},
+            )
+        except Exception as exc:
+            logger.warning(
+                "SDK schedule handler failed: plugin=%s handler=%s error=%s",
+                plugin_id,
+                handler_id,
+                exc,
+            )
+        finally:
+            self._request_plugin_ids.pop(request_id, None)
+
+    @staticmethod
+    def _build_schedule_payload(
+        *,
+        plugin_id: str,
+        handler_id: str,
+        trigger: ScheduleTrigger,
+    ) -> dict[str, Any]:
+        scheduled_at = datetime.now(timezone.utc).isoformat()
+        return {
+            "type": "schedule",
+            "event_type": "schedule",
+            "text": "",
+            "session_id": "",
+            "platform": "",
+            "platform_id": "",
+            "message_type": "other",
+            "sender_name": "",
+            "self_id": "",
+            "raw": {"event_type": "schedule"},
+            "schedule": {
+                "schedule_id": f"{plugin_id}:{handler_id}",
+                "plugin_id": plugin_id,
+                "handler_id": handler_id,
+                "trigger_kind": "cron" if trigger.cron is not None else "interval",
+                "cron": trigger.cron,
+                "interval_seconds": trigger.interval_seconds,
+                "scheduled_at": scheduled_at,
+            },
+        }
 
     async def _cancel_plugin_requests(self, plugin_id: str) -> None:
         requests = list(self._plugin_requests.get(plugin_id, {}).values())
@@ -788,6 +916,7 @@ class SdkPluginBridge:
         record.state = SDK_STATE_FAILED
         self._http_routes.pop(plugin_id, None)
         self._session_waiters.pop(plugin_id, None)
+        await self._unregister_schedule_jobs(plugin_id)
 
     def _record_to_dashboard_item(self, record: SdkPluginRecord) -> dict[str, Any]:
         manifest = record.plugin.manifest_data
@@ -989,6 +1118,7 @@ class SdkPluginBridge:
             )
             self._request_contexts[dispatch_token] = request_context
             self._request_id_to_token[request_id] = dispatch_token
+            self._request_plugin_ids[request_id] = record.plugin_id
             try:
                 output = await record.session.invoke_handler(
                     "__sdk_session_waiter__",
@@ -1006,6 +1136,7 @@ class SdkPluginBridge:
             finally:
                 self._request_contexts.pop(dispatch_token, None)
                 self._request_id_to_token.pop(request_id, None)
+                self._request_plugin_ids.pop(request_id, None)
             handler_result = EventConverter.extract_handler_result(
                 output if isinstance(output, dict) else {}
             )

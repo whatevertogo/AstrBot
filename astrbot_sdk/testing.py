@@ -29,8 +29,12 @@ from .errors import AstrBotError
 from .events import MessageEvent
 from .protocol.descriptors import (
     CommandTrigger,
+    CompositeFilterSpec,
     EventTrigger,
+    LocalFilterRefSpec,
     MessageTrigger,
+    MessageTypeFilterSpec,
+    PlatformFilterSpec,
     ScheduleTrigger,
 )
 from .protocol.messages import EventMessage, InvokeMessage, PeerInfo
@@ -891,6 +895,11 @@ class PluginHarness:
                 return None
             return {}
         if isinstance(trigger, ScheduleTrigger):
+            if (
+                str(event_payload.get("event_type") or event_payload.get("type"))
+                == "schedule"
+            ):
+                return {}
             return None
         return None
 
@@ -900,9 +909,7 @@ class PluginHarness:
         trigger: CommandTrigger,
         event_payload: dict[str, Any],
     ) -> dict[str, Any] | None:
-        if not self._passes_trigger_constraints(
-            trigger.platforms, trigger.message_types, event_payload
-        ):
+        if not self._passes_filters(loaded, event_payload):
             return None
         text = str(event_payload.get("text", "")).strip()
         for command_name in [trigger.command, *trigger.aliases]:
@@ -911,7 +918,7 @@ class PluginHarness:
             match = self._match_command_name(text, command_name)
             if match is None:
                 continue
-            return self._build_command_args(loaded.callable, match)
+            return self._build_command_args(loaded.descriptor.param_specs, match)
         return None
 
     def _match_message_trigger(
@@ -920,35 +927,64 @@ class PluginHarness:
         trigger: MessageTrigger,
         event_payload: dict[str, Any],
     ) -> dict[str, Any] | None:
-        if not self._passes_trigger_constraints(
-            trigger.platforms, trigger.message_types, event_payload
-        ):
+        if not self._passes_filters(loaded, event_payload):
             return None
         text = str(event_payload.get("text", ""))
         if trigger.regex:
             match = re.search(trigger.regex, text)
             if match is None:
                 return None
-            return self._build_regex_args(loaded.callable, match)
+            return self._build_regex_args(loaded.descriptor.param_specs, match)
         if trigger.keywords and not any(
             keyword in text for keyword in trigger.keywords
         ):
             return None
         return {}
 
-    def _passes_trigger_constraints(
+    def _passes_filters(
         self,
-        platforms: list[str],
-        message_types: list[str],
+        loaded: LoadedHandler,
         event_payload: dict[str, Any],
     ) -> bool:
-        platform = str(event_payload.get("platform", ""))
-        if platforms and platform not in platforms:
-            return False
-        if not message_types:
-            return True
-        current_message_type = self._message_type_name(event_payload)
-        return current_message_type in message_types
+        for filter_spec in loaded.descriptor.filters:
+            if isinstance(filter_spec, PlatformFilterSpec):
+                if str(event_payload.get("platform", "")) not in filter_spec.platforms:
+                    return False
+            elif isinstance(filter_spec, MessageTypeFilterSpec):
+                if (
+                    self._message_type_name(event_payload)
+                    not in filter_spec.message_types
+                ):
+                    return False
+            elif isinstance(filter_spec, CompositeFilterSpec):
+                if not self._passes_composite_filter(filter_spec, event_payload):
+                    return False
+            elif isinstance(filter_spec, LocalFilterRefSpec):
+                continue
+        return True
+
+    def _passes_composite_filter(
+        self,
+        filter_spec: CompositeFilterSpec,
+        event_payload: dict[str, Any],
+    ) -> bool:
+        results: list[bool] = []
+        for child in filter_spec.children:
+            if isinstance(child, PlatformFilterSpec):
+                results.append(
+                    str(event_payload.get("platform", "")) in child.platforms
+                )
+            elif isinstance(child, MessageTypeFilterSpec):
+                results.append(
+                    self._message_type_name(event_payload) in child.message_types
+                )
+            elif isinstance(child, LocalFilterRefSpec):
+                results.append(True)
+            elif isinstance(child, CompositeFilterSpec):
+                results.append(self._passes_composite_filter(child, event_payload))
+        if filter_spec.kind == "and":
+            return all(results)
+        return any(results)
 
     def _has_waiter_for_event(self, event_payload: dict[str, Any]) -> bool:
         assert self.dispatcher is not None
@@ -988,34 +1024,29 @@ class PluginHarness:
             return text[len(command_name) :].strip()
         return None
 
-    def _build_command_args(self, handler, remainder: str) -> dict[str, Any]:
-        names = self._legacy_arg_parameter_names(handler)
-        if not names or not remainder:
+    def _build_command_args(self, param_specs, remainder: str) -> dict[str, Any]:
+        if not param_specs or not remainder:
             return {}
-        if len(names) == 1:
-            return {names[0]: remainder}
+        if len(param_specs) == 1:
+            return {param_specs[0].name: remainder}
         tokens = self._split_command_remainder(remainder)
         if not tokens:
             return {}
         values: dict[str, Any] = {}
-        for index, name in enumerate(names):
+        for index, spec in enumerate(param_specs):
             if index >= len(tokens):
                 break
-            if index == len(names) - 1:
-                values[name] = " ".join(tokens[index:])
+            if spec.type == "greedy_str":
+                values[spec.name] = " ".join(tokens[index:])
                 break
-            values[name] = tokens[index]
+            values[spec.name] = tokens[index]
         return values
 
-    def _build_regex_args(self, handler, match: re.Match[str]) -> dict[str, Any]:
+    def _build_regex_args(self, param_specs, match: re.Match[str]) -> dict[str, Any]:
         named = {
             key: value for key, value in match.groupdict().items() if value is not None
         }
-        names = [
-            name
-            for name in self._legacy_arg_parameter_names(handler)
-            if name not in named
-        ]
+        names = [spec.name for spec in param_specs if spec.name not in named]
         positional = [value for value in match.groups() if value is not None]
         for index, value in enumerate(positional):
             if index >= len(names):

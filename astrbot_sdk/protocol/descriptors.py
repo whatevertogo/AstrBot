@@ -662,6 +662,52 @@ class ScheduleTrigger(_DescriptorBase):
         return self
 
 
+class PlatformFilterSpec(_DescriptorBase):
+    kind: Literal["platform"] = "platform"
+    platforms: list[str] = Field(default_factory=list)
+
+
+class MessageTypeFilterSpec(_DescriptorBase):
+    kind: Literal["message_type"] = "message_type"
+    message_types: list[str] = Field(default_factory=list)
+
+
+class LocalFilterRefSpec(_DescriptorBase):
+    kind: Literal["local"] = "local"
+    filter_id: str
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
+class CompositeFilterSpec(_DescriptorBase):
+    kind: Literal["and", "or"]
+    children: list[FilterSpec] = Field(default_factory=list)
+
+
+FilterSpec = Annotated[
+    PlatformFilterSpec
+    | MessageTypeFilterSpec
+    | LocalFilterRefSpec
+    | CompositeFilterSpec,
+    Field(discriminator="kind"),
+]
+
+
+class ParamSpec(_DescriptorBase):
+    name: str
+    type: Literal["str", "int", "float", "bool", "optional", "greedy_str"]
+    required: bool = True
+    inner_type: Literal["str", "int", "float", "bool"] | None = None
+
+
+class CommandRouteSpec(_DescriptorBase):
+    group_path: list[str] = Field(default_factory=list)
+    display_command: str
+    group_help: str | None = None
+
+
+CompositeFilterSpec.model_rebuild()
+
+
 Trigger = Annotated[
     CommandTrigger | MessageTrigger | EventTrigger | ScheduleTrigger,
     Field(discriminator="type"),
@@ -706,6 +752,9 @@ class HandlerDescriptor(_DescriptorBase):
     contract: str | None = None
     priority: int = 0
     permissions: Permissions = Field(default_factory=Permissions)
+    filters: list[FilterSpec] = Field(default_factory=list)
+    param_specs: list[ParamSpec] = Field(default_factory=list)
+    command_route: CommandRouteSpec | None = None
 
     @model_validator(mode="after")
     def validate_contract_defaults(self) -> HandlerDescriptor:
@@ -766,7 +815,9 @@ class CapabilityDescriptor(_DescriptorBase):
 __all__ = [
     "BUILTIN_CAPABILITY_SCHEMAS",
     "CapabilityDescriptor",
+    "CommandRouteSpec",
     "CommandTrigger",
+    "CompositeFilterSpec",
     "DB_DELETE_INPUT_SCHEMA",
     "DB_DELETE_OUTPUT_SCHEMA",
     "DB_GET_INPUT_SCHEMA",
@@ -782,6 +833,7 @@ __all__ = [
     "DB_WATCH_INPUT_SCHEMA",
     "DB_WATCH_OUTPUT_SCHEMA",
     "EventTrigger",
+    "FilterSpec",
     "HandlerDescriptor",
     "HTTP_LIST_APIS_INPUT_SCHEMA",
     "HTTP_LIST_APIS_OUTPUT_SCHEMA",
@@ -819,6 +871,8 @@ __all__ = [
     "METADATA_LIST_PLUGINS_INPUT_SCHEMA",
     "METADATA_LIST_PLUGINS_OUTPUT_SCHEMA",
     "MessageTrigger",
+    "MessageTypeFilterSpec",
+    "ParamSpec",
     "PLATFORM_GET_MEMBERS_INPUT_SCHEMA",
     "PLATFORM_GET_MEMBERS_OUTPUT_SCHEMA",
     "PLATFORM_SEND_CHAIN_INPUT_SCHEMA",
@@ -844,4 +898,6 @@ __all__ = [
     "SYSTEM_EVENT_SEND_TYPING_INPUT_SCHEMA",
     "SYSTEM_EVENT_SEND_TYPING_OUTPUT_SCHEMA",
     "Trigger",
+    "LocalFilterRefSpec",
+    "PlatformFilterSpec",
 ]
