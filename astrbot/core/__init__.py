@@ -17,6 +17,24 @@ if TYPE_CHECKING:
         find_missing_requirements,
         find_missing_requirements_or_raise,
     )
+else:
+    AstrBotConfig: Any
+    SQLiteDatabase: Any
+    FileTokenService: Any
+    LogBroker: Any
+    LogManager: Any
+    DependencyConflictError: Any
+    PipInstaller: Any
+    RequirementsPrecheckFailed: Any
+    find_missing_requirements: Any
+    find_missing_requirements_or_raise: Any
+    astrbot_config: Any
+    db_helper: Any
+    file_token_service: Any
+    html_renderer: Any
+    logger: Any
+    pip_installer: Any
+    sp: Any
 
 os.makedirs(get_astrbot_data_path(), exist_ok=True)
 

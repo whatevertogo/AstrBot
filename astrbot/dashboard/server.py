@@ -160,7 +160,9 @@ class AstrBotDashboard:
                 return await view_handler(*args, **kwargs)
         sdk_bridge = getattr(self.core_lifecycle, "sdk_plugin_bridge", None)
         if sdk_bridge is not None:
-            output = await sdk_bridge.dispatch_http_request(f"/{subpath}", request.method)
+            output = await sdk_bridge.dispatch_http_request(
+                f"/{subpath}", request.method
+            )
             if output is not None:
                 return self._build_sdk_plugin_response(output)
         return jsonify(Response().error("未找到该路由").__dict__)
@@ -188,7 +190,9 @@ class AstrBotDashboard:
         elif body is None:
             response = QuartResponse("", status=status)
         else:
-            raise ValueError("SDK HTTP handler body must be object, array, string or null")
+            raise ValueError(
+                "SDK HTTP handler body must be object, array, string or null"
+            )
 
         for key, value in headers.items():
             response.headers[str(key)] = str(value)

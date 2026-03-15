@@ -10,6 +10,11 @@ if TYPE_CHECKING:
     from .event_converter import EventConverter
     from .plugin_bridge import SdkPluginBridge
     from .trigger_converter import TriggerConverter
+else:
+    CoreCapabilityBridge: Any
+    EventConverter: Any
+    SdkPluginBridge: Any
+    TriggerConverter: Any
 
 __all__ = [
     "CoreCapabilityBridge",
