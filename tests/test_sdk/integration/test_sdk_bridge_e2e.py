@@ -96,6 +96,7 @@ from astrbot.core.platform.message_type import MessageType
 from astrbot.core.sdk_bridge import capability_bridge as capability_bridge_module
 from astrbot.core.sdk_bridge import plugin_bridge as plugin_bridge_module
 from astrbot.core.sdk_bridge.plugin_bridge import SdkPluginBridge
+from astrbot.dashboard.server import AstrBotDashboard
 
 
 class _FakeSharedPreferences:
@@ -145,6 +146,7 @@ class _FakeStarContext:
     def __init__(self) -> None:
         self.sent_messages: list[dict[str, object]] = []
         self.sdk_plugin_bridge = None
+        self.registered_web_apis: list[tuple[str, object, list[str], str]] = []
 
     async def send_message(self, session: str, message_chain) -> None:
         self.sent_messages.append(
@@ -233,6 +235,21 @@ class _FakeEvent:
 
     async def get_group(self):
         return None
+
+
+def _build_dashboard_with_sdk_route(fake_context, bridge: SdkPluginBridge) -> AstrBotDashboard:
+    dashboard = AstrBotDashboard.__new__(AstrBotDashboard)
+    dashboard.core_lifecycle = SimpleNamespace(
+        star_context=fake_context,
+        sdk_plugin_bridge=bridge,
+    )
+    dashboard.app = Quart("sdk-dashboard-e2e")
+    dashboard.app.add_url_rule(
+        "/api/plug/<path:subpath>",
+        view_func=dashboard.srv_plug_route,
+        methods=["GET", "POST"],
+    )
+    return dashboard
 
 
 @pytest.mark.integration
@@ -384,5 +401,89 @@ async def test_sdk_bridge_dispatches_demo_plugin_end_to_end(
         reenabled_result = await bridge.dispatch_message(reenabled_event)
         assert reenabled_result.sent_message is True
         assert reenabled_result.executed_handlers[0]["handler_id"].endswith("sdkhello")
+    finally:
+        await bridge.stop()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_dashboard_sdk_plug_route_end_to_end(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    temp_data_dir = tmp_path / "data"
+    sdk_plugins_dir = temp_data_dir / "sdk_plugins"
+    sdk_plugins_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        Path("data/sdk_plugins/sdk_demo_echo"),
+        sdk_plugins_dir / "sdk_demo_echo",
+    )
+
+    fake_sp = _FakeSharedPreferences()
+    fake_context = _FakeStarContext()
+
+    monkeypatch.setattr(
+        plugin_bridge_module,
+        "get_astrbot_data_path",
+        lambda: str(temp_data_dir),
+    )
+    monkeypatch.setattr(capability_bridge_module, "sp", fake_sp)
+
+    bridge = SdkPluginBridge(fake_context)
+    bridge.env_manager.prepare_environment = lambda plugin: Path(sys.executable)
+    fake_context.sdk_plugin_bridge = bridge
+
+    await bridge.start()
+    try:
+        dashboard = _build_dashboard_with_sdk_route(fake_context, bridge)
+        client = dashboard.app.test_client()
+
+        sdk_response = await client.post(
+            "/api/plug/sdk-demo-echo?name=astrbot",
+            json={"hello": "world"},
+        )
+        assert sdk_response.status_code == 200
+        assert sdk_response.headers["Content-Type"].startswith("application/json")
+        sdk_payload = await sdk_response.get_json()
+        assert sdk_payload["plugin_id"] == "sdk_demo_echo"
+        assert sdk_payload["method"] == "POST"
+        assert sdk_payload["route"] == "/sdk-demo-echo"
+        assert sdk_payload["query"] == {"name": ["astrbot"]}
+        assert sdk_payload["json_body"] == {"hello": "world"}
+        assert json.loads(sdk_payload["text_body"]) == {"hello": "world"}
+
+        async def legacy_get_handler(*_args, **_kwargs):
+            return "legacy-first"
+
+        fake_context.registered_web_apis = [
+            ("/sdk-demo-echo", legacy_get_handler, ["GET"], "legacy test route")
+        ]
+        legacy_response = await client.get("/api/plug/sdk-demo-echo")
+        assert legacy_response.status_code == 200
+        assert await legacy_response.get_data(as_text=True) == "legacy-first"
+
+        await bridge.turn_off_plugin("sdk_demo_echo")
+        disabled_response = await client.post("/api/plug/sdk-demo-echo")
+        disabled_payload = await disabled_response.get_json()
+        assert disabled_response.status_code == 200
+        assert disabled_payload["status"] == "error"
+        assert disabled_payload["message"] == "未找到该路由"
+
+        fake_context.registered_web_apis = []
+        await bridge.turn_on_plugin("sdk_demo_echo")
+        restored_response = await client.post(
+            "/api/plug/sdk-demo-echo",
+            json={"restored": True},
+        )
+        restored_payload = await restored_response.get_json()
+        assert restored_response.status_code == 200
+        assert restored_payload["plugin_id"] == "sdk_demo_echo"
+        assert restored_payload["json_body"] == {"restored": True}
+
+        missing_response = await client.get("/api/plug/not-found")
+        missing_payload = await missing_response.get_json()
+        assert missing_response.status_code == 200
+        assert missing_payload["status"] == "error"
+        assert missing_payload["message"] == "未找到该路由"
     finally:
         await bridge.stop()
