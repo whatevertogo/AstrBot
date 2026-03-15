@@ -35,7 +35,7 @@
 | Agent运行器 | 7 | 0 | 0 | 7 | 0 | 0% |
 | SDK扩展能力 | 19 | 0 | 0 | 19 | 0 | 0% |
 | 其他系统能力 | 52 | 7 | 0 | 44 | 1 | 13% |
-| **Star基类扩展** | **8** | **1** | **2** | **5** | **0** | **25%** |
+| **Star基类扩展** | **7** | **4** | **1** | **2** | **0** | **64%** |
 | **命令参数类型** | **8** | **1** | **0** | **7** | **0** | **12%** |
 | **过滤器组合** | **5** | **0** | **0** | **5** | **0** | **0%** |
 | **StarTools工具集** | **10** | **0** | **0** | **10** | **0** | **0%** |
@@ -67,11 +67,49 @@
 - 更新覆盖率总览表格
 
 ### 2026-03-15 更新
-- LLM Client 新增 `provider_id` / `contexts` / `tool_calls_result` 能力登记
-- `llm.stream_chat` 改为真实流式优先，只有 `NotImplementedError` 才降级
-- 补充 `Context` / `MessageEvent` / 平台错误跟踪 / 会话级 LLM/TTS 开关等缺口
+- **LLM Client 新增参数支持**：
+  - `contexts` - 自定义上下文，优先于 `history`
+  - `provider_id` - 显式指定聊天 Provider
+  - `tool_calls_result` - 工具执行结果透传
+  - `image_urls` - 多模态图片输入，已透传到底层 provider
+- **LLMResponse 新增字段**：
+  - `role` - 响应角色
+  - `reasoning_content` - 推理内容
+  - `reasoning_signature` - 推理签名
+- **stream_chat 优化**：改为真实流式优先，仅 `NotImplementedError` 时降级为完整响应切片流
+- **Core 端能力桥优化**：
+  - 新增 `_resolve_llm_request` 方法支持 provider_id 解析
+  - 新增 `_normalize_llm_payload` 方法标准化 LLM 请求参数
+- **类型注解优化**：移除不必要的前向引用字符串，使用 `from __future__ import annotations`
+- **协议描述符更新**：`llm.chat_raw` 和 `llm.stream_chat` 的 JSON Schema 支持新参数
 
----
+### 2026-03-15 优先级重组
+- **重新组织优先级结构**：
+  - **P0**：旧插件能力（阻塞迁移）- 按实现紧迫度分为 P0.0 到 P0.13
+  - **P1**：SDK 可扩展能力 - 分为 P1.1 到 P1.8
+- **P0.0**：基础核心能力（已实现 ✅）- LLM/DB/Platform/Metadata/装饰器/消息组件/MessageEvent
+- **P0.1**：阻塞迁移的关键能力 - Memory/HTTP/MessageEvent扩展/事件控制/工具方法/会话等待/Provider实体
+- **P0.2**：消息和交互能力 - 消息组件/消息方法/结果对象
+- **P0.3**：事件和触发器系统 - 完整事件类型/触发器扩展/Handler注册表
+- **P0.4**：Agent 和 LLM 高级能力 - Agent运行器/LLM工具管理
+- **P0.5**：Provider 管理系统 - Provider管理/类型枚举/实体类
+- **P0.6**：TTS/STT/Embedding Provider
+- **P0.7**：过滤器和命令系统 - 自定义过滤器/过滤器组合/消息类型过滤/平台适配器过滤/命令组/命令参数类型
+- **P0.8**：高级管理器 - PersonaManager/ConversationManager/KnowledgeBaseManager
+- **P0.9**：Platform 实体和会话管理 - Platform实体/会话级插件管理/会话级服务开关
+- **P0.10**：StarTools 工具集 - 消息发送/事件创建/LLM工具管理
+- **P0.11**：Star 基类和元数据 - Star基类方法/PluginKVStoreMixin/StarMetadata字段
+- **P0.12**：跨会话发送和平台集成 - PlatformClient扩展/群组管理/Platform实体/Webhook
+- **P0.13**：其他系统能力 - 文件服务/MCP/事件总线/热重载/国际化/插件依赖管理/消息撤回/日志系统/Cron任务
+- **P1.1**：CancelToken 取消机制扩展
+- **P1.2**：provide_capability 能力导出扩展
+- **P1.3**：Handler kind 类型实现
+- **P1.4**：Permissions 权限系统扩展
+- **P1.5**：插件间 Capability 调用
+- **P1.6**：事件类型标准化
+- **P1.7**：依赖注入扩展
+- **P1.8**：调度器验证
+- **整合旧系统详情**：将原 P2.5-P2.15 内容整合到"旧系统能力详情"参考章节
 
 ---
 
@@ -302,8 +340,8 @@
 | `get_config()` | `ctx.metadata.get_plugin_config()` | ✅ | 获取配置 |
 | `send_message()` | `ctx.platform.send()` | ✅ | 发送消息 |
 | `get_db()` | `ctx.db` | ✅ | 数据库 |
-| `llm_generate(image_urls=...)` | `ctx.llm.chat(image_urls=...)` | 🔄 | 图片输入 |
-| `llm_generate(tools=...)` | `ctx.llm.chat(tools=...)` | 🔄 | 工具调用 |
+| `llm_generate(image_urls=...)` | `ctx.llm.chat(image_urls=...)` | ✅ | 图片输入 |
+| `llm_generate(tools=...)` | `ctx.llm.chat(tools=...)` | ✅ | 工具调用 |
 | `tool_loop_agent()` | 无 | ❌ | Agent 循环 |
 | `get_llm_tool_manager()` | 无 | ❌ | 工具管理器 |
 | `activate_llm_tool()` | 无 | ❌ | 激活工具 |
@@ -494,51 +532,217 @@
 
 ## 优先级
 
-### P0 - 阻塞迁移
-1. **Memory Client** - AI 插件核心能力
-2. **HTTP Client** - Web API 注册
-3. **MessageEvent**: `is_private_chat()`, `is_admin()`, `self_id`, `message_type`, `unified_msg_origin`
-4. **事件控制**: `stop_event()`, `continue_event()`
-5. **基础事件**: `astrbot_loaded`, `platform_loaded`, `after_message_sent`
-6. **工具方法**: `get_data_dir()` - 数据存储必需
-7. **会话等待**: `SessionWaiter` - 交互式插件必需
-8. **Provider实体**: `MessageSession` - 跨会话发送必需
+### P0 - 旧插件能力（阻塞迁移）
 
-### P1 - 影响体验
-1. **消息组件**: `At`, `AtAll`, `Reply`
-2. **Agent**: `tool_loop_agent()`, `BaseAgentRunner`
-3. **触发器过滤**: `message_types=[...]`, `CustomFilter`
-4. **LLM**: `image_urls`, `tools` 参数
-5. **触发器实现**: `@on_event`, `@on_schedule` Core端实现
-6. **工具方法**: `text_to_image()`, `html_render()`
-7. **命令组**: 子命令路由
-8. **TTS/STT Provider**: 语音输入输出
+**说明**：这些是旧系统已有的功能，SDK 必须实现才能完成插件迁移，按实现紧迫度排序。
 
-### P2 - 增强功能
-1. Provider 查询和管理
-2. TTS/STT/Embedding Provider
-3. 更多事件类型
-4. 命令组路由
-5. LLM 工具注册装饰器
-6. 更多消息组件: `Poke`, `Node`, `Json`
-7. 人格管理 API
-8. 对话管理 API
-9. 知识库管理 API
-10. Platform 统计和状态
+#### P0.0 - 基础核心能力（已实现 ✅）
+1. **LLM Client** - 基本对话功能（`chat`, `chat_raw`, `stream_chat`）
+2. **DB Client (KV)** - 键值存储（`get`, `set`, `delete`, `list`, `get_many`, `set_many`）
+3. **Platform Client** - 基础消息发送（`send`, `send_image`, `send_chain`）
+4. **Metadata Client** - 插件元数据（`get_plugin`, `list_plugins`, `get_current_plugin`, `get_plugin_config`）
+5. **基础装饰器** - `@on_command`, `@on_message`, `@require_admin`, `@provide_capability`
+6. **基础消息组件** - `Plain`, `Image`
+7. **MessageEvent** 基础属性 - `text`, `platform`, `session_id`, `user_id`, `group_id`, `raw`
+8. **基础回复方法** - `reply()`, `reply_image()`, `reply_chain()`, `plain_result()`
 
-### P2.5 - Star基类扩展方法（旧系统Star类特有）
+#### P0.1 - 阻塞迁移的关键能力
+1. **Memory Client** - AI 插件核心能力（当前 Core 端简化实现）
+2. **HTTP Client** - Web API 注册（Core 端 MVP 不支持）
+3. **MessageEvent 扩展属性/方法** - `is_private_chat()`, `is_admin()`, `self_id`, `message_type`, `unified_msg_origin`, `platform_id`, `sender_name`
+4. **事件控制** - `stop_event()`, `continue_event()`, `is_stopped()`
+5. **基础事件类型** - `astrbot_loaded`, `platform_loaded`, `after_message_sent`
+6. **工具方法** - `get_data_dir()`, `text_to_image()`, `html_render()`
+7. **会话等待** - `SessionWaiter`, `SessionController`（交互式插件必需）
+8. **Provider 实体** - `MessageSession`（跨会话发送必需）
+
+#### P0.2 - 消息和交互能力
+1. **消息组件** - `At`, `AtAll`, `Reply`, `Record`, `Video`, `File`, `Poke`, `Forward`
+2. **消息组件方法** - `Image.convert_to_file_path()`, `register_to_file_service()`, `File.get_file()`
+3. **MessageEvent 扩展方法** - `react()`, `send_typing()`, `send_streaming()`, `get_messages()`, `get_message_outline()`
+4. **结果对象** - `image_result()`, `chain_result()`, `make_result()`
+5. **额外信息** - `set_extra()`, `get_extra()`, `clear_extra()`
+
+#### P0.3 - 事件和触发器系统
+1. **完整事件类型** - `waiting_llm_request`, `llm_request`, `llm_response`, `decorating_result`, `calling_func_tool`, `using_llm_tool`, `llm_tool_respond`, `plugin_error`, `plugin_loaded`, `plugin_unloaded`
+2. **触发器扩展** - `@on_event`, `@on_schedule`, `@on_message(message_types=[])`
+3. **Handler 注册表** - `StarHandlerRegistry`, `get_handlers_by_event_type()`, `get_handler_by_full_name()`
+4. **Handler 优先级** - 按 `priority` 字段排序执行
+5. **Handler 白名单** - 按插件名称过滤
+
+#### P0.4 - Agent 和 LLM 高级能力
+1. **Agent 运行器** - `BaseAgentRunner`, `tool_loop_agent()`
+2. **LLM 工具管理** - `get_llm_tool_manager()`, `activate_llm_tool()`, `deactivate_llm_tool()`, `add_llm_tools()`
+3. **LLM 工具注册** - `@register_llm_tool()`
+4. **Agent 注册** - `@register_agent()`
+5. **LLM 扩展参数** - `request_llm()`, `should_call_llm()`, `set_result()`, `get_result()`
+
+#### P0.5 - Provider 管理系统
+1. **Provider 管理** - `set_provider()`, `get_provider_by_id()`, `get_using_provider()`, `load_provider()`, `terminate_provider()`, `create_provider()`, `update_provider()`, `delete_provider()`, `register_provider_change_hook()`, `get_insts()`
+2. **Provider 类型枚举** - `ProviderType.CHAT_COMPLETION`, `SPEECH_TO_TEXT`, `TEXT_TO_SPEECH`, `EMBEDDING`, `RERANK`
+3. **Provider 查询** - `get_using_provider()`, `get_all_providers()`, `get_all_tts_providers()`, `get_all_stt_providers()`, `get_all_embedding_providers()`, `get_using_tts_provider()`, `get_using_stt_provider()`
+4. **Provider 实体类** - `ProviderMeta`, `ProviderRequest`, `TokenUsage`, `LLMResponse`（完整版）, `ToolCallsResult`, `RerankResult`
+
+#### P0.6 - TTS/STT/Embedding Provider
+1. **STTProvider** - `get_text(audio_url)`
+2. **TTSProvider** - `get_audio(text)`, `get_audio_stream()`, `support_stream()`
+3. **EmbeddingProvider** - 嵌入向量提供商
+4. **RerankProvider** - 重排序提供商
+
+#### P0.7 - 过滤器和命令系统
+1. **自定义过滤器** - `CustomFilter` 基类, `@custom_filter`
+2. **过滤器组合** - `__and__()`, `__or__()`, `CustomFilterAnd`, `CustomFilterOr`
+3. **消息类型过滤** - `EventMessageTypeFilter`, `EventMessageType` 枚举（`GROUP_MESSAGE`, `PRIVATE_MESSAGE`, `OTHER_MESSAGE`）
+4. **平台适配器过滤** - `PlatformAdapterTypeFilter`, `PlatformAdapterType` 枚举（15+种平台）
+5. **命令组系统** - `CommandGroupFilter`, `group_name`, `sub_command_filters`, `parent_group`, `add_sub_command_filter()`, `get_complete_command_names()`, `print_cmd_tree()`
+6. **命令参数类型解析** - `int`, `float`, `bool` 自动转换, `Optional[T]`, `GreedyStr`, `unwrap_optional()`, `print_types()`
+7. **命令别名** - `@on_command(aliases=[])`
+
+#### P0.8 - 高级管理器
+1. **PersonaManager** - 人格管理器（`get_persona()`, `get_all_personas()`, `create_persona()`, `update_persona()`, `delete_persona()`）
+2. **ConversationManager** - 对话管理器（`new_conversation()`, `switch_conversation()`, `delete_conversation()`, `get_conversation()`, `get_conversations()`, `update_conversation()`）
+3. **KnowledgeBaseManager** - 知识库管理器（`get_kb()`, `create_kb()`, `delete_kb()`）
+
+#### P0.9 - Platform 实体和会话管理
+1. **Platform 实体** - `PlatformStatus` 枚举, `PlatformError`, `record_error()`, `last_error`, `errors`, `clear_errors()`, `send_by_session()`, `commit_event()`, `get_client()`, `get_stats()`, `unified_webhook()`, `webhook_callback()`
+2. **会话级插件管理** - `SessionPluginManager`, `is_plugin_enabled_for_session()`, `filter_handlers_by_session()`, `session_plugin_config`, `enabled_plugins`, `disabled_plugins`
+3. **会话级服务开关** - `SessionServiceManager`, `is_llm_enabled_for_session()`, `set_llm_status_for_session()`, `should_process_llm_request()`, `is_tts_enabled_for_session()`, `set_tts_status_for_session()`, `should_process_tts_request()`
+
+#### P0.10 - StarTools 工具集
+1. **消息发送** - `send_message(session, chain)`, `send_message_by_id(type, id, chain, platform)`
+2. **事件创建** - `create_message()`, `create_event()`
+3. **LLM 工具管理** - `activate_llm_tool()`, `deactivate_llm_tool()`, `register_llm_tool()`, `unregister_llm_tool()`
+4. **其他工具** - `get_data_dir()`, `_context`
+5. **消息链** - `MessageChain.get_plain_text()`
+
+#### P0.11 - Star 基类和元数据
+1. **Star 基类方法** - `text_to_image()`, `html_render()`, `context` 属性
+2. **PluginKVStoreMixin** - `put_kv_data()`, `get_kv_data()`, `delete_kv_data()`, `plugin_id`
+3. **StarMetadata 字段** - `support_platforms`, `astrbot_version`
+
+#### P0.12 - 跨会话发送和平台集成
+1. **PlatformClient 扩展** - `send_by_id()`, `send_by_session()`, `get_members()`
+2. **群组管理** - `get_group()`, 群成员列表获取
+3. **Platform 实体** - `get_client()`, `get_stats()`
+4. **Webhook 处理** - `unified_webhook()`, `webhook_callback()`
+
+#### P0.13 - 其他系统能力
+1. **文件服务** - `FileTokenService`, `register_file()`, `handle_file()`, `register_to_file_service()`
+2. **MCP 支持** - `MCPClient`, `MCPTool`
+3. **事件总线** - `EventBus`, `event_queue`
+4. **热重载** - `_watch_plugins_changes()`
+5. **国际化** - `ConfigMetadataI18n`, `convert_to_i18n_keys()`
+6. **插件依赖管理** - `PluginVersionIncompatibleError`, `PluginDependencyInstallError`, `_import_plugin_with_dependency_recovery()`
+7. **消息撤回** - 消息撤回 API
+8. **Reply 消息组件属性** - `id`, `chain`, `sender_id`, `sender_nickname`, `message_str`
+9. **日志系统** - `LogBroker`, `LogManager.GetLogger()`, 日志订阅机制
+10. **Cron 定时任务管理** - `CronJobManager`, 任务持久化
+11. **Legacy Context** - `register_commands()`, `register_task()`, `get_platform()`, `get_platform_inst()`, `get_event_queue()`
+
+---
+
+### P1 - SDK 可扩展能力
+
+**说明**：这些是新 SDK 可以进一步扩展的能力，不一定是旧系统已有的，但可以增强 SDK 功能性。
+
+#### P1.1 - CancelToken 取消机制扩展
+1. `cancel(reason: str)` - 取消时传递原因
+2. `on_cancel(callback)` - 注册取消回调，支持清理逻辑
+3. `with_timeout(seconds)` - 辅助方法：超时自动取消
+4. `CancelToken.any(*tokens)` - 组合取消：任一取消即触发
+5. `CancelToken.all(*tokens)` - 组合取消：全部取消才触发
+
+#### P1.2 - provide_capability 能力导出扩展
+1. `version: str` - 能力版本控制
+2. `requires: list[str]` - 声明依赖的其他 capability
+3. `middleware: list[Middleware]` - 能力拦截器/中间件支持
+4. `rate_limit: RateLimit` - 速率限制声明
+5. `cache_policy: CachePolicy` - 缓存策略声明
+
+#### P1.3 - Handler kind 类型实现
+1. `hook` - 钩子类型（定义但未在运行时实现）
+2. `tool` - LLM Function Calling 工具类型
+3. `session` - 会话级处理器类型
+
+#### P1.4 - Permissions 权限系统扩展
+1. `roles: list[str]` - 角色系统支持
+2. `scopes: list[str]` - 细粒度权限范围
+3. `platforms: list[str]` - 平台级权限限制
+4. `allow_users: list[str]` - 用户白名单
+5. `deny_users: list[str]` - 用户黑名单
+
+#### P1.5 - 插件间 Capability 调用
+1. `ctx.capability.discover()` - 发现其他插件导出的 capability
+2. `ctx.capability.invoke(name, payload)` - 调用其他插件的 capability（当前只支持同步）
+3. `ctx.capability.invoke_stream(name, payload)` - 流式调用其他插件的 capability
+4. 版本协商 - capability 版本兼容性检查
+
+#### P1.6 - 事件类型标准化
+1. `EventType` 枚举 - 标准化事件类型常量，避免拼写不一致
+2. 事件 payload schema - 每种事件的标准化 payload 结构定义
+
+#### P1.7 - 依赖注入扩展
+1. 自定义类型注入器 - 允许插件注册自定义类型的依赖注入
+2. 配置注入 - 自动注入插件配置项到 handler 参数
+3. 依赖注入容器 - 支持更复杂的依赖关系
+
+#### P1.8 - 调度器验证
+1. `@on_schedule` Core 端调度器验证 - 验证 Core 端是否有完整调度器实现
+2. 持久化任务验证 - 验证定时任务是否支持持久化
+
+---
+
+### 优先级说明
+
+- **P0**：旧系统已有的功能，必须实现才能完成插件迁移
+  - **P0.0**：已实现的基础能力 ✅
+  - **P0.1**：阻塞迁移的关键能力（Memory/HTTP/MessageEvent扩展/事件控制）
+  - **P0.2**：消息和交互能力（消息组件/消息方法）
+  - **P0.3**：事件和触发器系统（事件类型/触发器扩展）
+  - **P0.4**：Agent 和 LLM 高级能力
+  - **P0.5**：Provider 管理系统
+  - **P0.6**：TTS/STT/Embedding Provider
+  - **P0.7**：过滤器和命令系统
+  - **P0.8**：高级管理器（人格/对话/知识库）
+  - **P0.9**：Platform 实体和会话管理
+  - **P0.10**：StarTools 工具集
+  - **P0.11**：Star 基类和元数据
+  - **P0.12**：跨会话发送和平台集成
+  - **P0.13**：其他系统能力（文件服务/MCP/事件总线等）
+
+- **P1**：新 SDK 可扩展能力
+  - **P1.1**：CancelToken 扩展
+  - **P1.2**：provide_capability 扩展
+  - **P1.3**：Handler kind 实现
+  - **P1.4**：Permissions 扩展
+  - **P1.5**：插件间 Capability 调用
+  - **P1.6**：事件类型标准化
+  - **P1.7**：依赖注入扩展
+  - **P1.8**：调度器验证
+
+> 注：此优先级按照"旧插件能力优先（P0）→ 可扩展能力次之（P1）"的原则重新组织，更符合实际迁移需求。
+
+---
+
+## 旧系统能力详情（已整合到 P0）
+
+> 说明：以下是旧系统各模块的详细能力列表，已按类别整合到上述 P0 优先级中。
+
+### Star基类扩展方法 → P0.11
+
+说明：本节按”能力是否被 SDK 等价覆盖”判定，不要求 API 同名。
 
 | 方法 | 状态 | 说明 | 建议实现 |
 | --- | --- | --- | --- |
 | `Star.text_to_image(text)` | ❌ | 文本转图片渲染 | 通过Capability暴露给SDK |
 | `Star.html_render(tmpl, data)` | ❌ | HTML模板渲染 | 通过Capability暴露给SDK |
-| `Star.initialize()` | 🔄 | 插件激活时调用（旧系统生命周期） | SDK使用`on_start()`替代 |
-| `Star.terminate()` | 🔄 | 插件禁用时调用（旧系统生命周期） | SDK使用`on_stop()`替代 |
+| `Star.initialize()` | ✅ | 插件激活时调用（旧系统生命周期） | SDK 已用 `on_start()` 等价覆盖 |
+| `Star.terminate()` | ✅ | 插件禁用时调用（旧系统生命周期） | SDK 已用 `on_stop()` 等价覆盖 |
 | `Star.__init_subclass__()` | ✅ | 自动注册插件到star_map | SDK已实现类似的`__init_subclass__` |
-| `Star.context` | ❌ | 插件上下文引用 | SDK通过handler参数传递ctx |
-| `Star._get_context_config()` | ❌ | 获取上下文配置 | SDK通过`ctx.metadata.get_plugin_config()` |
+| `Star.context` | 🔄 | 插件上下文引用 | SDK 通过 handler 参数传递 `ctx`，跨方法需显式透传或自行保存 |
+| `Star._get_context_config()` | ✅ | 获取上下文配置 | SDK 已由 `ctx.metadata.get_plugin_config()` 等价覆盖 |
 
-### P2.6 - 命令参数类型系统（旧系统CommandFilter特有）
+### 命令参数类型系统 → P0.7
 
 | 参数类型 | 状态 | 说明 | 旧系统实现位置 |
 | --- | --- | --- | --- |
@@ -551,7 +755,7 @@
 | `unwrap_optional()` | ❌ | 解析Optional类型注解的工具函数 | `command.py`中的工具函数 |
 | `print_types()` | ❌ | 打印命令参数类型信息用于帮助 | `CommandFilter.print_types()` |
 
-### P2.7 - 过滤器组合与自定义（旧系统Filter系统）
+### 过滤器组合与自定义 → P0.7
 
 | 功能 | 状态 | 说明 | 旧系统实现 |
 | --- | --- | --- | --- |
@@ -562,7 +766,7 @@
 | `CustomFilterOr` | ❌ | 或运算过滤器组合 | `custom_filter.py` |
 | `raise_error` 参数 | ❌ | 权限不足时是否抛出错误 | `CustomFilter.__init__()` |
 
-### P2.8 - 事件系统细节对比
+### 事件系统细节 → P0.3
 
 | 旧系统特性 | 新SDK状态 | 说明 |
 | --- | --- | --- |
@@ -575,7 +779,7 @@
 | Handler优先级排序 | ❌ | 按`priority`字段排序执行 |
 | Handler白名单过滤 | ❌ | 按插件名称过滤Handler |
 
-### P2.9 - 平台适配器类型系统
+### 平台适配器类型系统 → P0.7
 
 | 平台类型 | 状态 | 说明 |
 | --- | --- | --- |
@@ -596,7 +800,7 @@
 | `LINE` | ❌ | LINE |
 | `ADAPTER_NAME_2_TYPE` 映射 | ❌ | 平台名称到类型的映射 |
 
-### P2.10 - StarTools 工具集（旧系统特有，新SDK未实现）
+### StarTools 工具集 → P0.10
 
 | 方法 | 状态 | 说明 | 使用场景 |
 | --- | --- | --- | --- |
@@ -611,7 +815,7 @@
 | `StarTools.get_data_dir(plugin_name?)` | ❌ | 获取插件数据目录 | 文件存储 |
 | `StarTools._context` | ❌ | 类级别的Context引用 | 工具方法访问Core |
 
-### P2.11 - 会话级插件管理（SessionPluginManager）
+### 会话级插件管理 → P0.9
 
 | 功能 | 状态 | 说明 |
 | --- | --- | --- |
@@ -622,7 +826,7 @@
 | `enabled_plugins` 列表 | ❌ | 会话启用的插件列表 |
 | `disabled_plugins` 列表 | ❌ | 会话禁用的插件列表 |
 
-### P2.11.1 - 会话级 LLM/TTS 开关（SessionServiceManager）
+### 会话级 LLM/TTS 开关 → P0.9
 
 | 功能 | 状态 | 说明 |
 | --- | --- | --- |
@@ -635,7 +839,7 @@
 | `should_process_tts_request(session_id)` | ❌ | 判断是否处理 TTS 请求 |
 | `is_session_enabled(session_id)` | ❌ | 汇总判断会话服务是否可用 |
 
-### P2.12 - 命令组系统（CommandGroupFilter）
+### 命令组系统 → P0.7
 
 | 功能 | 状态 | 说明 | 示例 |
 | --- | --- | --- | --- |
@@ -649,7 +853,7 @@
 | `startswith()` | ❌ | 消息是否以命令组开头 | - |
 | `equals()` | ❌ | 消息是否完全匹配命令组 | - |
 
-### P2.13 - 消息类型过滤（EventMessageType）
+### 消息类型过滤 → P0.7
 
 | 类型 | 状态 | 说明 |
 | --- | --- | --- |
@@ -661,7 +865,7 @@
 | `EventMessageTypeFilter` | ❌ | 消息类型过滤器 |
 | `MESSAGE_TYPE_2_EVENT_MESSAGE_TYPE` 映射 | ❌ | 类型转换映射 |
 
-### P2.14 - PluginKVStoreMixin（插件KV存储Mixin）
+### PluginKVStoreMixin → P0.11
 
 | 方法 | 状态 | 说明 | 替代方案 |
 | --- | --- | --- | --- |
@@ -671,7 +875,7 @@
 | `delete_kv_data(key)` | ❌ | 删除键值对 | `ctx.db.delete()` |
 | `plugin_id` 属性 | ❌ | 插件ID标识 | SDK自动处理 |
 
-### P2.15 - StarMetadata 完整字段对比
+### StarMetadata 完整字段 → P0.11
 
 | 字段 | 状态 | 说明 |
 | --- | --- | --- |
@@ -693,15 +897,6 @@
 | `logo_path` | ✅ | Logo路径 |
 | `support_platforms` | ❌ | 支持的平台列表 |
 | `astrbot_version` | ❌ | 要求的AstrBot版本范围 |
-
-### P3 - SDK 架构扩展（可选增强）
-1. **CancelToken 扩展** - 取消原因、回调注册、组合取消
-2. **provide_capability 扩展** - 版本控制、依赖声明、中间件、速率限制
-3. **Handler kind 实现** - `hook`/`tool`/`session` 类型运行时支持
-4. **Permissions 扩展** - 角色系统、权限范围、用户白/黑名单
-5. **插件间 Capability** - 发现机制、流式调用、版本协商
-6. **事件类型标准化** - EventType 枚举、payload schema
-7. **依赖注入扩展** - 自定义类型注入器、配置注入
 
 ---
 
@@ -759,83 +954,9 @@
 
 ---
 
-## SDK 扩展能力（新 SDK 可进一步扩展）
+## 其他系统能力（已整合到 P0.13）
 
-以下是基于当前 SDK 架构设计，可以进一步扩展的能力。
-
-### CancelToken 取消机制扩展
-
-| 扩展 | 状态 | 说明 |
-| --- | --- | --- |
-| `cancel(reason: str)` | ❌ | 取消时传递原因 |
-| `on_cancel(callback)` | ❌ | 注册取消回调，支持清理逻辑 |
-| `with_timeout(seconds)` | ❌ | 辅助方法：超时自动取消 |
-| `CancelToken.any(*tokens)` | ❌ | 组合取消：任一取消即触发 |
-| `CancelToken.all(*tokens)` | ❌ | 组合取消：全部取消才触发 |
-
-### provide_capability 能力导出扩展
-
-| 扩展 | 状态 | 说明 |
-| --- | --- | --- |
-| `version: str` | ❌ | 能力版本控制 |
-| `requires: list[str]` | ❌ | 声明依赖的其他 capability |
-| `middleware: list[Middleware]` | ❌ | 能力拦截器/中间件支持 |
-| `rate_limit: RateLimit` | ❌ | 速率限制声明 |
-| `cache_policy: CachePolicy` | ❌ | 缓存策略声明 |
-
-### Handler kind 类型实现
-
-| 类型 | 状态 | 说明 |
-| --- | --- | --- |
-| `handler` | ✅ | 已实现，标准消息处理器 |
-| `hook` | ❌ | 钩子类型（定义但未在运行时实现） |
-| `tool` | ❌ | LLM Function Calling 工具类型 |
-| `session` | ❌ | 会话级处理器类型 |
-
-### Permissions 权限系统扩展
-
-| 扩展 | 状态 | 说明 |
-| --- | --- | --- |
-| `roles: list[str]` | ❌ | 角色系统支持 |
-| `scopes: list[str]` | ❌ | 细粒度权限范围 |
-| `platforms: list[str]` | ❌ | 平台级权限限制 |
-| `allow_users: list[str]` | ❌ | 用户白名单 |
-| `deny_users: list[str]` | ❌ | 用户黑名单 |
-
-### 插件间 Capability 调用
-
-| 能力 | 状态 | 说明 |
-| --- | --- | --- |
-| `ctx.capability.discover()` | ❌ | 发现其他插件导出的 capability |
-| `ctx.capability.invoke(name, payload)` | ❌ | 调用其他插件的 capability（当前只支持同步） |
-| `ctx.capability.invoke_stream(name, payload)` | ❌ | 流式调用其他插件的 capability |
-| 版本协商 | ❌ | capability 版本兼容性检查 |
-
-### 事件类型标准化
-
-| 扩展 | 状态 | 说明 |
-| --- | --- | --- |
-| `EventType` 枚举 | ❌ | 标准化事件类型常量，避免拼写不一致 |
-| 事件 payload schema | ❌ | 每种事件的标准化 payload 结构定义 |
-
-### 依赖注入扩展
-
-| 扩展 | 状态 | 说明 |
-| --- | --- | --- |
-| 自定义类型注入器 | ❌ | 允许插件注册自定义类型的依赖注入 |
-| 配置注入 | ❌ | 自动注入插件配置项到 handler 参数 |
-| 依赖注入容器 | ❌ | 支持更复杂的依赖关系 |
-
-### 调度器验证
-
-| 项目 | 状态 | 说明 |
-| --- | --- | --- |
-| `@on_schedule` Core 端调度器 | ❓ | 需验证 Core 端是否有完整调度器实现 |
-| 持久化任务 | ❓ | 验证定时任务是否支持持久化 |
-
----
-
-## 其他系统能力
+> 说明：以下能力已整合到优先级 P0.13 中，此处保留作为参考。
 
 ### 错误处理和异常类型
 
