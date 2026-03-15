@@ -64,7 +64,7 @@ class MessageEvent:
         platform: str | None = None,
         session_id: str | None = None,
         raw: dict[str, Any] | None = None,
-        context: "Context | None" = None,
+        context: Context | None = None,
         reply_handler: ReplyHandler | None = None,
     ) -> None:
         """初始化消息事件。
@@ -93,7 +93,7 @@ class MessageEvent:
                 text,
             )
 
-    def _require_runtime_context(self, action: str) -> "Context":
+    def _require_runtime_context(self, action: str) -> Context:
         """获取运行时上下文，不存在则抛出异常。"""
         if self._context is None:
             raise RuntimeError(f"MessageEvent 未绑定运行时上下文，无法 {action}")
@@ -108,9 +108,9 @@ class MessageEvent:
         cls,
         payload: dict[str, Any],
         *,
-        context: "Context | None" = None,
+        context: Context | None = None,
         reply_handler: ReplyHandler | None = None,
-    ) -> "MessageEvent":
+    ) -> MessageEvent:
         """从协议载荷创建事件实例。
 
         Args:

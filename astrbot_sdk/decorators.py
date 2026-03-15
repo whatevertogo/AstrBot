@@ -28,18 +28,19 @@ Example:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from pydantic import BaseModel
 
 from .protocol.descriptors import (
+    RESERVED_CAPABILITY_PREFIXES,
     CapabilityDescriptor,
     CommandTrigger,
     EventTrigger,
     MessageTrigger,
     Permissions,
-    RESERVED_CAPABILITY_PREFIXES,
     ScheduleTrigger,
 )
 

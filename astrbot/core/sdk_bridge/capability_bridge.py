@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from astrbot.api import sp
+from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.message.components import ComponentTypes, Image, Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.provider.entities import LLMResponse
@@ -182,11 +183,17 @@ class CoreCapabilityBridge(CapabilityRouter):
         )
         image_urls = payload.get("image_urls")
         tool_calls_result = payload.get("tool_calls_result")
+        tools_payload = payload.get("tools")
         request_kwargs: dict[str, Any] = {
             "prompt": str(payload.get("prompt", "")),
             "image_urls": (
                 [str(item) for item in image_urls]
                 if isinstance(image_urls, list)
+                else None
+            ),
+            "func_tool": (
+                CoreCapabilityBridge._build_toolset(tools_payload)
+                if isinstance(tools_payload, list)
                 else None
             ),
             "contexts": contexts,
@@ -200,6 +207,40 @@ class CoreCapabilityBridge(CapabilityRouter):
             "temperature": payload.get("temperature"),
         }
         return request_kwargs
+
+    @staticmethod
+    def _build_toolset(tools_payload: list[Any]) -> ToolSet:
+        tool_set = ToolSet()
+        for item in tools_payload:
+            if not isinstance(item, dict):
+                raise AstrBotError.invalid_input("llm tools items must be objects")
+            if str(item.get("type", "function")) != "function":
+                raise AstrBotError.invalid_input(
+                    "Only function tools are supported in AstrBot SDK MVP"
+                )
+            function_payload = item.get("function")
+            if not isinstance(function_payload, dict):
+                raise AstrBotError.invalid_input(
+                    "llm tools items must contain a function object"
+                )
+            name = str(function_payload.get("name", "")).strip()
+            if not name:
+                raise AstrBotError.invalid_input(
+                    "llm function tool name must not be empty"
+                )
+            description = str(function_payload.get("description", "") or "")
+            parameters = function_payload.get("parameters")
+            if not isinstance(parameters, dict):
+                parameters = {"type": "object", "properties": {}}
+            tool_set.add_tool(
+                FunctionTool(
+                    name=name,
+                    description=description,
+                    parameters=parameters,
+                    handler=None,
+                )
+            )
+        return tool_set
 
     def _register_db_capabilities(self) -> None:
         self.register(

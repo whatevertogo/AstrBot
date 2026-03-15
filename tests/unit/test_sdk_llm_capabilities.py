@@ -139,6 +139,20 @@ class _FakePluginBridge:
 async def test_llm_client_prefers_contexts_and_omits_history_from_payload() -> None:
     proxy = _RecordingProxy()
     client = LLMClient(proxy)
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "lookup_weather",
+                "description": "Look up weather",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                },
+            },
+        }
+    ]
 
     await client.chat(
         "hello",
@@ -147,6 +161,7 @@ async def test_llm_client_prefers_contexts_and_omits_history_from_payload() -> N
         provider_id="provider-1",
         tool_calls_result=[{"role": "tool", "content": "done"}],
         image_urls=["https://example.com/a.png"],
+        tools=tools,
     )
 
     capability, payload = proxy.calls[0]
@@ -156,6 +171,7 @@ async def test_llm_client_prefers_contexts_and_omits_history_from_payload() -> N
     assert payload["provider_id"] == "provider-1"
     assert payload["tool_calls_result"] == [{"role": "tool", "content": "done"}]
     assert payload["image_urls"] == ["https://example.com/a.png"]
+    assert payload["tools"] == tools
 
 
 @pytest.mark.unit
@@ -242,6 +258,21 @@ async def test_core_llm_bridge_prefers_contexts_over_history_without_mixing() ->
             "history": [{"role": "user", "content": "from-history"}],
             "contexts": [{"role": "assistant", "content": "from-contexts"}],
             "tool_calls_result": [{"role": "tool", "content": "done"}],
+            "image_urls": ["https://example.com/a.png"],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "lookup_weather",
+                        "description": "Look up weather",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"city": {"type": "string"}},
+                            "required": ["city"],
+                        },
+                    },
+                }
+            ],
         },
         None,
     )
@@ -249,7 +280,18 @@ async def test_core_llm_bridge_prefers_contexts_over_history_without_mixing() ->
     kwargs = provider.text_chat_calls[0]
     assert kwargs["contexts"] == [{"role": "assistant", "content": "from-contexts"}]
     assert kwargs["tool_calls_result"] == [{"role": "tool", "content": "done"}]
+    assert kwargs["image_urls"] == ["https://example.com/a.png"]
     assert "history" not in kwargs
+    assert kwargs["func_tool"] is not None
+    assert kwargs["func_tool"].names() == ["lookup_weather"]
+    tool = kwargs["func_tool"].get_tool("lookup_weather")
+    assert tool is not None
+    assert tool.description == "Look up weather"
+    assert tool.parameters == {
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"],
+    }
     assert bridge._star_context.using_provider_calls == ["umo:session"]
 
 

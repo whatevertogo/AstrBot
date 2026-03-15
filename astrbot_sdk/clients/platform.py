@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ._proxy import CapabilityProxy
 from ..protocol.descriptors import SessionRef
+from ._proxy import CapabilityProxy
 
 
 class PlatformClient:

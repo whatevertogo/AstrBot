@@ -629,7 +629,7 @@ def _render_init_readme(*, plugin_name: str) -> str:
 def _render_init_test_py(*, plugin_name: str) -> str:
     class_name = _class_name_for_plugin(plugin_name)
     return dedent(
-        f'''\
+        f"""\
         from pathlib import Path
 
         import pytest
@@ -661,7 +661,7 @@ def _render_init_test_py(*, plugin_name: str) -> str:
                 records = await harness.dispatch_text("hello")
 
             assert any(record.text == "Hello, World!" for record in records)
-        '''
+        """
     )
 
 

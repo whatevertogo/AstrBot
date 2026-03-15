@@ -84,12 +84,12 @@
 | `chat(prompt, system?, history?, model?, temperature?)` | ✅ | 发送聊天，返回文本 |
 | `chat_raw(prompt, ...)` | ✅ | 返回完整响应（含 usage、tool_calls，兼容 `role/reasoning_*` 可选扩展） |
 | `stream_chat(prompt, ...)` | ✅ | 真实流式优先，仅 `NotImplementedError` 时降级为完整响应切片流 |
-| `chat(image_urls=[...])` | 🔄 | 多模态：图片输入 |
-| `chat(tools=[...])` | 🔄 | 工具调用 |
+| `chat(image_urls=[...])` | ✅ | 多模态：图片输入，已透传到底层 provider |
+| `chat(tools=[...])` | ✅ | OpenAI 风格 function tools 可桥接到底层 provider |
 | `chat(contexts=[...])` | ✅ | 自定义上下文，且优先于 `history` |
 | `chat(provider_id="...")` | ✅ | 显式指定聊天 Provider |
-| `chat(tool_calls_result=[...])` | 🔄 | 工具执行结果透传，不校验 tool_call 语义一致性 |
-| `chat(audio_urls=[...])` | ❌ | 多模态：音频输入 |
+| `chat(tool_calls_result=[...])` | ✅ | 工具执行结果透传，不校验 tool_call 语义一致性 |
+| (暂不支持，最后考虑，请忽略此内容)`chat(audio_urls=[...])` | ❌ | 多模态：音频输入 |
 
 ### DBClient (KV 存储)
 
