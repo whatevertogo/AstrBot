@@ -106,6 +106,14 @@ def _frame_stdio_payload(payload: str) -> str:
         raise ValueError("STDIO payload 不允许包含原始换行符")
     return f"{body}\n"
 
+#TODO 一个更好的解决方案？
+def _is_windows_access_denied(error: BaseException) -> bool:
+    return (
+        sys.platform == "win32"
+        and isinstance(error, PermissionError)
+        and getattr(error, "winerror", None) == 5
+    )
+
 
 class Transport(ABC):
     def __init__(self) -> None:
@@ -160,20 +168,42 @@ class StdioTransport(Transport):
     async def start(self) -> None:
         self._closed.clear()
         if self._command is not None:
-            self._process = await asyncio.create_subprocess_exec(
-                *self._command,
-                cwd=self._cwd,
-                env=self._env,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=sys.stderr,
-            )
+            self._process = await self._start_subprocess_with_retry()
             self._reader_task = asyncio.create_task(self._read_process_loop())
             return
 
         self._stdin = self._stdin or sys.stdin
         self._stdout = self._stdout or sys.stdout
         self._reader_task = asyncio.create_task(self._read_file_loop())
+
+    async def _start_subprocess_with_retry(self) -> asyncio.subprocess.Process:
+        delays = [0.15, 0.35, 0.75]
+        last_error: BaseException | None = None
+        for attempt, delay in enumerate([0.0, *delays], start=1):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                return await asyncio.create_subprocess_exec(
+                    *self._command,
+                    cwd=self._cwd,
+                    env=self._env,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=sys.stderr,
+                )
+            except Exception as exc:
+                last_error = exc
+                if not _is_windows_access_denied(exc) or attempt == len(delays) + 1:
+                    raise
+                logger.warning(
+                    "Windows denied access while starting freshly prepared worker "
+                    "interpreter, retrying attempt {}/{}: {}",
+                    attempt,
+                    len(delays) + 1,
+                    exc,
+                )
+        assert last_error is not None
+        raise last_error
 
     async def stop(self) -> None:
         if self._reader_task is not None:

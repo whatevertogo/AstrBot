@@ -18,6 +18,8 @@
 - `RespondStage` cannot assume `event.get_result().chain` is always a `MessageChain` instance. In real legacy flows it is often the raw component list, so SDK `after_message_sent` hooks must derive outlines from either shape.
 - `astrbot_sdk.runtime.loader.discover_plugins()` currently treats `requirements.txt` as mandatory for every SDK plugin directory. A plugin with a valid `plugin.yaml` but no `requirements.txt` is silently skipped from the dashboard/runtime as an invalid manifest.
 - SDK non-message invocations such as `@on_schedule` still rely on request-scoped capability resolution. If the core bridge does not register a `request_id -> plugin_id` mapping for those calls, every `db/memory/http/platform` capability inside the schedule handler will fail even though the worker itself started correctly.
+- On Windows, a freshly created shared venv interpreter under `.astrbot/envs/.../Scripts/python.exe` can transiently raise `WinError 5` when the supervisor tries to spawn it immediately after `uv venv`/`uv pip sync`. Do not treat that as a permanent bad path; retry the subprocess start briefly before marking the SDK plugin as failed.
+- `uv` writes `pyvenv.cfg` with `version_info = X.Y.Z` rather than the older `version = X.Y.Z` key. Shared-environment version checks must accept both forms; otherwise the SDK runtime will falsely think every env is mismatched, rebuild it on every startup, and can hit Windows file-lock `WinError 5` while deleting `python.exe`.
 
 
 旧插件走旧逻辑，新插件走sdk，保证旧逻辑依旧能使用的情况下写新sdk桥接或者astrbot适配
