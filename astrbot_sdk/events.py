@@ -63,6 +63,11 @@ class MessageEvent:
         group_id: str | None = None,
         platform: str | None = None,
         session_id: str | None = None,
+        self_id: str | None = None,
+        platform_id: str | None = None,
+        message_type: str | None = None,
+        sender_name: str | None = None,
+        is_admin: bool = False,
         raw: dict[str, Any] | None = None,
         context: Context | None = None,
         reply_handler: ReplyHandler | None = None,
@@ -84,7 +89,13 @@ class MessageEvent:
         self.group_id = group_id
         self.platform = platform
         self.session_id = session_id or group_id or user_id or ""
+        self.self_id = self_id or ""
+        self.platform_id = platform_id or platform or ""
+        self.message_type = (message_type or "").lower()
+        self.sender_name = sender_name or ""
+        self._is_admin = bool(is_admin)
         self.raw = raw or {}
+        self._stopped = False
         self._context = context
         self._reply_handler = reply_handler
         if self._reply_handler is None and context is not None:
@@ -134,6 +145,11 @@ class MessageEvent:
             group_id=payload.get("group_id"),
             platform=platform,
             session_id=session_id,
+            self_id=payload.get("self_id"),
+            platform_id=payload.get("platform_id"),
+            message_type=payload.get("message_type"),
+            sender_name=payload.get("sender_name"),
+            is_admin=bool(payload.get("is_admin", False)),
             raw=payload,
             context=context,
             reply_handler=reply_handler,
@@ -153,6 +169,11 @@ class MessageEvent:
                 "group_id": self.group_id,
                 "platform": self.platform,
                 "session_id": self.session_id,
+                "self_id": self.self_id,
+                "platform_id": self.platform_id,
+                "message_type": self.message_type,
+                "sender_name": self.sender_name,
+                "is_admin": self._is_admin,
             }
         )
         if self.session_ref is not None:
@@ -178,6 +199,45 @@ class MessageEvent:
     def target(self) -> SessionRef | None:
         """session_ref 的别名。"""
         return self.session_ref
+
+    @property
+    def unified_msg_origin(self) -> str:
+        """Unified message origin string."""
+        return self.session_id
+
+    def is_private_chat(self) -> bool:
+        """Whether the current event belongs to a private chat."""
+        if self.message_type:
+            return self.message_type == "private"
+        return not bool(self.group_id)
+
+    def get_platform_id(self) -> str:
+        """Get the platform instance identifier."""
+        return self.platform_id
+
+    def get_message_type(self) -> str:
+        """Get the normalized message type."""
+        return self.message_type
+
+    def get_session_id(self) -> str:
+        """Get the current session identifier."""
+        return self.session_id
+
+    def is_admin(self) -> bool:
+        """Whether the sender has admin permission."""
+        return self._is_admin
+
+    def stop_event(self) -> None:
+        """Mark the SDK-local event as stopped."""
+        self._stopped = True
+
+    def continue_event(self) -> None:
+        """Clear the SDK-local stop flag."""
+        self._stopped = False
+
+    def is_stopped(self) -> bool:
+        """Return whether the SDK-local event is stopped."""
+        return self._stopped
 
     async def reply(self, text: str) -> None:
         """回复文本消息。

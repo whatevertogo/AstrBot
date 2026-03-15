@@ -31,6 +31,7 @@ class EventConverter:
             "platform": event.get_platform_name(),
             "platform_id": event.get_platform_id(),
             "session_id": event.unified_msg_origin,
+            "self_id": event.get_self_id(),
             "message_type": getattr(message_type, "value", None),
             "sender_name": event.get_sender_name(),
             "is_admin": event.is_admin(),

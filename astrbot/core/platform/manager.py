@@ -34,6 +34,7 @@ class PlatformManager:
         这个配置中的 unique_session 需要特殊处理，
         约定整个项目中对 unique_session 的引用都从 default 的配置中获取"""
         self.event_queue = event_queue
+        self.sdk_plugin_bridge = None
 
     def _is_valid_platform_id(self, platform_id: str | None) -> bool:
         if not platform_id:
@@ -218,6 +219,17 @@ class PlatformManager:
                 await handler.handler()
             except Exception:
                 logger.error(traceback.format_exc())
+        if self.sdk_plugin_bridge is not None:
+            try:
+                await self.sdk_plugin_bridge.dispatch_system_event(
+                    "platform_loaded",
+                    {
+                        "platform": inst.meta().name,
+                        "platform_id": inst.meta().id,
+                    },
+                )
+            except Exception as exc:
+                logger.warning(f"SDK platform_loaded event dispatch failed: {exc}")
 
     async def _task_wrapper(
         self, task: asyncio.Task, platform: Platform | None = None

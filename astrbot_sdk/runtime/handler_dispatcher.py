@@ -35,6 +35,7 @@ from ..context import CancelToken, Context
 from ..errors import AstrBotError
 from ..events import MessageEvent
 from ..protocol.descriptors import CommandTrigger, MessageTrigger
+from ..session_waiter import SessionWaiterManager
 from ..star import Star
 from .capability_router import StreamExecution
 from .loader import LoadedCapability, LoadedHandler
@@ -46,9 +47,23 @@ class HandlerDispatcher:
         self._peer = peer
         self._handlers = {item.descriptor.id: item for item in handlers}
         self._active: dict[str, tuple[asyncio.Task[Any], CancelToken]] = {}
+        self._session_waiters = SessionWaiterManager(plugin_id=plugin_id, peer=peer)
+        setattr(peer, "_session_waiter_manager", self._session_waiters)
 
     async def invoke(self, message, cancel_token: CancelToken) -> dict[str, Any]:
         handler_id = str(message.input.get("handler_id", ""))
+        if handler_id == "__sdk_session_waiter__":
+            plugin_id = self._plugin_id
+            ctx = Context(peer=self._peer, plugin_id=plugin_id, cancel_token=cancel_token)
+            event = MessageEvent.from_payload(message.input.get("event", {}), context=ctx)
+            event.bind_reply_handler(self._create_reply_handler(ctx, event))
+            task = asyncio.create_task(self._session_waiters.dispatch(event))
+            self._active[message.id] = (task, cancel_token)
+            try:
+                return await task
+            finally:
+                self._active.pop(message.id, None)
+
         loaded = self._handlers.get(handler_id)
         if loaded is None:
             raise LookupError(f"handler not found: {handler_id}")
@@ -127,6 +142,7 @@ class HandlerDispatcher:
                         summary,
                         await self._handle_result_item(item, event, ctx),
                     )
+                summary["stop"] = bool(summary.get("stop")) or event.is_stopped()
                 return summary
             if inspect.isawaitable(result):
                 result = await result
@@ -135,6 +151,7 @@ class HandlerDispatcher:
                     summary,
                     await self._handle_result_item(result, event, ctx),
                 )
+            summary["stop"] = bool(summary.get("stop")) or event.is_stopped()
             return summary
         except Exception as exc:
             await self._handle_error(

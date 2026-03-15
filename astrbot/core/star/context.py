@@ -456,6 +456,25 @@ class Context:
         for platform in self.platform_manager.platform_insts:
             if platform.meta().id == session.platform_name:
                 await platform.send_by_session(session, message_chain)
+                if self.sdk_plugin_bridge is not None:
+                    try:
+                        await self.sdk_plugin_bridge.dispatch_system_event(
+                            "after_message_sent",
+                            {
+                                "session_id": str(session),
+                                "platform": platform.meta().name,
+                                "platform_id": platform.meta().id,
+                                "message_type": session.message_type.value,
+                                "message_outline": message_chain.get_plain_text(
+                                    with_other_comps_mark=True
+                                ),
+                            },
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "SDK after_message_sent dispatch failed for proactive send: %s",
+                            exc,
+                        )
                 return True
         logger.warning(
             f"cannot find platform for session {str(session)}, message not sent"

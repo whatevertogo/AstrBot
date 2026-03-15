@@ -17,8 +17,8 @@
 | DB Client (KV) | 7 | 6 | 0 | 0 | 1 | 86% |
 | Platform Client | 6 | 4 | 1 | 1 | 0 | 75% |
 | Metadata Client | 4 | 4 | 0 | 0 | 0 | 100% |
-| Memory Client | 8 | 0 | 0 | 0 | 8 | 0% |
-| HTTP Client | 3 | 0 | 0 | 0 | 3 | 0% |
+| Memory Client | 8 | 8 | 0 | 0 | 0 | 100% |
+| HTTP Client | 3 | 3 | 0 | 0 | 0 | 100% |
 | MessageEvent | 30 | 9 | 1 | 20 | 0 | 32% |
 | 装饰器/触发器 | 17 | 6 | 2 | 5 | 4 | 41% |
 | 事件类型 | 14 | 1 | 0 | 13 | 0 | 7% |
@@ -165,22 +165,22 @@
 
 | 方法 | 状态 | 说明 |
 | --- | --- | --- |
-| `search(query, top_k?)` | ⚠️ | 语义搜索（SDK已定义，Core端用简单字符串匹配实现） |
-| `save(key, value)` | ⚠️ | 保存记忆（SDK已定义，Core端MVP不支持） |
-| `save_with_ttl(key, value, ttl)` | ⚠️ | 保存（带过期）（SDK已定义，TTL仅记录但不实际过期） |
-| `get(key)` | ⚠️ | 获取记忆（SDK已定义，Core端MVP不支持） |
-| `get_many(keys)` | ⚠️ | 批量获取（SDK已定义，Core端MVP不支持） |
-| `delete(key)` | ⚠️ | 删除记忆（SDK已定义，Core端MVP不支持） |
-| `delete_many(keys)` | ⚠️ | 批量删除（SDK已定义，Core端MVP不支持） |
-| `stats()` | ⚠️ | 统计信息（SDK已定义，Core端MVP不支持） |
+| `search(query, top_k?)` | ✅ | 已支持，Core 端当前使用简单字符串匹配实现 |
+| `save(key, value)` | ✅ | 保存记忆 |
+| `save_with_ttl(key, value, ttl)` | ✅ | 已支持，TTL 仅记录但不实际过期 |
+| `get(key)` | ✅ | 获取记忆 |
+| `get_many(keys)` | ✅ | 批量获取 |
+| `delete(key)` | ✅ | 删除记忆 |
+| `delete_many(keys)` | ✅ | 批量删除 |
+| `stats()` | ✅ | 统计信息，包含 `total_items/total_bytes/plugin_id/ttl_entries` |
 
 ### HTTPClient
 
 | 方法 | 状态 | 说明 |
 | --- | --- | --- |
-| `register_api(route, handler, methods?)` | ⚠️ | 注册 API（SDK已定义，Core端MVP不支持） |
-| `unregister_api(route)` | ⚠️ | 注销 API（SDK已定义，Core端MVP不支持） |
-| `list_apis()` | ⚠️ | 列出已注册 API（SDK已定义，Core端MVP不支持） |
+| `register_api(route, handler, methods?)` | ✅ | 注册 API，Core 端通过独立 SDK dispatch 表承载 |
+| `unregister_api(route)` | ✅ | 注销 API |
+| `list_apis()` | ✅ | 列出已注册 API |
 
 ---
 
@@ -198,17 +198,17 @@
 | `reply_image(url)` | ✅ | 回复图片 |
 | `reply_chain(chain)` | ✅ | 回复消息链 |
 | `plain_result(text)` | ✅ | 创建纯文本结果 |
-| `platform_id` | ❌ | 平台实例 ID |
-| `message_type` | ❌ | 消息类型（group/private） |
-| `self_id` | ❌ | 机器人 ID |
-| `sender_name` | ❌ | 发送者名称 |
-| `unified_msg_origin` | ❌ | 统一消息来源字符串 |
-| `is_private_chat()` | ❌ | 是否私聊 |
-| `is_admin()` | ❌ | 是否管理员 |
+| `platform_id` | ✅ | 平台实例 ID |
+| `message_type` | ✅ | 消息类型（group/private/other） |
+| `self_id` | ✅ | 机器人 ID |
+| `sender_name` | ✅ | 发送者名称 |
+| `unified_msg_origin` | ✅ | 统一消息来源字符串 |
+| `is_private_chat()` | ✅ | 是否私聊 |
+| `is_admin()` | ✅ | 是否管理员 |
 | `is_wake_up()` | ❌ | 是否唤醒 |
-| `stop_event()` | ❌ | 停止传播 |
-| `continue_event()` | ❌ | 继续传播 |
-| `is_stopped()` | ❌ | 是否已停止 |
+| `stop_event()` | ✅ | 停止 SDK 本地阶段传播 |
+| `continue_event()` | ✅ | 恢复 SDK 本地阶段传播 |
+| `is_stopped()` | ✅ | 是否已停止 |
 | `get_messages()` | ❌ | 获取消息链 |
 | `get_message_outline()` | ❌ | 获取消息概要 |
 | `react(emoji)` | ❌ | 表情回应 |
@@ -226,9 +226,9 @@
 | `clear_result()` | ❌ | 清空处理结果 |
 | `make_result()` | ❌ | 构造标准结果对象 |
 | `should_call_llm()` | ❌ | 标记/查询是否继续默认 LLM |
-| `get_platform_id()` | ❌ | 获取平台实例 ID |
-| `get_message_type()` | ❌ | 获取消息类型 |
-| `get_session_id()` | ❌ | 获取会话 ID |
+| `get_platform_id()` | ✅ | 获取平台实例 ID |
+| `get_message_type()` | ✅ | 获取消息类型 |
+| `get_session_id()` | ✅ | 获取会话 ID |
 
 ---
 
@@ -243,7 +243,7 @@
 | `@provide_capability(...)` | ✅ | 声明能力 |
 | `@on_command(aliases=[...])` | 🔄 | 命令别名 |
 | `@on_message(platforms=[...])` | 🔄 | 平台过滤 |
-| `@on_event("type")` | ⚠️ | 事件触发（SDK已定义，Core端MVP不支持） |
+| `@on_event("type")` | 🔄 | 已支持 `astrbot_loaded/platform_loaded/after_message_sent`，其他事件仍待补齐 |
 | `@on_schedule(cron="...")` | ⚠️ | Cron 定时（SDK已定义，Core端MVP不支持） |
 | `@on_schedule(interval_seconds=N)` | ⚠️ | 间隔定时（SDK已定义，Core端MVP不支持） |
 | `@on_message(message_types=[...])` | ❌ | 消息类型过滤（GROUP/PRIVATE/OTHER） |
@@ -261,8 +261,8 @@
 | 事件 | 状态 | 说明 |
 | --- | --- | --- |
 | 消息事件 | ✅ | `@on_command`, `@on_message` |
-| astrbot_loaded | ❌ | Core 启动完成 |
-| platform_loaded | ❌ | 平台连接成功 |
+| astrbot_loaded | ✅ | Core 启动完成 |
+| platform_loaded | ✅ | 平台连接成功 |
 | waiting_llm_request | ❌ | 准备调用 LLM（获取锁之前通知） |
 | llm_request | ❌ | LLM 请求开始 |
 | llm_response | ❌ | LLM 响应完成 |
@@ -270,7 +270,7 @@
 | calling_func_tool | ❌ | 函数工具调用 |
 | using_llm_tool | ❌ | LLM 工具使用 |
 | llm_tool_respond | ❌ | LLM 工具响应 |
-| after_message_sent | ❌ | 消息发送后 |
+| after_message_sent | ✅ | 消息发送后（按实际发送次数触发） |
 | plugin_error | ❌ | 插件错误 |
 | plugin_loaded | ❌ | 插件加载 |
 | plugin_unloaded | ❌ | 插件卸载 |
@@ -355,7 +355,7 @@
 | `get_all_embedding_providers()` | 无 | ❌ | 列出 Embedding Provider |
 | `get_using_tts_provider()` | 无 | ❌ | TTS Provider |
 | `get_using_stt_provider()` | 无 | ❌ | STT Provider |
-| `register_web_api()` | `ctx.http.register_api()` | ⚠️ | 注册 API（Core端不支持） |
+| `register_web_api()` | `ctx.http.register_api()` | ✅ | 注册 API |
 | `register_commands()` | 无 | ❌ | 注册命令描述/帮助信息 |
 | `register_task()` | 无 | ❌ | 注册后台任务 |
 | `get_platform()` | 无 | ❌ | 获取平台 |
@@ -368,9 +368,9 @@
 
 | 方法 | 状态 | 说明 |
 | --- | --- | --- |
-| `Star.text_to_image(text)` | ❌ | 文本转图片 |
-| `Star.html_render(html)` | ❌ | HTML 渲染 |
-| `get_data_dir()` | ❌ | 获取插件数据目录 |
+| `Star.text_to_image(text)` | ✅ | 通过 `ctx.text_to_image()` 等价覆盖 |
+| `Star.html_render(html)` | ✅ | 通过 `ctx.html_render()` 等价覆盖 |
+| `get_data_dir()` | ✅ | 通过 `ctx.get_data_dir()` 获取插件数据目录 |
 | `create_message()` | ❌ | 创建消息对象 |
 | `create_event()` | ❌ | 创建并提交事件 |
 | `MessageChain.get_plain_text()` | ❌ | 获取消息链纯文本 |
@@ -381,12 +381,12 @@
 
 | 类/方法 | 状态 | 说明 |
 | --- | --- | --- |
-| `SessionWaiter` | ❌ | 会话等待类 |
-| `SessionController` | ❌ | 会话控制器 |
-| `SessionController.stop()` | ❌ | 立即结束会话 |
-| `SessionController.keep(timeout)` | ❌ | 保持会话 |
-| `SessionController.get_history_chains()` | ❌ | 获取历史消息链 |
-| `@session_waiter(timeout=30)` | ❌ | 会话等待装饰器 |
+| `SessionWaiter` | 🔄 | 已有 waiter 管理机制与装饰器，但未单独暴露 legacy 同名类 |
+| `SessionController` | ✅ | 会话控制器 |
+| `SessionController.stop()` | ✅ | 立即结束会话 |
+| `SessionController.keep(timeout)` | ✅ | 保持会话 |
+| `SessionController.get_history_chains()` | ✅ | 获取历史消息链 |
+| `@session_waiter(timeout=30)` | ✅ | 会话等待装饰器 |
 
 ---
 
@@ -905,18 +905,15 @@
 ### Core端 MVP 不支持的功能
 以下功能 SDK 已定义接口，但 Core 端 `capability_bridge.py` 标记为 MVP 不支持：
 
-1. **HTTP Client** 全部方法
 2. **db.watch()** 流式订阅
-3. **@on_event** 事件触发器
+3. **@on_event** 事件触发器（除 `astrbot_loaded/platform_loaded/after_message_sent` 外）
 4. **@on_schedule** 定时触发器
-5. **Memory Client** 全部方法（实际返回空/错误）
 
 ### Core端简化实现的功能
 以下功能 Core 端有简化实现，但非完整功能：
 
 1. **memory.search** - 简单字符串匹配，非语义搜索
-2. **llm.stream_chat** - 等待完整响应后逐字符返回，非真正流式
-3. **memory.save_with_ttl** - TTL 仅记录但不实际过期
+2. **memory.save_with_ttl** - TTL 仅记录但不实际过期
 
 ### 新 SDK 新增能力
 以下能力是新 SDK 独有，旧系统没有的：
@@ -930,27 +927,24 @@
 ### 旧系统独有能力
 以下能力是旧系统独有，新 SDK 未实现的：
 
-1. `SessionWaiter` - 会话等待机制（交互式对话必需）
-2. `CustomFilter` - 自定义过滤器（支持与/或组合）
-3. `CommandGroupFilter` - 命令组（子命令路由）
-4. 命令参数自动类型解析（int/float/bool/GreedyStr）
-5. `PlatformAdapterTypeFilter` - 平台适配器类型过滤（15+平台）
-6. `EventMessageTypeFilter` - 消息类型过滤（GROUP/PRIVATE/OTHER）
-7. `PersonaManager` - 人格管理 API
-8. `ConversationManager` - 对话管理 API
-9. `KnowledgeBaseManager` - 知识库管理 API
-10. `FunctionToolManager` - LLM 工具管理器
-11. `ProviderManager` - 提供商管理器
-12. `BaseAgentRunner` - Agent 运行器基类
-13. `StarHandlerRegistry` - Handler 注册表
-14. `Platform` 实体类（状态、统计、Webhook）
-15. `MessageSession` - 消息会话对象
-16. TTS/STT/Embedding/Rerank Provider 支持
-17. `StarTools` - 插件开发工具集（send_message_by_id, create_event等）
-18. `SessionPluginManager` - 会话级插件管理
-19. `PluginKVStoreMixin` - 插件KV存储Mixin
-20. `CommandFilter.print_types()` - 命令参数类型打印
-21. `Star.text_to_image()` / `Star.html_render()` - 渲染工具方法
+1. `CustomFilter` - 自定义过滤器（支持与/或组合）
+2. `CommandGroupFilter` - 命令组（子命令路由）
+3. 命令参数自动类型解析（int/float/bool/GreedyStr）
+4. `PlatformAdapterTypeFilter` - 平台适配器类型过滤（15+平台）
+5. `EventMessageTypeFilter` - 消息类型过滤（GROUP/PRIVATE/OTHER）
+6. `PersonaManager` - 人格管理 API
+7. `ConversationManager` - 对话管理 API
+8. `KnowledgeBaseManager` - 知识库管理 API
+9. `FunctionToolManager` - LLM 工具管理器
+10. `ProviderManager` - 提供商管理器
+11. `BaseAgentRunner` - Agent 运行器基类
+12. `StarHandlerRegistry` - Handler 注册表
+13. `Platform` 实体类（状态、统计、Webhook）
+14. TTS/STT/Embedding/Rerank Provider 支持
+15. `StarTools` - 插件开发工具集（send_message_by_id, create_event等）
+16. `SessionPluginManager` - 会话级插件管理
+17. `PluginKVStoreMixin` - 插件KV存储Mixin
+18. `CommandFilter.print_types()` - 命令参数类型打印
 
 ---
 

@@ -203,6 +203,7 @@ class AstrBotCoreLifecycle:
 
         self.sdk_plugin_bridge = SdkPluginBridge(self.star_context)
         self.star_context.sdk_plugin_bridge = self.sdk_plugin_bridge
+        self.platform_manager.sdk_plugin_bridge = self.sdk_plugin_bridge
         await self.sdk_plugin_bridge.start()
 
         # 根据配置实例化各个 Provider
@@ -313,6 +314,12 @@ class AstrBotCoreLifecycle:
                 await handler.handler()
             except BaseException:
                 logger.error(traceback.format_exc())
+
+        if getattr(self, "sdk_plugin_bridge", None) is not None:
+            try:
+                await self.sdk_plugin_bridge.dispatch_system_event("astrbot_loaded")
+            except Exception as exc:
+                logger.warning(f"SDK astrbot_loaded event dispatch failed: {exc}")
 
         # 同时运行curr_tasks中的所有任务
         await asyncio.gather(*self.curr_tasks, return_exceptions=True)

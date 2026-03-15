@@ -1,6 +1,7 @@
 # ruff: noqa: E402
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 import types
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from quart import Quart
 
 
 def _install_optional_dependency_stubs() -> None:
@@ -142,6 +144,7 @@ class _FakeSharedPreferences:
 class _FakeStarContext:
     def __init__(self) -> None:
         self.sent_messages: list[dict[str, object]] = []
+        self.sdk_plugin_bridge = None
 
     async def send_message(self, session: str, message_chain) -> None:
         self.sent_messages.append(
@@ -151,6 +154,20 @@ class _FakeStarContext:
                 "text": message_chain.get_plain_text(),
             }
         )
+        if self.sdk_plugin_bridge is not None:
+            session_parts = session.split(":", 2)
+            await self.sdk_plugin_bridge.dispatch_system_event(
+                "after_message_sent",
+                {
+                    "session_id": session,
+                    "platform": session_parts[0] if len(session_parts) == 3 else "",
+                    "platform_id": session_parts[0] if len(session_parts) == 3 else "",
+                    "message_type": session_parts[1] if len(session_parts) == 3 else "",
+                    "message_outline": message_chain.get_plain_text(
+                        with_other_comps_mark=True
+                    ),
+                },
+            )
 
     def get_all_stars(self) -> list:
         return []
@@ -184,6 +201,9 @@ class _FakeEvent:
 
     def get_platform_id(self) -> str:
         return "test-platform-id"
+
+    def get_self_id(self) -> str:
+        return "bot-self-id"
 
     def get_message_str(self) -> str:
         return self._text
@@ -241,6 +261,7 @@ async def test_sdk_bridge_dispatches_demo_plugin_end_to_end(
 
     bridge = SdkPluginBridge(fake_context)
     bridge.env_manager.prepare_environment = lambda plugin: Path(sys.executable)
+    fake_context.sdk_plugin_bridge = bridge
 
     await bridge.start()
     try:
@@ -248,6 +269,14 @@ async def test_sdk_bridge_dispatches_demo_plugin_end_to_end(
         assert [plugin["name"] for plugin in plugins] == ["sdk_demo_echo"]
         assert plugins[0]["runtime_kind"] == "sdk"
         assert plugins[0]["state"] == "enabled"
+        assert bridge.list_http_apis("sdk_demo_echo") == [
+            {
+                "route": "/sdk-demo-echo",
+                "methods": ["GET", "POST"],
+                "handler_capability": "sdk_demo_echo.http_echo",
+                "description": "SDK demo echo endpoint",
+            }
+        ]
 
         hello_event = _FakeEvent("sdkhello")
         hello_result = await bridge.dispatch_message(hello_event)
@@ -283,10 +312,61 @@ async def test_sdk_bridge_dispatches_demo_plugin_end_to_end(
         assert keyword_result.executed_handlers[0]["handler_id"].endswith("sdk_ping")
         assert fake_context.sent_messages[-1]["text"] == "sdk pong: please sdk ping now"
 
+        await bridge.dispatch_system_event("astrbot_loaded")
+        await bridge.dispatch_system_event(
+            "platform_loaded",
+            {"platform": "test-platform", "platform_id": "test-platform-id"},
+        )
+        events_event = _FakeEvent("sdkevents")
+        events_result = await bridge.dispatch_message(events_event)
+        assert events_result.sent_message is True
+        assert "astrbot_loaded=astrbot_loaded" in str(
+            fake_context.sent_messages[-1]["text"]
+        )
+        assert "platform_loaded=test-platform-id" in str(
+            fake_context.sent_messages[-1]["text"]
+        )
+        assert "after_message_sent_count=" in str(
+            fake_context.sent_messages[-1]["text"]
+        )
+        assert "data_dir=" in str(fake_context.sent_messages[-1]["text"])
+
+        wait_start_event = _FakeEvent("sdkwait")
+        wait_start_result = await bridge.dispatch_message(wait_start_event)
+        assert wait_start_result.sent_message is True
+        assert fake_context.sent_messages[-1]["text"] == "sdk waiter armed"
+
+        waiter_followup = _FakeEvent("follow-up message")
+        waiter_result = await bridge.dispatch_message(waiter_followup)
+        assert waiter_result.sent_message is True
+        assert waiter_result.executed_handlers == [
+            {"plugin_id": "sdk_demo_echo", "handler_id": "__sdk_session_waiter__"}
+        ]
+        assert (
+            fake_context.sent_messages[-1]["text"]
+            == "sdk waiter received: follow-up message"
+        )
+
+        app = Quart(__name__)
+        async with app.test_request_context(
+            "/sdk-demo-echo?name=astrbot",
+            method="POST",
+            json={"hello": "world"},
+        ):
+            output = await bridge.dispatch_http_request("/sdk-demo-echo", "POST")
+        assert output["status"] == 200
+        assert output["body"]["plugin_id"] == "sdk_demo_echo"
+        assert output["body"]["method"] == "POST"
+        assert output["body"]["route"] == "/sdk-demo-echo"
+        assert output["body"]["query"] == {"name": ["astrbot"]}
+        assert output["body"]["json_body"] == {"hello": "world"}
+        assert json.loads(output["body"]["text_body"]) == {"hello": "world"}
+
         await bridge.turn_off_plugin("sdk_demo_echo")
         plugins = bridge.list_plugins()
         assert plugins[0]["state"] == "disabled"
         assert plugins[0]["activated"] is False
+        assert bridge.list_http_apis("sdk_demo_echo") == []
 
         disabled_event = _FakeEvent("sdkhello")
         disabled_result = await bridge.dispatch_message(disabled_event)
@@ -298,6 +378,7 @@ async def test_sdk_bridge_dispatches_demo_plugin_end_to_end(
         plugins = bridge.list_plugins()
         assert plugins[0]["state"] == "enabled"
         assert plugins[0]["activated"] is True
+        assert bridge.list_http_apis("sdk_demo_echo")[0]["route"] == "/sdk-demo-echo"
 
         reenabled_event = _FakeEvent("sdkhello")
         reenabled_result = await bridge.dispatch_message(reenabled_event)

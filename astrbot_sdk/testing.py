@@ -766,7 +766,11 @@ class PluginHarness:
             "session_id": session_value,
             "user_id": user_id or self.config.user_id,
             "platform": platform or self.config.platform,
+            "platform_id": platform or self.config.platform,
             "group_id": group_value,
+            "self_id": f"{platform or self.config.platform}-bot",
+            "sender_name": str(user_id or self.config.user_id or ""),
+            "is_admin": False,
             "raw": {
                 "trace_id": request_id or self._next_request_id("trace"),
                 "event_type": event_type_value,

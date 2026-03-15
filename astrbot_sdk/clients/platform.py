@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..message_session import MessageSession
 from ..protocol.descriptors import SessionRef
 from ._proxy import CapabilityProxy
 
@@ -35,13 +36,19 @@ class PlatformClient:
 
     def _build_target_payload(
         self,
-        session: str | SessionRef,
+        session: str | SessionRef | MessageSession,
     ) -> tuple[str, dict[str, Any]]:
         if isinstance(session, SessionRef):
             return session.session, {"target": session.to_payload()}
+        if isinstance(session, MessageSession):
+            return str(session), {}
         return str(session), {}
 
-    async def send(self, session: str | SessionRef, text: str) -> dict[str, Any]:
+    async def send(
+        self,
+        session: str | SessionRef | MessageSession,
+        text: str,
+    ) -> dict[str, Any]:
         """发送文本消息。
 
         向指定的会话（用户或群组）发送文本消息。
@@ -65,7 +72,7 @@ class PlatformClient:
 
     async def send_image(
         self,
-        session: str | SessionRef,
+        session: str | SessionRef | MessageSession,
         image_url: str,
     ) -> dict[str, Any]:
         """发送图片消息。
@@ -93,7 +100,7 @@ class PlatformClient:
 
     async def send_chain(
         self,
-        session: str | SessionRef,
+        session: str | SessionRef | MessageSession,
         chain: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """发送富消息链。
@@ -111,7 +118,10 @@ class PlatformClient:
             {"session": session_id, "chain": chain, **extra},
         )
 
-    async def get_members(self, session: str | SessionRef) -> list[dict[str, Any]]:
+    async def get_members(
+        self,
+        session: str | SessionRef | MessageSession,
+    ) -> list[dict[str, Any]]:
         """获取群组成员列表。
 
         获取指定群组的成员信息列表。注意仅对群组会话有效。

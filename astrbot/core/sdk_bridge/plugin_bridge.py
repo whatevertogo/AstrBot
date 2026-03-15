@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quart import request as quart_request
+
 from astrbot.core import logger
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
@@ -42,6 +44,7 @@ SKIP_LEGACY_REPLIED = "legacy_replied"
 SKIP_SDK_RELOADING = "sdk_reloading"
 SKIP_NO_MATCH = "no_match"
 SKIP_WORKER_FAILED = "worker_failed"
+SUPPORTED_SYSTEM_EVENTS = {"astrbot_loaded", "platform_loaded", "after_message_sent"}
 
 
 @dataclass(slots=True)
@@ -112,6 +115,15 @@ class SdkPluginRecord:
         return self.plugin.name
 
 
+@dataclass(slots=True)
+class SdkHttpRoute:
+    plugin_id: str
+    route: str
+    methods: tuple[str, ...]
+    handler_capability: str
+    description: str
+
+
 class SdkPluginBridge:
     def __init__(self, star_context) -> None:
         self.star_context = star_context
@@ -130,6 +142,8 @@ class SdkPluginBridge:
         self._request_contexts: dict[str, _RequestContext] = {}
         self._request_id_to_token: dict[str, str] = {}
         self._plugin_requests: dict[str, dict[str, _InFlightRequest]] = {}
+        self._http_routes: dict[str, list[SdkHttpRoute]] = {}
+        self._session_waiters: dict[str, set[str]] = {}
 
     async def start(self) -> None:
         if self._started:
@@ -151,6 +165,8 @@ class SdkPluginBridge:
         self._request_contexts.clear()
         self._request_id_to_token.clear()
         self._plugin_requests.clear()
+        self._http_routes.clear()
+        self._session_waiters.clear()
         self._started = False
         self._stopping = False
 
@@ -266,6 +282,133 @@ class SdkPluginBridge:
             return None
         return dict(record.config)
 
+    def register_http_api(
+        self,
+        *,
+        plugin_id: str,
+        route: str,
+        methods: list[str],
+        handler_capability: str,
+        description: str,
+    ) -> None:
+        normalized_route = self._normalize_http_route(route)
+        normalized_methods = self._normalize_http_methods(methods)
+        if not handler_capability:
+            raise AstrBotError.invalid_input(
+                "http.register_api requires handler_capability"
+            )
+        self._ensure_http_route_available(
+            plugin_id=plugin_id,
+            route=normalized_route,
+            methods=normalized_methods,
+        )
+        route_entry = SdkHttpRoute(
+            plugin_id=plugin_id,
+            route=normalized_route,
+            methods=normalized_methods,
+            handler_capability=handler_capability,
+            description=description,
+        )
+        plugin_routes = [
+            entry
+            for entry in self._http_routes.get(plugin_id, [])
+            if not (
+                entry.route == normalized_route and entry.methods == normalized_methods
+            )
+        ]
+        plugin_routes.append(route_entry)
+        self._http_routes[plugin_id] = plugin_routes
+
+    def unregister_http_api(
+        self,
+        *,
+        plugin_id: str,
+        route: str,
+        methods: list[str],
+    ) -> None:
+        normalized_route = self._normalize_http_route(route)
+        normalized_methods = {method.upper() for method in methods if method}
+        updated: list[SdkHttpRoute] = []
+        for entry in self._http_routes.get(plugin_id, []):
+            if entry.route != normalized_route:
+                updated.append(entry)
+                continue
+            if not normalized_methods:
+                continue
+            remaining = tuple(
+                method for method in entry.methods if method not in normalized_methods
+            )
+            if remaining:
+                updated.append(
+                    SdkHttpRoute(
+                        plugin_id=entry.plugin_id,
+                        route=entry.route,
+                        methods=remaining,
+                        handler_capability=entry.handler_capability,
+                        description=entry.description,
+                    )
+                )
+        if updated:
+            self._http_routes[plugin_id] = updated
+        else:
+            self._http_routes.pop(plugin_id, None)
+
+    def list_http_apis(self, plugin_id: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "route": entry.route,
+                "methods": list(entry.methods),
+                "handler_capability": entry.handler_capability,
+                "description": entry.description,
+            }
+            for entry in self._http_routes.get(plugin_id, [])
+        ]
+
+    async def dispatch_http_request(
+        self,
+        route: str,
+        method: str,
+    ) -> dict[str, Any] | None:
+        resolved = self._resolve_http_route(route, method)
+        if resolved is None:
+            return None
+        record, route_entry = resolved
+        if record.session is None:
+            raise AstrBotError.invalid_input("SDK HTTP route worker is unavailable")
+        text_body = await quart_request.get_data(as_text=True)
+        payload = {
+            "method": method.upper(),
+            "route": route_entry.route,
+            "path": quart_request.path,
+            "query": quart_request.args.to_dict(flat=False),
+            "headers": dict(quart_request.headers),
+            "json_body": await quart_request.get_json(silent=True),
+            "text_body": text_body,
+        }
+        output = await record.session.invoke_capability(
+            route_entry.handler_capability,
+            payload,
+            request_id=f"sdk_http_{record.plugin_id}_{uuid.uuid4().hex}",
+        )
+        if not isinstance(output, dict):
+            raise AstrBotError.invalid_input("SDK HTTP handler must return an object")
+        return output
+
+    def register_session_waiter(self, *, plugin_id: str, session_key: str) -> None:
+        if not session_key:
+            raise AstrBotError.invalid_input(
+                "session waiter registration requires session_key"
+            )
+        self._session_waiters.setdefault(plugin_id, set()).add(session_key)
+
+    def unregister_session_waiter(self, *, plugin_id: str, session_key: str) -> None:
+        plugin_waiters = self._session_waiters.get(plugin_id)
+        if plugin_waiters is None:
+            return
+        plugin_waiters.discard(session_key)
+        if not plugin_waiters:
+            self._session_waiters.pop(plugin_id, None)
+
     async def dispatch_message(self, event: AstrMessageEvent) -> SdkDispatchResult:
         result = SdkDispatchResult()
         if event.is_stopped():
@@ -274,6 +417,10 @@ class SdkPluginBridge:
         if self._legacy_has_replied(event):
             result.skipped_reason = SKIP_LEGACY_REPLIED
             return result
+
+        waiter_plugins = self._match_waiter_plugins(event.unified_msg_origin)
+        if waiter_plugins:
+            return await self._dispatch_waiter_event(event, waiter_plugins)
 
         matches = self._match_handlers(event)
         if not matches:
@@ -441,6 +588,72 @@ class SdkPluginBridge:
         matches.sort(key=TriggerConverter.sort_key)
         return matches
 
+    async def dispatch_system_event(
+        self,
+        event_type: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        event_payload = {
+            "type": event_type,
+            "event_type": event_type,
+            "text": str((payload or {}).get("message_outline", "")),
+            "session_id": str((payload or {}).get("session_id", "")),
+            "platform": str((payload or {}).get("platform", "")),
+            "platform_id": str((payload or {}).get("platform_id", "")),
+            "message_type": str((payload or {}).get("message_type", "")),
+            "sender_name": str((payload or {}).get("sender_name", "")),
+            "self_id": str((payload or {}).get("self_id", "")),
+            "raw": {"event_type": event_type, **(payload or {})},
+        }
+        matches = self._match_event_handlers(event_type)
+        for record, descriptor in matches:
+            if record.session is None:
+                continue
+            try:
+                await record.session.invoke_handler(
+                    descriptor.id,
+                    event_payload,
+                    request_id=f"sdk_event_{record.plugin_id}_{uuid.uuid4().hex}",
+                    args={},
+                )
+            except Exception as exc:
+                logger.warning(
+                    "SDK event handler failed: plugin=%s handler=%s error=%s",
+                    record.plugin_id,
+                    descriptor.id,
+                    exc,
+                )
+
+    def _match_event_handlers(
+        self,
+        event_type: str,
+    ) -> list[tuple[SdkPluginRecord, HandlerDescriptor]]:
+        matches: list[tuple[int, int, int, SdkPluginRecord, HandlerDescriptor]] = []
+        for record in self._records.values():
+            if record.state in {
+                SDK_STATE_DISABLED,
+                SDK_STATE_FAILED,
+                SDK_STATE_RELOADING,
+            }:
+                continue
+            for handler in record.handlers:
+                trigger = handler.descriptor.trigger
+                if not isinstance(trigger, EventTrigger):
+                    continue
+                if trigger.event_type != event_type:
+                    continue
+                matches.append(
+                    (
+                        -handler.descriptor.priority,
+                        record.load_order,
+                        handler.declaration_order,
+                        record,
+                        handler.descriptor,
+                    )
+                )
+        matches.sort(key=lambda item: (item[0], item[1], item[2]))
+        return [(record, descriptor) for _, _, _, record, descriptor in matches]
+
     async def _load_or_reload_plugin(
         self,
         plugin: PluginSpec,
@@ -488,7 +701,10 @@ class SdkPluginBridge:
             record.session = session
             unsupported_features: set[str] = set()
             for index, descriptor in enumerate(session.handlers):
-                if isinstance(descriptor.trigger, EventTrigger):
+                if (
+                    isinstance(descriptor.trigger, EventTrigger)
+                    and descriptor.trigger.event_type not in SUPPORTED_SYSTEM_EVENTS
+                ):
                     unsupported_features.add("event_trigger")
                 if isinstance(descriptor.trigger, ScheduleTrigger):
                     unsupported_features.add("schedule_trigger")
@@ -515,6 +731,8 @@ class SdkPluginBridge:
 
     async def _teardown_plugin(self, plugin_id: str) -> None:
         record = self._records.get(plugin_id)
+        self._http_routes.pop(plugin_id, None)
+        self._session_waiters.pop(plugin_id, None)
         if record is None or record.session is None:
             return
         try:
@@ -568,6 +786,8 @@ class SdkPluginBridge:
             )
             return
         record.state = SDK_STATE_FAILED
+        self._http_routes.pop(plugin_id, None)
+        self._session_waiters.pop(plugin_id, None)
 
     def _record_to_dashboard_item(self, record: SdkPluginRecord) -> dict[str, Any]:
         manifest = record.plugin.manifest_data
@@ -664,3 +884,148 @@ class SdkPluginBridge:
             else:
                 self._state_overrides.pop(plugin_id, None)
         self._persist_state_overrides()
+
+    @staticmethod
+    def _normalize_http_route(route: str) -> str:
+        route_text = str(route).strip()
+        if not route_text:
+            raise AstrBotError.invalid_input("http route must not be empty")
+        if not route_text.startswith("/"):
+            route_text = f"/{route_text}"
+        return route_text
+
+    @staticmethod
+    def _normalize_http_methods(methods: list[str]) -> tuple[str, ...]:
+        normalized = tuple(
+            sorted({str(method).upper() for method in methods if method})
+        )
+        if not normalized:
+            raise AstrBotError.invalid_input("http methods must not be empty")
+        return normalized
+
+    def _ensure_http_route_available(
+        self,
+        *,
+        plugin_id: str,
+        route: str,
+        methods: tuple[str, ...],
+    ) -> None:
+        for legacy_route, _view_handler, legacy_methods, _desc in getattr(
+            self.star_context, "registered_web_apis", []
+        ):
+            if route != legacy_route:
+                continue
+            if set(methods) & {str(method).upper() for method in legacy_methods}:
+                raise AstrBotError.invalid_input(
+                    f"HTTP route conflict with legacy plugin route: {route}"
+                )
+        for owner, entries in self._http_routes.items():
+            for entry in entries:
+                if (
+                    owner == plugin_id
+                    and entry.route == route
+                    and entry.methods == methods
+                ):
+                    continue
+                if entry.route != route:
+                    continue
+                if set(entry.methods) & set(methods):
+                    raise AstrBotError.invalid_input(
+                        f"HTTP route conflict with SDK plugin route: {route}"
+                    )
+
+    def _resolve_http_route(
+        self,
+        route: str,
+        method: str,
+    ) -> tuple[SdkPluginRecord, SdkHttpRoute] | None:
+        normalized_route = self._normalize_http_route(route)
+        normalized_method = str(method).upper()
+        for record in sorted(self._records.values(), key=lambda item: item.load_order):
+            for entry in self._http_routes.get(record.plugin_id, []):
+                if (
+                    entry.route == normalized_route
+                    and normalized_method in entry.methods
+                ):
+                    return record, entry
+        return None
+
+    def _match_waiter_plugins(self, session_key: str) -> list[SdkPluginRecord]:
+        matches: list[SdkPluginRecord] = []
+        for record in sorted(self._records.values(), key=lambda item: item.load_order):
+            if session_key in self._session_waiters.get(record.plugin_id, set()):
+                matches.append(record)
+        return matches
+
+    async def _dispatch_waiter_event(
+        self,
+        event: AstrMessageEvent,
+        records: list[SdkPluginRecord],
+    ) -> SdkDispatchResult:
+        result = SdkDispatchResult()
+        dispatch_state = _DispatchState(event=event)
+        for record in records:
+            if record.state in {
+                SDK_STATE_DISABLED,
+                SDK_STATE_FAILED,
+                SDK_STATE_RELOADING,
+            }:
+                continue
+            if record.session is None:
+                continue
+            request_id = f"sdk_waiter_{record.plugin_id}_{uuid.uuid4().hex}"
+            dispatch_token = uuid.uuid4().hex
+            payload = EventConverter.core_to_sdk(
+                event,
+                dispatch_token=dispatch_token,
+                plugin_id=record.plugin_id,
+                request_id=request_id,
+            )
+            request_context = _RequestContext(
+                plugin_id=record.plugin_id,
+                request_id=request_id,
+                dispatch_token=dispatch_token,
+                dispatch_state=dispatch_state,
+            )
+            self._request_contexts[dispatch_token] = request_context
+            self._request_id_to_token[request_id] = dispatch_token
+            try:
+                output = await record.session.invoke_handler(
+                    "__sdk_session_waiter__",
+                    payload,
+                    request_id=request_id,
+                    args={},
+                )
+            except Exception as exc:
+                logger.warning(
+                    "SDK waiter dispatch failed: plugin=%s error=%s",
+                    record.plugin_id,
+                    exc,
+                )
+                output = {}
+            finally:
+                self._request_contexts.pop(dispatch_token, None)
+                self._request_id_to_token.pop(request_id, None)
+            handler_result = EventConverter.extract_handler_result(
+                output if isinstance(output, dict) else {}
+            )
+            result.executed_handlers.append(
+                {"plugin_id": record.plugin_id, "handler_id": "__sdk_session_waiter__"}
+            )
+            dispatch_state.sent_message = (
+                dispatch_state.sent_message or handler_result["sent_message"]
+            )
+            dispatch_state.stopped = dispatch_state.stopped or handler_result["stop"]
+            if handler_result["stop"]:
+                break
+        result.sent_message = dispatch_state.sent_message
+        result.stopped = dispatch_state.stopped
+        if not result.executed_handlers:
+            result.skipped_reason = SKIP_NO_MATCH
+        if result.sent_message:
+            event._has_send_oper = True
+            event.should_call_llm(True)
+        if result.stopped:
+            event.stop_event()
+            event.should_call_llm(True)
+        return result

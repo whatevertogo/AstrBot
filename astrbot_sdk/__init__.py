@@ -20,12 +20,16 @@ from .decorators import (
 )
 from .errors import AstrBotError
 from .events import MessageEvent
+from .message_session import MessageSession
+from .session_waiter import SessionController, session_waiter
 from .star import Star
 
 __all__ = [
     "AstrBotError",
     "Context",
     "MessageEvent",
+    "MessageSession",
+    "SessionController",
     "Star",
     "on_command",
     "on_event",
@@ -33,4 +37,5 @@ __all__ = [
     "on_schedule",
     "provide_capability",
     "require_admin",
+    "session_waiter",
 ]

@@ -141,7 +141,44 @@ MEMORY_STATS_INPUT_SCHEMA = _object_schema()
 MEMORY_STATS_OUTPUT_SCHEMA = _object_schema(
     total_items={"type": "integer"},
     total_bytes=_nullable({"type": "integer"}),
+    plugin_id=_nullable({"type": "string"}),
+    ttl_entries=_nullable({"type": "integer"}),
 )
+SYSTEM_GET_DATA_DIR_INPUT_SCHEMA = _object_schema()
+SYSTEM_GET_DATA_DIR_OUTPUT_SCHEMA = _object_schema(
+    required=("path",),
+    path={"type": "string"},
+)
+SYSTEM_TEXT_TO_IMAGE_INPUT_SCHEMA = _object_schema(
+    required=("text",),
+    text={"type": "string"},
+    return_url={"type": "boolean"},
+)
+SYSTEM_TEXT_TO_IMAGE_OUTPUT_SCHEMA = _object_schema(
+    required=("result",),
+    result={"type": "string"},
+)
+SYSTEM_HTML_RENDER_INPUT_SCHEMA = _object_schema(
+    required=("tmpl", "data"),
+    tmpl={"type": "string"},
+    data={"type": "object"},
+    return_url={"type": "boolean"},
+    options=_nullable({"type": "object"}),
+)
+SYSTEM_HTML_RENDER_OUTPUT_SCHEMA = _object_schema(
+    required=("result",),
+    result={"type": "string"},
+)
+SYSTEM_SESSION_WAITER_REGISTER_INPUT_SCHEMA = _object_schema(
+    required=("session_key",),
+    session_key={"type": "string"},
+)
+SYSTEM_SESSION_WAITER_REGISTER_OUTPUT_SCHEMA = _object_schema()
+SYSTEM_SESSION_WAITER_UNREGISTER_INPUT_SCHEMA = _object_schema(
+    required=("session_key",),
+    session_key={"type": "string"},
+)
+SYSTEM_SESSION_WAITER_UNREGISTER_OUTPUT_SCHEMA = _object_schema()
 DB_GET_INPUT_SCHEMA = _object_schema(
     required=("key",),
     key={"type": "string"},
@@ -397,6 +434,26 @@ BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
     "metadata.get_plugin_config": {
         "input": METADATA_GET_PLUGIN_CONFIG_INPUT_SCHEMA,
         "output": METADATA_GET_PLUGIN_CONFIG_OUTPUT_SCHEMA,
+    },
+    "system.get_data_dir": {
+        "input": SYSTEM_GET_DATA_DIR_INPUT_SCHEMA,
+        "output": SYSTEM_GET_DATA_DIR_OUTPUT_SCHEMA,
+    },
+    "system.text_to_image": {
+        "input": SYSTEM_TEXT_TO_IMAGE_INPUT_SCHEMA,
+        "output": SYSTEM_TEXT_TO_IMAGE_OUTPUT_SCHEMA,
+    },
+    "system.html_render": {
+        "input": SYSTEM_HTML_RENDER_INPUT_SCHEMA,
+        "output": SYSTEM_HTML_RENDER_OUTPUT_SCHEMA,
+    },
+    "system.session_waiter.register": {
+        "input": SYSTEM_SESSION_WAITER_REGISTER_INPUT_SCHEMA,
+        "output": SYSTEM_SESSION_WAITER_REGISTER_OUTPUT_SCHEMA,
+    },
+    "system.session_waiter.unregister": {
+        "input": SYSTEM_SESSION_WAITER_UNREGISTER_INPUT_SCHEMA,
+        "output": SYSTEM_SESSION_WAITER_UNREGISTER_OUTPUT_SCHEMA,
     },
 }
 

@@ -3,27 +3,6 @@
 > 作者：whatevertogo
 > 更新时间：2026-03-14
 
----
-
-## ⚠️ 兼容层弃用通知
-
-**兼容层已标记为 deprecated，将在下个大版本移除。**
-
-- 旧插件请使用 **AstrBot 主程序** 运行（主程序有完整的 `StarManager` 支持）
-- 新插件请使用 `astrbot_sdk` 顶层入口
-- 导入兼容层会触发 `DeprecationWarning`
-
-**待移除的文件/目录**：
-- `src-new/astrbot_sdk/_legacy_*.py` - 所有 legacy 私有模块
-- `src-new/astrbot_sdk/api/` - 旧版 API 兼容层（已移除）
-- `src-new/astrbot_sdk/compat.py` - 顶层兼容入口
-- `src-new/astrbot_sdk/protocol/legacy_adapter.py` - JSON-RPC 适配器
-- `src-new/astrbot/` - 旧包名别名（已移除）
-- `test_plugin/old/` - 旧插件示例
-- `tests_v4/test_legacy*.py` - legacy 相关测试
-
----
-
 ## 目录
 
 1. [项目概述](#项目概述)

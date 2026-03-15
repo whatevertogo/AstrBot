@@ -3,13 +3,16 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from astrbot.api import sp
+from astrbot.core import html_renderer
 from astrbot.core.agent.tool import FunctionTool, ToolSet
 from astrbot.core.message.components import ComponentTypes, Image, Plain
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.provider.entities import LLMResponse
+from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from astrbot_sdk._invocation_context import current_caller_plugin_id
 from astrbot_sdk.errors import AstrBotError
 from astrbot_sdk.runtime.capability_router import CapabilityRouter, StreamExecution
@@ -19,10 +22,13 @@ if TYPE_CHECKING:
 
 
 class CoreCapabilityBridge(CapabilityRouter):
+    MEMORY_SCOPE = "sdk_memory"
+
     def __init__(self, *, star_context: StarContext, plugin_bridge) -> None:
         self._star_context = star_context
         self._plugin_bridge = plugin_bridge
         super().__init__()
+        self._register_system_capabilities()
 
     def _register_llm_capabilities(self) -> None:
         self.register(
@@ -388,6 +394,193 @@ class CoreCapabilityBridge(CapabilityRouter):
             hint="Use db.get/list polling in MVP",
         )
 
+    def _register_memory_capabilities(self) -> None:
+        self.register(
+            self._builtin_descriptor("memory.search", "Search plugin memory"),
+            call_handler=self._memory_search,
+        )
+        self.register(
+            self._builtin_descriptor("memory.save", "Save plugin memory"),
+            call_handler=self._memory_save,
+        )
+        self.register(
+            self._builtin_descriptor("memory.get", "Get plugin memory"),
+            call_handler=self._memory_get,
+        )
+        self.register(
+            self._builtin_descriptor("memory.delete", "Delete plugin memory"),
+            call_handler=self._memory_delete,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "memory.save_with_ttl",
+                "Save plugin memory with ttl metadata",
+            ),
+            call_handler=self._memory_save_with_ttl,
+        )
+        self.register(
+            self._builtin_descriptor("memory.get_many", "Get plugin memories"),
+            call_handler=self._memory_get_many,
+        )
+        self.register(
+            self._builtin_descriptor("memory.delete_many", "Delete plugin memories"),
+            call_handler=self._memory_delete_many,
+        )
+        self.register(
+            self._builtin_descriptor("memory.stats", "Get plugin memory stats"),
+            call_handler=self._memory_stats,
+        )
+
+    async def _memory_search(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        query = str(payload.get("query", ""))
+        entries = await self._load_memory_entries(plugin_id)
+        items = [
+            {"key": key, "value": value}
+            for key, value in entries.items()
+            if query in key or query in json.dumps(value, ensure_ascii=False)
+        ]
+        return {"items": items}
+
+    async def _memory_save(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        value = payload.get("value")
+        if not isinstance(value, dict):
+            raise AstrBotError.invalid_input("memory.save requires an object value")
+        await sp.put_async(
+            self.MEMORY_SCOPE,
+            plugin_id,
+            str(payload.get("key", "")),
+            value,
+        )
+        return {}
+
+    async def _memory_get(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        value = await sp.get_async(
+            self.MEMORY_SCOPE,
+            plugin_id,
+            str(payload.get("key", "")),
+            None,
+        )
+        return {"value": value}
+
+    async def _memory_delete(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        await sp.remove_async(
+            self.MEMORY_SCOPE,
+            plugin_id,
+            str(payload.get("key", "")),
+        )
+        return {}
+
+    async def _memory_save_with_ttl(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        value = payload.get("value")
+        if not isinstance(value, dict):
+            raise AstrBotError.invalid_input(
+                "memory.save_with_ttl requires an object value"
+            )
+        ttl_seconds = int(payload.get("ttl_seconds", 0))
+        await sp.put_async(
+            self.MEMORY_SCOPE,
+            plugin_id,
+            str(payload.get("key", "")),
+            {"value": value, "ttl_seconds": ttl_seconds},
+        )
+        return {}
+
+    async def _memory_get_many(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        keys_payload = payload.get("keys")
+        if not isinstance(keys_payload, list):
+            raise AstrBotError.invalid_input("memory.get_many requires a keys array")
+        items = []
+        for key in keys_payload:
+            key_text = str(key)
+            stored = await sp.get_async(self.MEMORY_SCOPE, plugin_id, key_text, None)
+            if (
+                isinstance(stored, dict)
+                and "value" in stored
+                and "ttl_seconds" in stored
+            ):
+                stored = stored["value"]
+            items.append({"key": key_text, "value": stored})
+        return {"items": items}
+
+    async def _memory_delete_many(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        keys_payload = payload.get("keys")
+        if not isinstance(keys_payload, list):
+            raise AstrBotError.invalid_input("memory.delete_many requires a keys array")
+        deleted_count = 0
+        for key in keys_payload:
+            key_text = str(key)
+            existing = await sp.get_async(self.MEMORY_SCOPE, plugin_id, key_text, None)
+            if existing is None:
+                continue
+            await sp.remove_async(self.MEMORY_SCOPE, plugin_id, key_text)
+            deleted_count += 1
+        return {"deleted_count": deleted_count}
+
+    async def _memory_stats(
+        self,
+        request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        entries = await self._load_memory_entries(plugin_id)
+        ttl_entries = sum(
+            1
+            for value in entries.values()
+            if isinstance(value, dict) and "value" in value and "ttl_seconds" in value
+        )
+        total_bytes = sum(
+            len(str(key)) + len(str(value)) for key, value in entries.items()
+        )
+        return {
+            "total_items": len(entries),
+            "total_bytes": total_bytes,
+            "plugin_id": plugin_id,
+            "ttl_entries": ttl_entries,
+        }
+
     def _register_platform_capabilities(self) -> None:
         self.register(
             self._builtin_descriptor("platform.send", "Send plain text"),
@@ -521,27 +714,69 @@ class CoreCapabilityBridge(CapabilityRouter):
     def _register_http_capabilities(self) -> None:
         self.register(
             self._builtin_descriptor("http.register_api", "Register http route"),
-            call_handler=self._http_unsupported,
+            call_handler=self._http_register_api,
         )
         self.register(
             self._builtin_descriptor("http.unregister_api", "Unregister http route"),
-            call_handler=self._http_unsupported,
+            call_handler=self._http_unregister_api,
         )
         self.register(
             self._builtin_descriptor("http.list_apis", "List http routes"),
-            call_handler=self._http_unsupported,
+            call_handler=self._http_list_apis,
         )
 
-    async def _http_unsupported(
+    async def _http_register_api(
         self,
-        _request_id: str,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        methods = payload.get("methods")
+        if not isinstance(methods, list) or not all(
+            isinstance(item, str) for item in methods
+        ):
+            raise AstrBotError.invalid_input(
+                "http.register_api requires a string methods array"
+            )
+        self._plugin_bridge.register_http_api(
+            plugin_id=plugin_id,
+            route=str(payload.get("route", "")),
+            methods=methods,
+            handler_capability=str(payload.get("handler_capability", "")),
+            description=str(payload.get("description", "")),
+        )
+        return {}
+
+    async def _http_unregister_api(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        methods = payload.get("methods")
+        if not isinstance(methods, list) or not all(
+            isinstance(item, str) for item in methods
+        ):
+            raise AstrBotError.invalid_input(
+                "http.unregister_api requires a string methods array"
+            )
+        self._plugin_bridge.unregister_http_api(
+            plugin_id=plugin_id,
+            route=str(payload.get("route", "")),
+            methods=methods,
+        )
+        return {}
+
+    async def _http_list_apis(
+        self,
+        request_id: str,
         _payload: dict[str, Any],
         _token,
     ) -> dict[str, Any]:
-        raise AstrBotError.invalid_input(
-            "SDK HTTP APIs are unsupported in AstrBot MVP",
-            hint="Do not use http.register_api/http.unregister_api/http.list_apis in MVP",
-        )
+        plugin_id = self._resolve_plugin_id(request_id)
+        return {"apis": self._plugin_bridge.list_http_apis(plugin_id)}
 
     def _register_metadata_capabilities(self) -> None:
         self.register(
@@ -594,6 +829,128 @@ class CoreCapabilityBridge(CapabilityRouter):
         if plugin_id:
             return plugin_id
         return self._plugin_bridge.resolve_request_plugin_id(request_id)
+
+    async def _load_memory_entries(self, plugin_id: str) -> dict[str, Any]:
+        items = await sp.range_get_async(self.MEMORY_SCOPE, plugin_id, None)
+        entries: dict[str, Any] = {}
+        for item in items:
+            key = str(getattr(item, "key", ""))
+            if not key:
+                continue
+            entries[key] = await sp.get_async(self.MEMORY_SCOPE, plugin_id, key, None)
+        return entries
+
+    def _register_system_capabilities(self) -> None:
+        self.register(
+            self._builtin_descriptor("system.get_data_dir", "Get plugin data dir"),
+            call_handler=self._system_get_data_dir,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor("system.text_to_image", "Render text to image"),
+            call_handler=self._system_text_to_image,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor("system.html_render", "Render html template"),
+            call_handler=self._system_html_render,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.session_waiter.register",
+                "Register sdk session waiter",
+            ),
+            call_handler=self._system_session_waiter_register,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.session_waiter.unregister",
+                "Unregister sdk session waiter",
+            ),
+            call_handler=self._system_session_waiter_unregister,
+            exposed=False,
+        )
+
+    async def _system_get_data_dir(
+        self,
+        request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        data_dir = Path(get_astrbot_data_path()) / "plugin_data" / plugin_id
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return {"path": str(data_dir.resolve())}
+
+    async def _system_text_to_image(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        config_obj = self._star_context.get_config()
+        template_name = None
+        if hasattr(config_obj, "get"):
+            try:
+                template_name = config_obj.get("t2i_active_template")
+            except Exception:
+                template_name = None
+        result = await html_renderer.render_t2i(
+            str(payload.get("text", "")),
+            return_url=bool(payload.get("return_url", True)),
+            template_name=template_name,
+        )
+        return {"result": result}
+
+    async def _system_html_render(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise AstrBotError.invalid_input("system.html_render requires object data")
+        options = payload.get("options")
+        if options is not None and not isinstance(options, dict):
+            raise AstrBotError.invalid_input(
+                "system.html_render options must be an object or null"
+            )
+        result = await html_renderer.render_custom_template(
+            str(payload.get("tmpl", "")),
+            data,
+            return_url=bool(payload.get("return_url", True)),
+            options=options,
+        )
+        return {"result": result}
+
+    async def _system_session_waiter_register(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        self._plugin_bridge.register_session_waiter(
+            plugin_id=plugin_id,
+            session_key=str(payload.get("session_key", "")),
+        )
+        return {}
+
+    async def _system_session_waiter_unregister(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        self._plugin_bridge.unregister_session_waiter(
+            plugin_id=plugin_id,
+            session_key=str(payload.get("session_key", "")),
+        )
+        return {}
 
     def _resolve_dispatch_target(
         self,

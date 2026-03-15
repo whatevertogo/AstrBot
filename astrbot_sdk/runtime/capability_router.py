@@ -103,6 +103,7 @@ import json
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .._invocation_context import current_caller_plugin_id
@@ -157,6 +158,8 @@ class CapabilityRouter:
         self.sent_messages: list[dict[str, Any]] = []
         self.http_api_store: list[dict[str, Any]] = []
         self._plugins: dict[str, _RegisteredPlugin] = {}
+        self._system_data_root = Path.cwd() / ".astrbot_sdk_testing" / "plugin_data"
+        self._session_waiters: dict[str, set[str]] = {}
         self._db_watch_subscriptions: dict[
             str, tuple[str | None, asyncio.Queue[dict[str, Any]]]
         ] = {}
@@ -212,9 +215,7 @@ class CapabilityRouter:
             queue.put_nowait(event)
 
     def descriptors(self) -> list[CapabilityDescriptor]:
-        return [
-            entry.descriptor for entry in self._registrations.values() if entry.exposed
-        ]
+        return [entry.descriptor for entry in self._registrations.values()]
 
     def contains(self, name: str) -> bool:
         return name in self._registrations
@@ -231,7 +232,13 @@ class CapabilityRouter:
         finalize: FinalizeHandler | None = None,
         exposed: bool = True,
     ) -> None:
-        if not CAPABILITY_NAME_PATTERN.fullmatch(descriptor.name):
+        is_internal_reserved = not exposed and descriptor.name.startswith(
+            RESERVED_CAPABILITY_PREFIXES
+        )
+        if (
+            not CAPABILITY_NAME_PATTERN.fullmatch(descriptor.name)
+            and not is_internal_reserved
+        ):
             raise ValueError(
                 f"capability 名称必须匹配 {{namespace}}.{{method}}：{descriptor.name}"
             )
@@ -332,6 +339,7 @@ class CapabilityRouter:
         self._register_platform_capabilities()
         self._register_http_capabilities()
         self._register_metadata_capabilities()
+        self._register_system_capabilities()
 
     def _builtin_descriptor(
         self,
@@ -519,7 +527,17 @@ class CapabilityRouter:
         total_bytes = sum(
             len(str(key)) + len(str(value)) for key, value in self.memory_store.items()
         )
-        return {"total_items": total_items, "total_bytes": total_bytes}
+        ttl_entries = sum(
+            1
+            for value in self.memory_store.values()
+            if isinstance(value, dict) and "value" in value and "ttl_seconds" in value
+        )
+        return {
+            "total_items": total_items,
+            "total_bytes": total_bytes,
+            "plugin_id": self._require_caller_plugin_id("memory.stats"),
+            "ttl_entries": ttl_entries,
+        }
 
     def _register_memory_capabilities(self) -> None:
         self.register(
@@ -912,6 +930,91 @@ class CapabilityRouter:
             ),
             call_handler=self._metadata_get_plugin_config,
         )
+
+    def _register_system_capabilities(self) -> None:
+        self.register(
+            self._builtin_descriptor("system.get_data_dir", "获取插件数据目录"),
+            call_handler=self._system_get_data_dir,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor("system.text_to_image", "文本转图片"),
+            call_handler=self._system_text_to_image,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor("system.html_render", "渲染 HTML 模板"),
+            call_handler=self._system_html_render,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.session_waiter.register",
+                "注册会话等待器",
+            ),
+            call_handler=self._system_session_waiter_register,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.session_waiter.unregister",
+                "注销会话等待器",
+            ),
+            call_handler=self._system_session_waiter_unregister,
+            exposed=False,
+        )
+
+    async def _system_get_data_dir(
+        self, _request_id: str, _payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        plugin_id = self._require_caller_plugin_id("system.get_data_dir")
+        data_dir = self._system_data_root / plugin_id
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return {"path": str(data_dir)}
+
+    async def _system_text_to_image(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        text = str(payload.get("text", ""))
+        if bool(payload.get("return_url", True)):
+            return {"result": f"mock://text_to_image/{text}"}
+        return {"result": f"<image>{text}</image>"}
+
+    async def _system_html_render(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        tmpl = str(payload.get("tmpl", ""))
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise AstrBotError.invalid_input("system.html_render requires object data")
+        if bool(payload.get("return_url", True)):
+            return {"result": f"mock://html_render/{tmpl}"}
+        return {"result": json.dumps({"tmpl": tmpl, "data": data}, ensure_ascii=False)}
+
+    async def _system_session_waiter_register(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        plugin_id = self._require_caller_plugin_id("system.session_waiter.register")
+        session_key = str(payload.get("session_key", "")).strip()
+        if not session_key:
+            raise AstrBotError.invalid_input(
+                "system.session_waiter.register requires session_key"
+            )
+        self._session_waiters.setdefault(plugin_id, set()).add(session_key)
+        return {}
+
+    async def _system_session_waiter_unregister(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        plugin_id = self._require_caller_plugin_id("system.session_waiter.unregister")
+        session_key = str(payload.get("session_key", "")).strip()
+        plugin_waiters = self._session_waiters.get(plugin_id)
+        if plugin_waiters is None:
+            return {}
+        plugin_waiters.discard(session_key)
+        if not plugin_waiters:
+            self._session_waiters.pop(plugin_id, None)
+        return {}
 
     # ------------------------------------------------------------------
     # Schema validation
