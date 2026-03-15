@@ -98,6 +98,19 @@
 - 新增 StarMetadata完整字段对比（P2.15）
 - 更新覆盖率总览表格
 
+### 2026-03-15 P0.2 完成更新
+- **P0.2 消息与结果对象已全部完成 ✅**：
+  - **消息组件** - `At`, `AtAll`, `Reply`, `Record`, `Video`, `File`, `Poke`, `Forward` 全部实现
+  - **消息组件方法** - `Image.convert_to_file_path()`, `register_to_file_service()`, `File.get_file()` 全部实现
+  - **MessageEvent 扩展方法** - `react()`, `send_typing()`, `send_streaming()`, `get_messages()`, `get_message_outline()` 全部实现
+  - **结果对象** - `image_result()`, `chain_result()`, `make_result()` 全部实现
+  - **额外信息** - `set_extra()`, `get_extra()`, `clear_extra()` 全部实现
+- **平台兼容性说明**：
+  - `send_streaming()` - 所有平台支持（14个平台）
+  - `react()` - 仅 Discord、飞书(Lark)、Telegram 支持
+  - `send_typing()` - 仅 Telegram 支持
+  - 其他方法不依赖平台特性，全平台通用
+
 ### 2026-03-15 P0.1 完成更新
 - **P0.1 阻塞迁移的关键能力已全部完成 ✅**：
   - **Memory Client** - 8 个方法全部实现，使用 JSON 文件存储
@@ -138,8 +151,8 @@
   - **P1**：旧插件后置兼容能力 - 旧系统有，但不属于首批迁移阻塞项
   - **P2**：SDK 可扩展能力 - 新 SDK 的增强方向
 - **P0.0**：基础核心能力（已实现 ✅）- LLM/DB/Platform/Metadata/装饰器/消息组件/MessageEvent
-- **P0.1**：阻塞迁移的关键能力 - Memory/HTTP/MessageEvent扩展/事件控制/工具方法/会话等待/Provider实体
-- **P0.2**：消息与结果对象 - 富消息组件/结果对象/事件附加信息
+- **P0.1**：阻塞迁移的关键能力（已实现 ✅）- Memory/HTTP/MessageEvent扩展/事件控制/工具方法/会话等待/Provider实体
+- **P0.2**：消息与结果对象（已实现 ✅）- 富消息组件/结果对象/事件附加信息
 - **P0.3**：命令、过滤器与调度 - 命令组/参数解析/自定义过滤器/消息类型过滤/定时触发
 - **P0.4**：事件与处理主链 - 完整事件类型/结果控制/插件错误与生命周期事件
 - **P0.5**：LLM、工具与 Provider 使用能力 - ToolLoop/LLM Tool/TTS-STT-Embedding/Provider 查询
@@ -630,12 +643,21 @@
 | **会话等待** | ✅ | `SessionWaiter`, `SessionController`，支持注册/注销/分发 |
 | **Provider 实体** | ✅ | `MessageSession` 类，支持 `from_str()` 解析 |
 
-#### P0.2 - 消息与结果对象
-1. **消息组件** - `At`, `AtAll`, `Reply`, `Record`, `Video`, `File`, `Poke`, `Forward`
-2. **消息组件方法** - `Image.convert_to_file_path()`, `register_to_file_service()`, `File.get_file()`
-3. **MessageEvent 扩展方法** - `react()`, `send_typing()`, `send_streaming()`, `get_messages()`, `get_message_outline()`
-4. **结果对象** - `image_result()`, `chain_result()`, `make_result()`
-5. **额外信息** - `set_extra()`, `get_extra()`, `clear_extra()`
+#### P0.2 - 消息与结果对象 ✅ 已完成
+
+| 项目 | 状态 | 实现说明 |
+|------|------|---------|
+| **消息组件** | ✅ | `At`, `AtAll`, `Reply`, `Record`, `Video`, `File`, `Poke`, `Forward` 全部实现 |
+| **消息组件方法** | ✅ | `Image.convert_to_file_path()`, `register_to_file_service()`, `File.get_file()` 全部实现 |
+| **MessageEvent 扩展方法** | ✅ | `react()`, `send_typing()`, `send_streaming()`, `get_messages()`, `get_message_outline()` |
+| **结果对象** | ✅ | `image_result()`, `chain_result()`, `make_result()` |
+| **额外信息** | ✅ | `set_extra()`, `get_extra()`, `clear_extra()` |
+
+> **平台兼容性说明**：
+> - `send_streaming()` - ✅ 所有平台支持（aiocqhttp, discord, dingtalk, lark, line, misskey, qqofficial, satori, slack, telegram, webchat, wecom, wecom_ai_bot, weixin_official_account）
+> - `react()` - ⚠️ 仅 Discord、飞书(Lark)、Telegram 支持，其他平台返回 `False`
+> - `send_typing()` - ⚠️ 仅 Telegram 支持，其他平台返回 `False`
+> - 消息组件、结果对象、额外信息方法不依赖平台特性，全平台通用
 
 #### P0.3 - 命令、过滤器与调度
 1. **触发器扩展** - `@on_event`, `@on_schedule`, `@on_message(message_types=[])`
@@ -769,7 +791,7 @@
 - **P0**：旧系统真实有，且缺了就会直接阻塞插件迁移
   - **P0.0**：已实现的基础能力 ✅
   - **P0.1**：已完成的关键 bridge 能力 ✅
-  - **P0.2**：消息与结果对象
+  - **P0.2**：消息与结果对象 ✅
   - **P0.3**：命令、过滤器与调度
   - **P0.4**：事件与处理主链
   - **P0.5**：LLM、工具与 Provider 使用能力
