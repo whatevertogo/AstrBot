@@ -38,8 +38,13 @@ from .managers import (
 )
 from .memory import MemoryClient
 from .metadata import MetadataClient, PluginMetadata
-from .platform import PlatformClient
-from .provider import ProviderClient
+from .platform import PlatformClient, PlatformError, PlatformStats, PlatformStatus
+from .provider import (
+    ManagedProviderRecord,
+    ProviderChangeEvent,
+    ProviderClient,
+    ProviderManagerClient,
+)
 from .registry import HandlerMetadata, RegistryClient
 from .session import SessionPluginManager, SessionServiceManager
 
@@ -57,13 +62,19 @@ __all__ = [
     "LLMClient",
     "LLMResponse",
     "MemoryClient",
+    "ManagedProviderRecord",
     "MetadataClient",
     "PlatformClient",
+    "PlatformError",
+    "PlatformStats",
+    "PlatformStatus",
     "PersonaCreateParams",
     "PersonaManagerClient",
     "PersonaRecord",
     "PersonaUpdateParams",
+    "ProviderChangeEvent",
     "ProviderClient",
+    "ProviderManagerClient",
     "PluginMetadata",
     "HandlerMetadata",
     "RegistryClient",

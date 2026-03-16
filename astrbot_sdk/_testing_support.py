@@ -208,6 +208,26 @@ class MockCapabilityRouter(CapabilityRouter):
     def remove_dynamic_command_routes_for_plugin(self, plugin_id: str) -> None:
         super().remove_dynamic_command_routes_for_plugin(plugin_id)
 
+    def emit_provider_change(
+        self,
+        provider_id: str,
+        provider_type: str,
+        umo: str | None = None,
+    ) -> None:
+        super().emit_provider_change(provider_id, provider_type, umo)
+
+    def record_platform_error(
+        self,
+        platform_id: str,
+        message: str,
+        *,
+        traceback: str | None = None,
+    ) -> None:
+        super().record_platform_error(platform_id, message, traceback=traceback)
+
+    def set_platform_stats(self, platform_id: str, stats: dict[str, Any]) -> None:
+        super().set_platform_stats(platform_id, stats)
+
     def enqueue_llm_response(self, text: str) -> None:
         self._llm_responses.append(text)
 
@@ -388,6 +408,7 @@ def _normalize_plugin_metadata(
         "author": str(plugin_metadata.get("author") or ""),
         "version": str(plugin_metadata.get("version") or "0.0.0"),
         "enabled": bool(plugin_metadata.get("enabled", True)),
+        "reserved": bool(plugin_metadata.get("reserved", False)),
     }
 
 

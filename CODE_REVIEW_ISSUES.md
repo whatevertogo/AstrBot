@@ -1,9 +1,14 @@
-# Code Review — feat/sdk-integration
+# Code Review — feat/sdk-integration (P1.3 管理面)
+
+**审查日期**: 2026-03-16
+**审查范围**: P1.3 Provider 与 Platform 管理面 (16 文件, +2260/-78 行)
+
+---
 
 ## Summary
-Files reviewed: 103 | New issues: 0 | Perspectives: 4/4
+Files reviewed: 16 | New issues: 7 (0 严重, 2 高, 3 中, 2 低) | Perspectives: 4/4
 
-这是一个大型的 SDK 集成变更，引入了全新的 `astrbot_sdk` 包和核心桥接层，用于支持新式插件系统。整体架构设计合理，代码质量良好。
+本次 PR 实现了 P1.3 管理面的核心功能：Provider 管理客户端、Platform 管理能力、统一 webhook 状态观测。代码整体质量良好，测试覆盖关键场景。
 
 ---
 
@@ -12,63 +17,150 @@ Files reviewed: 103 | New issues: 0 | Perspectives: 4/4
 |-----|-------|-----------|-------------|
 | - | *No security issues found.* | - | - |
 
-代码中未发现明显的安全漏洞：
-- 输入验证完善，使用 `AstrBotError.invalid_input` 进行参数校验
-- 没有硬编码的敏感信息
-- 没有发现 SQL 注入或命令注入风险
-- 跨进程通信使用 JSON 序列化，`EventConverter._sanitize_extras` 正确过滤了不可序列化的对象
+**通过项**:
+- ✅ `_require_reserved_plugin()` 正确限制管理能力访问
+- ✅ 无 SQL 注入或命令注入风险
+- ✅ 平台/Provider ID 经过 `strip()` 处理
 
 ---
 
 ## 📝 Code Quality
 | Sev | Issue | File:Line | Consequence |
 |-----|-------|-----------|-------------|
-| - | *No critical issues found.* | - | - |
+| **High** | `register_provider_change_hook()` 返回 Task 但无对应注销方法 | [`astrbot_sdk/clients/provider.py:269-288`](astrbot_sdk/clients/provider.py#L269-L288) | 重复订阅导致资源泄漏和重复事件分发 |
+| **High** | `PlatformCompatFacade` 从 `frozen=True` 改为可变，但缺少状态变更保护 | [`astrbot_sdk/context.py:69`](astrbot_sdk/context.py#L69) | 并发场景下状态可能不一致 |
+| **Medium** | `_managed_provider_record_by_id()` 直接修改传入的 provider dict | [`astrbot_sdk/runtime/_capability_router_builtins.py:853-867`](astrbot_sdk/runtime/_capability_router_builtins.py#L853-L867) | 可能影响调用方的原始数据 |
+| **Medium** | `unregister_provider_change_hook()` 依赖 `__eq__` 语义，对 lambda 不友好 | [`astrbot/core/provider/manager.py:96-102`](astrbot/core/provider/manager.py#L96-L102) | lambda hook 无法被正确移除 |
+| **Low** | `clear_errors()` 后 `refresh()` 调用未做错误隔离 | [`astrbot_sdk/context.py:122-124`](astrbot_sdk/context.py#L122-L124) | clear_errors 失败时 refresh 被跳过 |
+
+### [Q-001] Provider change hook 资源泄漏 (High)
+
+**位置**: [`astrbot_sdk/clients/provider.py:269-288`](astrbot_sdk/clients/provider.py#L269-L288)
+
+```python
+async def register_provider_change_hook(...) -> asyncio.Task[None]:
+    task = asyncio.create_task(runner())
+    task.add_done_callback(self._log_change_hook_result)
+    return task
+```
+
+**问题**: 返回 `Task` 但 SDK 没有提供 `unregister_provider_change_hook()` 方法。调用方只能 `cancel()`，但 stream cleanup 依赖 `aclose()`，可能导致 queue 泄漏。
+
+**建议**:
+```python
+async def unregister_provider_change_hook(self, task: asyncio.Task[None]) -> None:
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+```
+
+---
+
+### [Q-002] PlatformCompatFacade 并发安全 (High)
+
+**位置**: [`astrbot_sdk/context.py:69`](astrbot_sdk/context.py#L69)
+
+从 `frozen=True` 改为可变以支持 `refresh()`，但多个 async 方法可能并发执行，无锁保护。
+
+**建议**:
+```python
+@dataclass(slots=True)
+class PlatformCompatFacade:
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    async def refresh(self) -> None:
+        async with self._lock:
+            output = await self._ctx._proxy.call(...)
+            self._apply_snapshot(output.get("platform"))
+```
+
+---
+
+### [Q-003] 直接修改 provider dict (Medium)
+
+**位置**: [`astrbot_sdk/runtime/_capability_router_builtins.py:857`](astrbot_sdk/runtime/_capability_router_builtins.py#L857)
+
+```python
+provider.update({  # 直接修改 _provider_catalog 中的缓存
+    "enable": config.get("enable", True),
+    "provider_source_id": config.get("provider_source_id"),
+})
+```
+
+**建议**: 使用 `merged = dict(provider)` 创建副本后再修改。
+
+---
+
+### [Q-004] unregister 对 lambda 不友好 (Medium)
+
+**位置**: [`astrbot/core/provider/manager.py:100`](astrbot/core/provider/manager.py#L100)
+
+`hook in self._provider_change_hooks` 检查依赖 `__eq__`，lambda 每次创建都是新对象。
+
+**建议**: 在文档中说明需要保存 hook 引用，或提供返回 token 的 API。
+
+---
+
+### [Q-005] clear_errors 后 refresh 未隔离错误 (Low)
+
+**位置**: [`astrbot_sdk/context.py:122-124`](astrbot_sdk/context.py#L122-L124)
+
+如果 `clear_errors` 抛异常，`refresh()` 不会执行，状态可能不一致。
+
+**建议**: 使用 `try/finally` 确保 `refresh()` 始终执行。
 
 ---
 
 ## ✅ Tests
-**Run results**: 53 passed, 0 failed, 0 skipped
+**Run results**: 3 passed, 0 failed, 0 skipped (0.27s)
 
-测试整体质量较高：
-- 单元测试覆盖了 SDK 桥接、LLM 能力、消息对象、路由等核心功能
-- 使用 `MockContext` 和 `MockCapabilityRouter` 进行隔离测试
-- 测试命名清晰，遵循 `test_<功能>_<场景>` 模式
+| 测试 | 覆盖场景 |
+|------|----------|
+| `test_mock_context_p1_3_provider_management_is_reserved_only` | ✅ reserved 插件权限检查, watch stream, hook 注册 |
+| `test_mock_context_p1_3_platform_facade_refresh_and_clear_errors` | ✅ Platform facade 方法, 错误清除 |
+| `test_p1_3_core_bridge_reserved_gate_and_stream_cleanup` | ✅ Core bridge 权限门控, stream 清理 |
+
+**未测试场景** (低优先级):
+- `unregister_provider_change_hook()` 功能
+- 并发场景（多个协程同时操作 PlatformCompatFacade）
+- 错误场景（网络失败、无效 provider_id）
 
 ---
 
 ## 🏗️ Architecture
 | Sev | Inconsistency | Files |
 |-----|--------------|-------|
-| - | *架构设计合理* | - |
+| - | *No architecture issues.* | - |
 
-架构评估：
-- **SDK 分层清晰**: `astrbot_sdk` 包独立于核心，提供插件开发 API
-- **桥接模式**: `CoreCapabilityBridge` 和 `SdkPluginBridge` 正确实现了核心与 SDK 之间的解耦
-- **能力路由**: `CapabilityRouter` 设计良好，支持同步/流式调用
-- **向后兼容**: 旧插件系统保持不变，新 SDK 插件通过独立桥接运行
-
-**设计亮点**:
-1. 使用 `CapabilityDescriptor` 声明式定义能力
-2. 请求作用域覆盖层 (`_RequestOverlayState`) 正确处理 LLM 调用控制
-3. `EventConverter` 正确处理核心事件到 SDK payload 的转换，并过滤不可序列化的 extras
+**通过项**:
+- ✅ SDK 与 Core bridge 的 schema 一致
+- ✅ Provider type 映射完整 (`chat_completion` → `chat`, etc.)
+- ✅ Reserved 插件检查在两侧都实现
+- ✅ Stream cleanup 通过测试验证
+- ✅ 新导出已添加到 `__all__`
 
 ---
 
 ## 🚨 Must Fix Before Merge
-*No blocking issues. Ready to merge.*
+
+1. **[Q-001]** Provider change hook 缺少注销方法 - 添加 `unregister_provider_change_hook()`
+2. **[Q-002]** PlatformCompatFacade 并发安全 - 添加 `asyncio.Lock` 保护
+3. **[Q-003]** 直接修改 provider dict - 使用 `dict()` 创建副本
 
 ---
 
-## 📎 Pre-Existing Issues (not blocking)
-- 集成测试目录 `tests/test_sdk/integration/` 已被清空，可能需要后续补充端到端测试
+## 📎 Pre-Existing Issues
+- [CLAUDE.md 已记录] Provider hook 注册需要配对注销 — 本次补充了 `unregister_provider_change_hook()` API
 
 ---
 
-## 正面评价
+## 历史审查记录
 
-1. **文档完善**: 所有模块都有清晰的 docstring，解释了功能和用法
-2. **类型注解**: 代码使用了完整的类型注解，提高了可维护性
-3. **错误处理**: 使用自定义 `AstrBotError` 提供了清晰的错误信息
-4. **测试覆盖**: 53 个测试全部通过，覆盖了核心功能
-5. **向后兼容**: 旧插件系统完全不受影响
+### 初始 SDK 集成审查
+Files reviewed: 103 | New issues: 0 | Perspectives: 4/4
+
+这是一个大型的 SDK 集成变更，引入了全新的 `astrbot_sdk` 包和核心桥接层，用于支持新式插件系统。整体架构设计合理，代码质量良好。
+
+**无安全漏洞，无关键代码质量问题，测试通过 (53 passed)，架构设计合理。**

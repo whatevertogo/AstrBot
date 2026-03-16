@@ -287,9 +287,7 @@ class CoreCapabilityBridge(CapabilityRouter):
             with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
                 decoded = json.loads(value)
                 if isinstance(decoded, list):
-                    return [
-                        dict(item) for item in decoded if isinstance(item, dict)
-                    ]
+                    return [dict(item) for item in decoded if isinstance(item, dict)]
         return []
 
     def _serialize_persona(self, persona: Any) -> dict[str, Any] | None:
@@ -994,6 +992,55 @@ class CoreCapabilityBridge(CapabilityRouter):
             )
         return {"platforms": platforms_payload}
 
+    async def _platform_manager_get_by_id(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        self._require_reserved_plugin(
+            request_id,
+            "platform.manager.get_by_id",
+        )
+        platform = self._get_platform_inst_by_id(str(payload.get("platform_id", "")))
+        return {"platform": self._serialize_platform_snapshot(platform)}
+
+    async def _platform_manager_clear_errors(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        self._require_reserved_plugin(
+            request_id,
+            "platform.manager.clear_errors",
+        )
+        platform = self._get_platform_inst_by_id(str(payload.get("platform_id", "")))
+        if platform is None:
+            raise AstrBotError.invalid_input("Unknown platform_id")
+        clear_errors = getattr(platform, "clear_errors", None)
+        if callable(clear_errors):
+            clear_errors()
+        return {}
+
+    async def _platform_manager_get_stats(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        self._require_reserved_plugin(
+            request_id,
+            "platform.manager.get_stats",
+        )
+        platform = self._get_platform_inst_by_id(str(payload.get("platform_id", "")))
+        if platform is None:
+            return {"stats": None}
+        get_stats = getattr(platform, "get_stats", None)
+        if not callable(get_stats):
+            return {"stats": None}
+        return {"stats": self._serialize_platform_stats(get_stats())}
+
     def _register_http_capabilities(self) -> None:
         self.register(
             self._builtin_descriptor("http.register_api", "Register http route"),
@@ -1112,23 +1159,30 @@ class CoreCapabilityBridge(CapabilityRouter):
         if provider is None:
             return None
         meta = provider.meta()
+        return CoreCapabilityBridge._provider_meta_to_payload(meta)
+
+    @staticmethod
+    def _normalize_sdk_provider_type(value: Any) -> SDKProviderType:
+        if isinstance(value, SDKProviderType):
+            return value
         raw_provider_type = getattr(
-            meta,
+            value,
             "provider_type",
-            SDKProviderType.CHAT_COMPLETION,
+            value,
         )
-        if isinstance(raw_provider_type, SDKProviderType):
-            provider_type = raw_provider_type
-        else:
-            provider_type_value = (
-                str(raw_provider_type.value)
-                if hasattr(raw_provider_type, "value")
-                else str(raw_provider_type)
-            )
-            try:
-                provider_type = SDKProviderType(provider_type_value)
-            except ValueError:
-                provider_type = SDKProviderType.CHAT_COMPLETION
+        provider_type_value = (
+            str(raw_provider_type.value)
+            if hasattr(raw_provider_type, "value")
+            else str(raw_provider_type)
+        )
+        try:
+            return SDKProviderType(provider_type_value)
+        except ValueError:
+            return SDKProviderType.CHAT_COMPLETION
+
+    @classmethod
+    def _provider_meta_to_payload(cls, meta: Any) -> dict[str, Any]:
+        provider_type = cls._normalize_sdk_provider_type(meta)
         return ProviderMeta(
             id=str(getattr(meta, "id", "")),
             model=(
@@ -1139,6 +1193,191 @@ class CoreCapabilityBridge(CapabilityRouter):
             type=str(getattr(meta, "type", "")),
             provider_type=provider_type,
         ).to_payload()
+
+    @classmethod
+    def _managed_provider_from_config(
+        cls,
+        provider_config: dict[str, Any] | None,
+        *,
+        loaded: bool,
+    ) -> dict[str, Any] | None:
+        if not isinstance(provider_config, dict):
+            return None
+        provider_id = str(provider_config.get("id", "")).strip()
+        provider_type_text = str(provider_config.get("type", "")).strip()
+        if not provider_id or not provider_type_text:
+            return None
+        provider_type = cls._normalize_sdk_provider_type(
+            provider_config.get("provider_type", SDKProviderType.CHAT_COMPLETION.value)
+        )
+        return {
+            "id": provider_id,
+            "model": (
+                str(provider_config.get("model"))
+                if provider_config.get("model") is not None
+                else None
+            ),
+            "type": provider_type_text,
+            "provider_type": provider_type.value,
+            "loaded": bool(loaded),
+            "enabled": bool(provider_config.get("enable", True)),
+            "provider_source_id": (
+                str(provider_config.get("provider_source_id"))
+                if provider_config.get("provider_source_id") is not None
+                else None
+            ),
+        }
+
+    @classmethod
+    def _managed_provider_to_payload(
+        cls, provider: Any | None
+    ) -> dict[str, Any] | None:
+        if provider is None:
+            return None
+        meta_payload = cls._provider_to_payload(provider)
+        if meta_payload is None:
+            return None
+        provider_config = getattr(provider, "provider_config", None)
+        return {
+            **meta_payload,
+            "loaded": True,
+            "enabled": bool(
+                provider_config.get("enable", True)
+                if isinstance(provider_config, dict)
+                else True
+            ),
+            "provider_source_id": (
+                str(provider_config.get("provider_source_id"))
+                if isinstance(provider_config, dict)
+                and provider_config.get("provider_source_id") is not None
+                else None
+            ),
+        }
+
+    def _find_provider_config_by_id(self, provider_id: str) -> dict[str, Any] | None:
+        provider_manager = getattr(self._star_context, "provider_manager", None)
+        providers_config = getattr(provider_manager, "providers_config", None)
+        if not isinstance(providers_config, list):
+            return None
+        for item in providers_config:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("id", "")).strip() == provider_id:
+                return dict(item)
+        return None
+
+    def _managed_provider_payload_by_id(
+        self,
+        provider_id: str,
+        *,
+        fallback_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        normalized_provider_id = str(provider_id).strip()
+        if not normalized_provider_id:
+            return None
+        provider = self._star_context.get_provider_by_id(normalized_provider_id)
+        payload = self._managed_provider_to_payload(provider)
+        if payload is not None:
+            return payload
+        provider_config = self._find_provider_config_by_id(normalized_provider_id)
+        if provider_config is None:
+            provider_config = (
+                dict(fallback_config) if isinstance(fallback_config, dict) else None
+            )
+        return self._managed_provider_from_config(provider_config, loaded=False)
+
+    @staticmethod
+    def _serialize_platform_error(error: Any) -> dict[str, Any] | None:
+        if error is None:
+            return None
+        message = getattr(error, "message", None)
+        timestamp = getattr(error, "timestamp", None)
+        traceback_value = getattr(error, "traceback", None)
+        if isinstance(error, dict):
+            message = error.get("message", message)
+            timestamp = error.get("timestamp", timestamp)
+            traceback_value = error.get("traceback", traceback_value)
+        if not message:
+            return None
+        return {
+            "message": str(message),
+            "timestamp": CoreCapabilityBridge._to_iso_datetime(timestamp)
+            or str(timestamp or ""),
+            "traceback": (
+                str(traceback_value) if traceback_value is not None else None
+            ),
+        }
+
+    @classmethod
+    def _serialize_platform_snapshot(cls, platform: Any) -> dict[str, Any] | None:
+        if platform is None:
+            return None
+        meta = None
+        try:
+            meta = platform.meta()
+        except Exception:
+            meta = None
+        platform_id = str(
+            getattr(meta, "id", None) or getattr(platform, "config", {}).get("id", "")
+        ).strip()
+        platform_type = str(getattr(meta, "name", "") or "").strip()
+        if not platform_id or not platform_type:
+            return None
+        status = getattr(platform, "status", None)
+        errors = getattr(platform, "errors", [])
+        return {
+            "id": platform_id,
+            "name": str(getattr(meta, "adapter_display_name", None) or platform_type),
+            "type": platform_type,
+            "status": (
+                str(status.value)
+                if hasattr(status, "value")
+                else str(status or "pending")
+            ),
+            "errors": [
+                payload
+                for payload in (
+                    cls._serialize_platform_error(item)
+                    for item in (errors if isinstance(errors, list) else [])
+                )
+                if payload is not None
+            ],
+            "last_error": cls._serialize_platform_error(
+                getattr(platform, "last_error", None)
+            ),
+            "unified_webhook": bool(
+                platform.unified_webhook()
+                if hasattr(platform, "unified_webhook")
+                else False
+            ),
+        }
+
+    @classmethod
+    def _serialize_platform_stats(cls, stats: Any) -> dict[str, Any] | None:
+        if not isinstance(stats, dict):
+            return None
+        payload = dict(stats)
+        payload["last_error"] = cls._serialize_platform_error(stats.get("last_error"))
+        meta = stats.get("meta")
+        payload["meta"] = dict(meta) if isinstance(meta, dict) else {}
+        return payload
+
+    def _get_platform_inst_by_id(self, platform_id: str) -> Any | None:
+        platform_manager = getattr(self._star_context, "platform_manager", None)
+        if platform_manager is None or not hasattr(platform_manager, "get_insts"):
+            return None
+        normalized_platform_id = str(platform_id).strip()
+        if not normalized_platform_id:
+            return None
+        for platform in list(platform_manager.get_insts()):
+            meta = None
+            try:
+                meta = platform.meta()
+            except Exception:
+                continue
+            if str(getattr(meta, "id", "")).strip() == normalized_platform_id:
+                return platform
+        return None
 
     def _resolve_current_chat_provider_id(
         self,
@@ -1234,7 +1473,9 @@ class CoreCapabilityBridge(CapabilityRouter):
         _payload: dict[str, Any],
         _token,
     ) -> dict[str, Any]:
-        return self._provider_list_payload(self._star_context.get_all_rerank_providers())
+        return self._provider_list_payload(
+            self._star_context.get_all_rerank_providers()
+        )
 
     async def _provider_get_using_tts(
         self,
@@ -1445,7 +1686,9 @@ class CoreCapabilityBridge(CapabilityRouter):
             raise AstrBotError.invalid_input(
                 "provider.embedding.get_embeddings requires texts",
             )
-        return {"embeddings": await provider.get_embeddings([str(item) for item in texts])}
+        return {
+            "embeddings": await provider.get_embeddings([str(item) for item in texts])
+        }
 
     async def _provider_embedding_get_dim(
         self,
@@ -1500,6 +1743,235 @@ class CoreCapabilityBridge(CapabilityRouter):
                 }
             )
         return {"results": serialized}
+
+    @staticmethod
+    def _normalize_provider_config_payload(
+        payload: Any,
+        capability_name: str,
+        field_name: str,
+    ) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise AstrBotError.invalid_input(
+                f"{capability_name} requires {field_name} object"
+            )
+        return dict(payload)
+
+    @staticmethod
+    def _core_provider_type(value: Any, capability_name: str):
+        from astrbot.core.provider.entities import ProviderType as CoreProviderType
+
+        normalized = str(value).strip()
+        try:
+            return CoreProviderType(normalized)
+        except ValueError as exc:
+            raise AstrBotError.invalid_input(
+                f"{capability_name} requires a valid provider_type"
+            ) from exc
+
+    async def _provider_manager_set(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        self._require_reserved_plugin(request_id, "provider.manager.set")
+        provider_id = str(payload.get("provider_id", "")).strip()
+        if not provider_id:
+            raise AstrBotError.invalid_input(
+                "provider.manager.set requires provider_id"
+            )
+        await self._star_context.provider_manager.set_provider(
+            provider_id=provider_id,
+            provider_type=self._core_provider_type(
+                payload.get("provider_type"),
+                "provider.manager.set",
+            ),
+            umo=(
+                str(payload.get("umo"))
+                if payload.get("umo") is not None and str(payload.get("umo")).strip()
+                else None
+            ),
+        )
+        return {}
+
+    async def _provider_manager_get_by_id(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        self._require_reserved_plugin(request_id, "provider.manager.get_by_id")
+        provider_id = str(payload.get("provider_id", "")).strip()
+        return {"provider": self._managed_provider_payload_by_id(provider_id)}
+
+    async def _provider_manager_load(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        self._require_reserved_plugin(request_id, "provider.manager.load")
+        provider_config = self._normalize_provider_config_payload(
+            payload.get("provider_config"),
+            "provider.manager.load",
+            "provider_config",
+        )
+        await self._star_context.provider_manager.load_provider(provider_config)
+        provider_id = str(provider_config.get("id", "")).strip()
+        return {
+            "provider": self._managed_provider_payload_by_id(
+                provider_id,
+                fallback_config=provider_config,
+            )
+        }
+
+    async def _provider_manager_terminate(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        self._require_reserved_plugin(request_id, "provider.manager.terminate")
+        provider_id = str(payload.get("provider_id", "")).strip()
+        if not provider_id:
+            raise AstrBotError.invalid_input(
+                "provider.manager.terminate requires provider_id"
+            )
+        await self._star_context.provider_manager.terminate_provider(provider_id)
+        return {}
+
+    async def _provider_manager_create(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        self._require_reserved_plugin(request_id, "provider.manager.create")
+        provider_config = self._normalize_provider_config_payload(
+            payload.get("provider_config"),
+            "provider.manager.create",
+            "provider_config",
+        )
+        await self._star_context.provider_manager.create_provider(provider_config)
+        provider_id = str(provider_config.get("id", "")).strip()
+        return {"provider": self._managed_provider_payload_by_id(provider_id)}
+
+    async def _provider_manager_update(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        self._require_reserved_plugin(request_id, "provider.manager.update")
+        origin_provider_id = str(payload.get("origin_provider_id", "")).strip()
+        if not origin_provider_id:
+            raise AstrBotError.invalid_input(
+                "provider.manager.update requires origin_provider_id"
+            )
+        new_config = self._normalize_provider_config_payload(
+            payload.get("new_config"),
+            "provider.manager.update",
+            "new_config",
+        )
+        await self._star_context.provider_manager.update_provider(
+            origin_provider_id,
+            new_config,
+        )
+        target_provider_id = str(new_config.get("id") or origin_provider_id).strip()
+        return {"provider": self._managed_provider_payload_by_id(target_provider_id)}
+
+    async def _provider_manager_delete(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        self._require_reserved_plugin(request_id, "provider.manager.delete")
+        provider_id = (
+            str(payload.get("provider_id")).strip()
+            if payload.get("provider_id") is not None
+            else None
+        )
+        provider_source_id = (
+            str(payload.get("provider_source_id")).strip()
+            if payload.get("provider_source_id") is not None
+            else None
+        )
+        if not provider_id and not provider_source_id:
+            raise AstrBotError.invalid_input(
+                "provider.manager.delete requires provider_id or provider_source_id"
+            )
+        await self._star_context.provider_manager.delete_provider(
+            provider_id=provider_id or None,
+            provider_source_id=provider_source_id or None,
+        )
+        return {}
+
+    async def _provider_manager_get_insts(
+        self,
+        request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        self._require_reserved_plugin(request_id, "provider.manager.get_insts")
+        provider_manager = getattr(self._star_context, "provider_manager", None)
+        if provider_manager is None or not hasattr(provider_manager, "get_insts"):
+            return {"providers": []}
+        return {
+            "providers": [
+                payload
+                for payload in (
+                    self._managed_provider_to_payload(provider)
+                    for provider in list(provider_manager.get_insts())
+                )
+                if payload is not None
+            ]
+        }
+
+    async def _provider_manager_watch_changes(
+        self,
+        request_id: str,
+        _payload: dict[str, Any],
+        token,
+    ) -> StreamExecution:
+        self._require_reserved_plugin(request_id, "provider.manager.watch_changes")
+        provider_manager = getattr(self._star_context, "provider_manager", None)
+        if provider_manager is None or not hasattr(
+            provider_manager, "register_provider_change_hook"
+        ):
+            raise AstrBotError.invalid_input("Provider manager does not support hooks")
+        unregister_hook = getattr(
+            provider_manager,
+            "unregister_provider_change_hook",
+            None,
+        )
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def hook(provider_id: str, provider_type: Any, umo: str | None) -> None:
+            event = {
+                "provider_id": str(provider_id),
+                "provider_type": self._normalize_sdk_provider_type(provider_type).value,
+                "umo": str(umo) if umo is not None else None,
+            }
+            loop.call_soon_threadsafe(queue.put_nowait, event)
+
+        provider_manager.register_provider_change_hook(hook)
+
+        async def iterator() -> AsyncIterator[dict[str, Any]]:
+            try:
+                while True:
+                    token.raise_if_cancelled()
+                    yield await queue.get()
+            finally:
+                if callable(unregister_hook):
+                    unregister_hook(hook)
+
+        return StreamExecution(
+            iterator=iterator(),
+            finalize=lambda _chunks: {},
+            collect_chunks=False,
+        )
 
     async def _llm_tool_manager_get(
         self,
@@ -2218,6 +2690,91 @@ class CoreCapabilityBridge(CapabilityRouter):
             call_handler=self._kb_delete,
         )
 
+    def _register_p1_3_capabilities(self) -> None:
+        self.register(
+            self._builtin_descriptor("provider.manager.set", "Set active provider"),
+            call_handler=self._provider_manager_set,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.manager.get_by_id",
+                "Get managed provider record by id",
+            ),
+            call_handler=self._provider_manager_get_by_id,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.manager.load",
+                "Load a provider instance without persisting config",
+            ),
+            call_handler=self._provider_manager_load,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.manager.terminate",
+                "Terminate a loaded provider instance",
+            ),
+            call_handler=self._provider_manager_terminate,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.manager.create",
+                "Create and load a provider config",
+            ),
+            call_handler=self._provider_manager_create,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.manager.update",
+                "Update and reload a provider config",
+            ),
+            call_handler=self._provider_manager_update,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.manager.delete",
+                "Delete a provider config",
+            ),
+            call_handler=self._provider_manager_delete,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.manager.get_insts",
+                "List loaded chat provider instances",
+            ),
+            call_handler=self._provider_manager_get_insts,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.manager.watch_changes",
+                "Stream provider change events",
+                supports_stream=True,
+                cancelable=True,
+            ),
+            stream_handler=self._provider_manager_watch_changes,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "platform.manager.get_by_id",
+                "Get platform management snapshot by id",
+            ),
+            call_handler=self._platform_manager_get_by_id,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "platform.manager.clear_errors",
+                "Clear platform error records",
+            ),
+            call_handler=self._platform_manager_clear_errors,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "platform.manager.get_stats",
+                "Get platform stats by id",
+            ),
+            call_handler=self._platform_manager_get_stats,
+        )
+
     @staticmethod
     def _normalize_session_scoped_config(
         raw_config: Any,
@@ -2331,11 +2888,28 @@ class CoreCapabilityBridge(CapabilityRouter):
 
     def _reserved_plugin_names(self) -> set[str]:
         reserved: set[str] = set()
-        for star in self._star_context.get_all_stars():
+        get_all_stars = getattr(self._star_context, "get_all_stars", None)
+        if not callable(get_all_stars):
+            return reserved
+        for star in get_all_stars():
             name = getattr(star, "name", None)
             if name and bool(getattr(star, "reserved", False)):
                 reserved.add(str(name))
         return reserved
+
+    def _require_reserved_plugin(
+        self,
+        request_id: str,
+        capability_name: str,
+    ) -> str:
+        plugin_id = self._resolve_plugin_id(request_id)
+        if plugin_id in {"system", "__system__"}:
+            return plugin_id
+        if plugin_id in self._reserved_plugin_names():
+            return plugin_id
+        raise AstrBotError.invalid_input(
+            f"{capability_name} is restricted to reserved/system plugins"
+        )
 
     async def _session_plugin_is_enabled(
         self,
@@ -2582,24 +3156,26 @@ class CoreCapabilityBridge(CapabilityRouter):
             raise AstrBotError.invalid_input(
                 "conversation.new requires conversation object"
             )
-        conversation_id = await self._star_context.conversation_manager.new_conversation(
-            unified_msg_origin=session,
-            platform_id=(
-                str(raw_conversation.get("platform_id"))
-                if raw_conversation.get("platform_id") is not None
-                else None
-            ),
-            content=self._normalize_history_items(raw_conversation.get("history")),
-            title=(
-                str(raw_conversation.get("title"))
-                if raw_conversation.get("title") is not None
-                else None
-            ),
-            persona_id=(
-                str(raw_conversation.get("persona_id"))
-                if raw_conversation.get("persona_id") is not None
-                else None
-            ),
+        conversation_id = (
+            await self._star_context.conversation_manager.new_conversation(
+                unified_msg_origin=session,
+                platform_id=(
+                    str(raw_conversation.get("platform_id"))
+                    if raw_conversation.get("platform_id") is not None
+                    else None
+                ),
+                content=self._normalize_history_items(raw_conversation.get("history")),
+                title=(
+                    str(raw_conversation.get("title"))
+                    if raw_conversation.get("title") is not None
+                    else None
+                ),
+                persona_id=(
+                    str(raw_conversation.get("persona_id"))
+                    if raw_conversation.get("persona_id") is not None
+                    else None
+                ),
+            )
         )
         return {"conversation_id": conversation_id}
 

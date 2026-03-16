@@ -130,6 +130,7 @@ import inspect
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -227,10 +228,18 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
                 }
             ],
         }
+        self._provider_configs: dict[str, dict[str, Any]] = {
+            str(item["id"]): {**item, "enable": True}
+            for providers in self._provider_catalog.values()
+            for item in providers
+        }
         self._active_provider_ids: dict[str, str | None] = {
             kind: providers[0]["id"] if providers else None
             for kind, providers in self._provider_catalog.items()
         }
+        self._provider_change_subscriptions: dict[
+            str, asyncio.Queue[dict[str, Any]]
+        ] = {}
         self._system_data_root = Path.cwd() / ".astrbot_sdk_testing" / "plugin_data"
         self._session_waiters: dict[str, set[str]] = {}
         self._db_watch_subscriptions: dict[
@@ -268,6 +277,7 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
         normalized_metadata.setdefault("author", "")
         normalized_metadata.setdefault("version", "0.0.0")
         normalized_metadata.setdefault("enabled", True)
+        normalized_metadata.setdefault("reserved", False)
         self._plugins[name] = _RegisteredPlugin(
             metadata=normalized_metadata,
             config=dict(config or {}),
@@ -369,6 +379,30 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
                     "name": str(item.get("name", platform_id)),
                     "type": platform_type,
                     "status": str(item.get("status", "unknown")),
+                    "errors": [
+                        dict(error)
+                        for error in item.get("errors", [])
+                        if isinstance(error, dict)
+                    ]
+                    if isinstance(item.get("errors"), list)
+                    else [],
+                    "last_error": (
+                        dict(item.get("last_error"))
+                        if isinstance(item.get("last_error"), dict)
+                        else None
+                    ),
+                    "unified_webhook": bool(item.get("unified_webhook", False)),
+                    "stats": (
+                        dict(item.get("stats"))
+                        if isinstance(item.get("stats"), dict)
+                        else None
+                    ),
+                    "meta": (
+                        dict(item.get("meta"))
+                        if isinstance(item.get("meta"), dict)
+                        else {}
+                    ),
+                    "started_at": item.get("started_at"),
                 }
             )
         self._platform_instances = normalized
@@ -435,11 +469,59 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
             for item in providers
             if isinstance(item, dict) and str(item.get("id", "")).strip()
         ]
+        for item in self._provider_catalog[kind]:
+            provider_id = str(item.get("id", "")).strip()
+            if not provider_id:
+                continue
+            self._provider_configs[provider_id] = {**item, "enable": True}
         if active_id is not None:
             self._active_provider_ids[kind] = active_id
         else:
             catalog = self._provider_catalog[kind]
             self._active_provider_ids[kind] = catalog[0]["id"] if catalog else None
+
+    def emit_provider_change(
+        self,
+        provider_id: str,
+        provider_type: str,
+        umo: str | None = None,
+    ) -> None:
+        event = {
+            "provider_id": str(provider_id),
+            "provider_type": str(provider_type),
+            "umo": str(umo) if umo is not None else None,
+        }
+        for queue in list(self._provider_change_subscriptions.values()):
+            queue.put_nowait(dict(event))
+
+    def record_platform_error(
+        self,
+        platform_id: str,
+        message: str,
+        *,
+        traceback: str | None = None,
+    ) -> None:
+        for item in self._platform_instances:
+            if str(item.get("id", "")) != str(platform_id):
+                continue
+            error = {
+                "message": str(message),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "traceback": str(traceback) if traceback is not None else None,
+            }
+            errors = item.setdefault("errors", [])
+            if isinstance(errors, list):
+                errors.append(error)
+            item["last_error"] = error
+            item["status"] = "error"
+            return
+
+    def set_platform_stats(self, platform_id: str, stats: dict[str, Any]) -> None:
+        for item in self._platform_instances:
+            if str(item.get("id", "")) != str(platform_id):
+                continue
+            item["stats"] = dict(stats)
+            return
 
     def set_session_plugin_config(
         self,

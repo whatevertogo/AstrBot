@@ -84,6 +84,7 @@ def _plugin_metadata_from_spec(
         "author": str(manifest.get("author") or ""),
         "version": str(manifest.get("version") or "0.0.0"),
         "enabled": enabled,
+        "reserved": bool(manifest.get("reserved", False)),
     }
 
 

@@ -12,6 +12,7 @@ Attributes:
     db: 数据库客户端，用于 KV 持久化
     platform: 平台客户端，用于发送消息
     providers: Provider 客户端，用于查询和调用专用 Provider
+    provider_manager: Provider 管理客户端，用于 reserved/system 级操作
     personas: 人格管理客户端
     conversations: 对话管理客户端
     kbs: 知识库管理客户端
@@ -26,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,9 @@ from .clients import (
     MemoryClient,
     MetadataClient,
     PlatformClient,
+    PlatformError,
+    PlatformStats,
+    PlatformStatus,
     RegistryClient,
 )
 from .clients._proxy import CapabilityProxy
@@ -48,7 +52,7 @@ from .clients.managers import (
     KnowledgeBaseManagerClient,
     PersonaManagerClient,
 )
-from .clients.provider import ProviderClient
+from .clients.provider import ProviderClient, ProviderManagerClient
 from .clients.session import SessionPluginManager, SessionServiceManager
 from .errors import AstrBotError
 from .llm.entities import LLMToolSpec, ProviderMeta, ProviderRequest
@@ -62,15 +66,19 @@ PlatformCompatContent = (
 )
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(slots=True)
 class PlatformCompatFacade:
-    """兼容层平台入口，仅暴露元信息和主动发送能力。"""
+    """兼容层平台入口，仅暴露安全元信息和主动发送能力。"""
 
     _ctx: Context
     id: str
     name: str
     type: str
-    status: str
+    status: PlatformStatus = PlatformStatus.PENDING
+    errors: list[PlatformError] = field(default_factory=list)
+    last_error: PlatformError | None = None
+    unified_webhook: bool = False
+    _state_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     async def send_by_session(
         self,
@@ -110,6 +118,51 @@ class PlatformCompatFacade:
             content,
             message_type=message_type,
         )
+
+    async def refresh(self) -> None:
+        async with self._state_lock:
+            await self._refresh_locked()
+
+    async def clear_errors(self) -> None:
+        async with self._state_lock:
+            await self._ctx._proxy.call(
+                "platform.manager.clear_errors",
+                {"platform_id": self.id},
+            )
+            await self._refresh_locked()
+
+    async def get_stats(self) -> PlatformStats | None:
+        output = await self._ctx._proxy.call(
+            "platform.manager.get_stats",
+            {"platform_id": self.id},
+        )
+        return PlatformStats.from_payload(output.get("stats"))
+
+    def _apply_snapshot(self, payload: Any) -> None:
+        if not isinstance(payload, dict):
+            return
+        self.name = str(payload.get("name", self.name))
+        self.type = str(payload.get("type", self.type))
+        self.status = PlatformStatus.from_value(payload.get("status"))
+        errors_payload = payload.get("errors")
+        if isinstance(errors_payload, list):
+            self.errors = [
+                error
+                for error in (
+                    PlatformError.from_payload(item) if isinstance(item, dict) else None
+                    for item in errors_payload
+                )
+                if error is not None
+            ]
+        self.last_error = PlatformError.from_payload(payload.get("last_error"))
+        self.unified_webhook = bool(payload.get("unified_webhook", False))
+
+    async def _refresh_locked(self) -> None:
+        output = await self._ctx._proxy.call(
+            "platform.manager.get_by_id",
+            {"platform_id": self.id},
+        )
+        self._apply_snapshot(output.get("platform"))
 
 
 @dataclass(slots=True)
@@ -167,6 +220,7 @@ class Context:
         db: 数据库客户端
         platform: 平台客户端
         providers: Provider 客户端
+        provider_manager: Provider 管理客户端
         personas: 人格管理客户端
         conversations: 对话管理客户端
         kbs: 知识库管理客户端
@@ -195,6 +249,7 @@ class Context:
             logger: 日志器，None 时使用默认 logger 并绑定 plugin_id
         """
         proxy = CapabilityProxy(peer, caller_plugin_id=plugin_id)
+        bound_logger = logger or base_logger.bind(plugin_id=plugin_id)
         self._proxy = proxy
         self.peer = peer
         self.llm = LLMClient(proxy)
@@ -202,6 +257,11 @@ class Context:
         self.db = DBClient(proxy)
         self.platform = PlatformClient(proxy)
         self.providers = ProviderClient(proxy)
+        self.provider_manager = ProviderManagerClient(
+            proxy,
+            plugin_id=plugin_id,
+            logger=bound_logger,
+        )
         self.personas = PersonaManagerClient(proxy)
         self.conversations = ConversationManagerClient(proxy)
         self.kbs = KnowledgeBaseManagerClient(proxy)
@@ -215,7 +275,7 @@ class Context:
         self.kb_manager = self.kbs
         self._llm_tool_manager = LLMToolManager(proxy)
         self.plugin_id = plugin_id
-        self.logger = logger or base_logger.bind(plugin_id=plugin_id)
+        self.logger = bound_logger
         self.cancel_token = cancel_token or CancelToken()
         self._source_event_payload = (
             dict(source_event_payload) if isinstance(source_event_payload, dict) else {}
@@ -443,7 +503,7 @@ class Context:
                     "id": platform_id,
                     "name": str(item.get("name", platform_id)),
                     "type": platform_type,
-                    "status": str(item.get("status", "unknown")),
+                    "status": PlatformStatus.from_value(item.get("status")),
                 }
             )
         return normalized
@@ -457,7 +517,7 @@ class Context:
             id=str(platform_payload.get("id", "")),
             name=str(platform_payload.get("name", "")),
             type=str(platform_payload.get("type", "")),
-            status=str(platform_payload.get("status", "unknown")),
+            status=PlatformStatus.from_value(platform_payload.get("status")),
         )
 
     async def get_platform(self, platform_type: str) -> PlatformCompatFacade | None:

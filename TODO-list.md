@@ -774,9 +774,9 @@
 3. **KnowledgeBaseManager** - ✅ 知识库管理器（`get_kb()`, `create_kb()`, `delete_kb()`）
 
 #### P1.3 - Provider 与 Platform 管理面
-1. **Provider 管理** - `set_provider()`, `get_provider_by_id()`, `load_provider()`, `terminate_provider()`, `create_provider()`, `update_provider()`, `delete_provider()`, `register_provider_change_hook()`, `get_insts()`
-2. **Platform 实体** - `PlatformStatus` 枚举, `PlatformError`, `record_error()`, `last_error`, `errors`, `clear_errors()`, `send_by_session()`, `commit_event()`, `get_client()`, `get_stats()`
-3. **Webhook 处理** - `unified_webhook()`, `webhook_callback()`
+1. **Provider 管理** - ✅ `set_provider()`, `get_provider_by_id()`, `load_provider()`, `terminate_provider()`, `create_provider()`, `update_provider()`, `delete_provider()`, `register_provider_change_hook()`, `get_insts()`
+2. **Platform 实体** - ✅ `PlatformStatus` 枚举, `PlatformError`, `last_error`, `errors`, `clear_errors()`, `send_by_session()`, `get_stats()`, `unified_webhook()`
+3. **Webhook 处理** - 🔄 只补统一 webhook 状态观测；`webhook_callback()` 原始请求入口延期
 
 #### P1.4 - Star 兼容层与开发工具
 1. **Star 基类方法/属性** - `context` 属性及剩余兼容层

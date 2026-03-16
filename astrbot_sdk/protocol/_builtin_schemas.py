@@ -381,6 +381,62 @@ PLATFORM_LIST_INSTANCES_OUTPUT_SCHEMA = _object_schema(
     required=("platforms",),
     platforms={"type": "array", "items": PLATFORM_INSTANCE_SCHEMA},
 )
+PLATFORM_ERROR_SCHEMA = _object_schema(
+    required=("message", "timestamp"),
+    message={"type": "string"},
+    timestamp={"type": "string"},
+    traceback=_nullable({"type": "string"}),
+)
+PLATFORM_MANAGER_STATE_SCHEMA = _object_schema(
+    required=("id", "name", "type", "status", "errors", "unified_webhook"),
+    id={"type": "string"},
+    name={"type": "string"},
+    type={"type": "string"},
+    status={"type": "string"},
+    errors={"type": "array", "items": PLATFORM_ERROR_SCHEMA},
+    last_error=_nullable(PLATFORM_ERROR_SCHEMA),
+    unified_webhook={"type": "boolean"},
+)
+PLATFORM_STATS_SCHEMA = _object_schema(
+    required=(
+        "id",
+        "type",
+        "display_name",
+        "status",
+        "error_count",
+        "unified_webhook",
+    ),
+    id={"type": "string"},
+    type={"type": "string"},
+    display_name={"type": "string"},
+    status={"type": "string"},
+    started_at=_nullable({"type": "string"}),
+    error_count={"type": "integer"},
+    last_error=_nullable(PLATFORM_ERROR_SCHEMA),
+    unified_webhook={"type": "boolean"},
+    meta={"type": "object"},
+)
+PLATFORM_MANAGER_GET_BY_ID_INPUT_SCHEMA = _object_schema(
+    required=("platform_id",),
+    platform_id={"type": "string"},
+)
+PLATFORM_MANAGER_GET_BY_ID_OUTPUT_SCHEMA = _object_schema(
+    required=("platform",),
+    platform=_nullable(PLATFORM_MANAGER_STATE_SCHEMA),
+)
+PLATFORM_MANAGER_CLEAR_ERRORS_INPUT_SCHEMA = _object_schema(
+    required=("platform_id",),
+    platform_id={"type": "string"},
+)
+PLATFORM_MANAGER_CLEAR_ERRORS_OUTPUT_SCHEMA = _object_schema()
+PLATFORM_MANAGER_GET_STATS_INPUT_SCHEMA = _object_schema(
+    required=("platform_id",),
+    platform_id={"type": "string"},
+)
+PLATFORM_MANAGER_GET_STATS_OUTPUT_SCHEMA = _object_schema(
+    required=("stats",),
+    stats=_nullable(PLATFORM_STATS_SCHEMA),
+)
 SESSION_PLUGIN_IS_ENABLED_INPUT_SCHEMA = _object_schema(
     required=("session", "plugin_name"),
     session={"type": "string"},
@@ -692,6 +748,22 @@ PROVIDER_META_SCHEMA = _object_schema(
     type={"type": "string"},
     provider_type={"type": "string"},
 )
+MANAGED_PROVIDER_RECORD_SCHEMA = _object_schema(
+    required=("id", "type", "provider_type", "loaded", "enabled"),
+    id={"type": "string"},
+    model=_nullable({"type": "string"}),
+    type={"type": "string"},
+    provider_type={"type": "string"},
+    loaded={"type": "boolean"},
+    enabled={"type": "boolean"},
+    provider_source_id=_nullable({"type": "string"}),
+)
+PROVIDER_CHANGE_EVENT_SCHEMA = _object_schema(
+    required=("provider_id", "provider_type"),
+    provider_id={"type": "string"},
+    provider_type={"type": "string"},
+    umo=_nullable({"type": "string"}),
+)
 LLM_TOOL_SPEC_SCHEMA = _object_schema(
     required=("name", "description", "parameters_schema", "active"),
     name={"type": "string"},
@@ -816,6 +888,68 @@ PROVIDER_RERANK_INPUT_SCHEMA = _object_schema(
 PROVIDER_RERANK_OUTPUT_SCHEMA = _object_schema(
     required=("results",),
     results={"type": "array", "items": PROVIDER_RERANK_RESULT_SCHEMA},
+)
+PROVIDER_MANAGER_SET_INPUT_SCHEMA = _object_schema(
+    required=("provider_id", "provider_type"),
+    provider_id={"type": "string"},
+    provider_type={"type": "string"},
+    umo=_nullable({"type": "string"}),
+)
+PROVIDER_MANAGER_SET_OUTPUT_SCHEMA = _object_schema()
+PROVIDER_MANAGER_GET_BY_ID_INPUT_SCHEMA = _object_schema(
+    required=("provider_id",),
+    provider_id={"type": "string"},
+)
+PROVIDER_MANAGER_GET_BY_ID_OUTPUT_SCHEMA = _object_schema(
+    required=("provider",),
+    provider=_nullable(MANAGED_PROVIDER_RECORD_SCHEMA),
+)
+PROVIDER_MANAGER_LOAD_INPUT_SCHEMA = _object_schema(
+    required=("provider_config",),
+    provider_config={"type": "object"},
+)
+PROVIDER_MANAGER_LOAD_OUTPUT_SCHEMA = _object_schema(
+    required=("provider",),
+    provider=_nullable(MANAGED_PROVIDER_RECORD_SCHEMA),
+)
+PROVIDER_MANAGER_TERMINATE_INPUT_SCHEMA = _object_schema(
+    required=("provider_id",),
+    provider_id={"type": "string"},
+)
+PROVIDER_MANAGER_TERMINATE_OUTPUT_SCHEMA = _object_schema()
+PROVIDER_MANAGER_CREATE_INPUT_SCHEMA = _object_schema(
+    required=("provider_config",),
+    provider_config={"type": "object"},
+)
+PROVIDER_MANAGER_CREATE_OUTPUT_SCHEMA = _object_schema(
+    required=("provider",),
+    provider=_nullable(MANAGED_PROVIDER_RECORD_SCHEMA),
+)
+PROVIDER_MANAGER_UPDATE_INPUT_SCHEMA = _object_schema(
+    required=("origin_provider_id", "new_config"),
+    origin_provider_id={"type": "string"},
+    new_config={"type": "object"},
+)
+PROVIDER_MANAGER_UPDATE_OUTPUT_SCHEMA = _object_schema(
+    required=("provider",),
+    provider=_nullable(MANAGED_PROVIDER_RECORD_SCHEMA),
+)
+PROVIDER_MANAGER_DELETE_INPUT_SCHEMA = _object_schema(
+    provider_id=_nullable({"type": "string"}),
+    provider_source_id=_nullable({"type": "string"}),
+)
+PROVIDER_MANAGER_DELETE_OUTPUT_SCHEMA = _object_schema()
+PROVIDER_MANAGER_GET_INSTS_INPUT_SCHEMA = _object_schema()
+PROVIDER_MANAGER_GET_INSTS_OUTPUT_SCHEMA = _object_schema(
+    required=("providers",),
+    providers={"type": "array", "items": MANAGED_PROVIDER_RECORD_SCHEMA},
+)
+PROVIDER_MANAGER_WATCH_CHANGES_INPUT_SCHEMA = _object_schema()
+PROVIDER_MANAGER_WATCH_CHANGES_OUTPUT_SCHEMA = _object_schema(
+    required=("provider_id", "provider_type"),
+    provider_id={"type": "string"},
+    provider_type={"type": "string"},
+    umo=_nullable({"type": "string"}),
 )
 LLM_TOOL_MANAGER_GET_INPUT_SCHEMA = _object_schema()
 LLM_TOOL_MANAGER_GET_OUTPUT_SCHEMA = _object_schema(
@@ -1144,6 +1278,54 @@ BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
         "input": PROVIDER_RERANK_INPUT_SCHEMA,
         "output": PROVIDER_RERANK_OUTPUT_SCHEMA,
     },
+    "provider.manager.set": {
+        "input": PROVIDER_MANAGER_SET_INPUT_SCHEMA,
+        "output": PROVIDER_MANAGER_SET_OUTPUT_SCHEMA,
+    },
+    "provider.manager.get_by_id": {
+        "input": PROVIDER_MANAGER_GET_BY_ID_INPUT_SCHEMA,
+        "output": PROVIDER_MANAGER_GET_BY_ID_OUTPUT_SCHEMA,
+    },
+    "provider.manager.load": {
+        "input": PROVIDER_MANAGER_LOAD_INPUT_SCHEMA,
+        "output": PROVIDER_MANAGER_LOAD_OUTPUT_SCHEMA,
+    },
+    "provider.manager.terminate": {
+        "input": PROVIDER_MANAGER_TERMINATE_INPUT_SCHEMA,
+        "output": PROVIDER_MANAGER_TERMINATE_OUTPUT_SCHEMA,
+    },
+    "provider.manager.create": {
+        "input": PROVIDER_MANAGER_CREATE_INPUT_SCHEMA,
+        "output": PROVIDER_MANAGER_CREATE_OUTPUT_SCHEMA,
+    },
+    "provider.manager.update": {
+        "input": PROVIDER_MANAGER_UPDATE_INPUT_SCHEMA,
+        "output": PROVIDER_MANAGER_UPDATE_OUTPUT_SCHEMA,
+    },
+    "provider.manager.delete": {
+        "input": PROVIDER_MANAGER_DELETE_INPUT_SCHEMA,
+        "output": PROVIDER_MANAGER_DELETE_OUTPUT_SCHEMA,
+    },
+    "provider.manager.get_insts": {
+        "input": PROVIDER_MANAGER_GET_INSTS_INPUT_SCHEMA,
+        "output": PROVIDER_MANAGER_GET_INSTS_OUTPUT_SCHEMA,
+    },
+    "provider.manager.watch_changes": {
+        "input": PROVIDER_MANAGER_WATCH_CHANGES_INPUT_SCHEMA,
+        "output": PROVIDER_MANAGER_WATCH_CHANGES_OUTPUT_SCHEMA,
+    },
+    "platform.manager.get_by_id": {
+        "input": PLATFORM_MANAGER_GET_BY_ID_INPUT_SCHEMA,
+        "output": PLATFORM_MANAGER_GET_BY_ID_OUTPUT_SCHEMA,
+    },
+    "platform.manager.clear_errors": {
+        "input": PLATFORM_MANAGER_CLEAR_ERRORS_INPUT_SCHEMA,
+        "output": PLATFORM_MANAGER_CLEAR_ERRORS_OUTPUT_SCHEMA,
+    },
+    "platform.manager.get_stats": {
+        "input": PLATFORM_MANAGER_GET_STATS_INPUT_SCHEMA,
+        "output": PLATFORM_MANAGER_GET_STATS_OUTPUT_SCHEMA,
+    },
     "llm_tool.manager.get": {
         "input": LLM_TOOL_MANAGER_GET_INPUT_SCHEMA,
         "output": LLM_TOOL_MANAGER_GET_OUTPUT_SCHEMA,
@@ -1306,8 +1488,27 @@ __all__ = [
     "PROVIDER_EMBEDDING_GET_MANY_INPUT_SCHEMA",
     "PROVIDER_EMBEDDING_GET_MANY_OUTPUT_SCHEMA",
     "PROVIDER_EMBEDDING_GET_OUTPUT_SCHEMA",
+    "PROVIDER_CHANGE_EVENT_SCHEMA",
     "PROVIDER_LIST_ALL_INPUT_SCHEMA",
     "PROVIDER_LIST_ALL_OUTPUT_SCHEMA",
+    "PROVIDER_MANAGER_CREATE_INPUT_SCHEMA",
+    "PROVIDER_MANAGER_CREATE_OUTPUT_SCHEMA",
+    "PROVIDER_MANAGER_DELETE_INPUT_SCHEMA",
+    "PROVIDER_MANAGER_DELETE_OUTPUT_SCHEMA",
+    "PROVIDER_MANAGER_GET_BY_ID_INPUT_SCHEMA",
+    "PROVIDER_MANAGER_GET_BY_ID_OUTPUT_SCHEMA",
+    "PROVIDER_MANAGER_GET_INSTS_INPUT_SCHEMA",
+    "PROVIDER_MANAGER_GET_INSTS_OUTPUT_SCHEMA",
+    "PROVIDER_MANAGER_LOAD_INPUT_SCHEMA",
+    "PROVIDER_MANAGER_LOAD_OUTPUT_SCHEMA",
+    "PROVIDER_MANAGER_SET_INPUT_SCHEMA",
+    "PROVIDER_MANAGER_SET_OUTPUT_SCHEMA",
+    "PROVIDER_MANAGER_TERMINATE_INPUT_SCHEMA",
+    "PROVIDER_MANAGER_TERMINATE_OUTPUT_SCHEMA",
+    "PROVIDER_MANAGER_UPDATE_INPUT_SCHEMA",
+    "PROVIDER_MANAGER_UPDATE_OUTPUT_SCHEMA",
+    "PROVIDER_MANAGER_WATCH_CHANGES_INPUT_SCHEMA",
+    "PROVIDER_MANAGER_WATCH_CHANGES_OUTPUT_SCHEMA",
     "PROVIDER_META_SCHEMA",
     "PROVIDER_RERANK_INPUT_SCHEMA",
     "PROVIDER_RERANK_OUTPUT_SCHEMA",
@@ -1337,6 +1538,8 @@ __all__ = [
     "AGENT_SPEC_SCHEMA",
     "AGENT_TOOL_LOOP_RUN_INPUT_SCHEMA",
     "AGENT_TOOL_LOOP_RUN_OUTPUT_SCHEMA",
+    "MANAGED_PROVIDER_RECORD_SCHEMA",
+    "PLATFORM_ERROR_SCHEMA",
     "PLATFORM_GET_MEMBERS_INPUT_SCHEMA",
     "PLATFORM_GET_MEMBERS_OUTPUT_SCHEMA",
     "PLATFORM_GET_GROUP_INPUT_SCHEMA",
@@ -1344,6 +1547,13 @@ __all__ = [
     "PLATFORM_INSTANCE_SCHEMA",
     "PLATFORM_LIST_INSTANCES_INPUT_SCHEMA",
     "PLATFORM_LIST_INSTANCES_OUTPUT_SCHEMA",
+    "PLATFORM_MANAGER_CLEAR_ERRORS_INPUT_SCHEMA",
+    "PLATFORM_MANAGER_CLEAR_ERRORS_OUTPUT_SCHEMA",
+    "PLATFORM_MANAGER_GET_BY_ID_INPUT_SCHEMA",
+    "PLATFORM_MANAGER_GET_BY_ID_OUTPUT_SCHEMA",
+    "PLATFORM_MANAGER_GET_STATS_INPUT_SCHEMA",
+    "PLATFORM_MANAGER_GET_STATS_OUTPUT_SCHEMA",
+    "PLATFORM_MANAGER_STATE_SCHEMA",
     "PLATFORM_SEND_CHAIN_INPUT_SCHEMA",
     "PLATFORM_SEND_CHAIN_OUTPUT_SCHEMA",
     "PLATFORM_SEND_BY_SESSION_INPUT_SCHEMA",
@@ -1352,6 +1562,7 @@ __all__ = [
     "PLATFORM_SEND_IMAGE_OUTPUT_SCHEMA",
     "PLATFORM_SEND_INPUT_SCHEMA",
     "PLATFORM_SEND_OUTPUT_SCHEMA",
+    "PLATFORM_STATS_SCHEMA",
     "PERSONA_CREATE_INPUT_SCHEMA",
     "PERSONA_CREATE_OUTPUT_SCHEMA",
     "PERSONA_CREATE_SCHEMA",

@@ -22,6 +22,12 @@ from .clients.managers import (
     PersonaRecord,
     PersonaUpdateParams,
 )
+from .clients.platform import PlatformError, PlatformStats, PlatformStatus
+from .clients.provider import (
+    ManagedProviderRecord,
+    ProviderChangeEvent,
+    ProviderManagerClient,
+)
 from .clients.session import SessionPluginManager, SessionServiceManager
 from .commands import CommandGroup, command_group, print_cmd_tree
 from .context import Context
@@ -82,6 +88,7 @@ __all__ = [
     "KnowledgeBaseCreateParams",
     "KnowledgeBaseManagerClient",
     "KnowledgeBaseRecord",
+    "ManagedProviderRecord",
     "MessageEvent",
     "MessageEventResult",
     "MessageChain",
@@ -89,11 +96,16 @@ __all__ = [
     "MessageTypeFilter",
     "Plain",
     "PlatformFilter",
+    "PlatformError",
+    "PlatformStats",
+    "PlatformStatus",
     "Poke",
     "PersonaCreateParams",
     "PersonaManagerClient",
     "PersonaRecord",
     "PersonaUpdateParams",
+    "ProviderChangeEvent",
+    "ProviderManagerClient",
     "Record",
     "Reply",
     "ScheduleContext",
