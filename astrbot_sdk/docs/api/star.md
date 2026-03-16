@@ -39,6 +39,23 @@ class Star(PluginKVStoreMixin):
 
 ---
 
+## 导入方式
+
+```python
+# 从主模块导入（推荐）
+from astrbot_sdk import Star
+
+# 从子模块导入
+from astrbot_sdk.star import Star
+
+# 常用配套导入
+from astrbot_sdk import Context, MessageEvent  # 上下文和事件
+from astrbot_sdk.decorators import on_command, on_message  # 装饰器
+from astrbot_sdk.errors import AstrBotError  # 错误处理
+```
+
+---
+
 ## 核心属性
 
 ### `__handlers__`

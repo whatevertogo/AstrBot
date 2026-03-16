@@ -28,6 +28,22 @@ class MessageEvent:
 
 ---
 
+## 导入方式
+
+```python
+# 从主模块导入（推荐）
+from astrbot_sdk import MessageEvent
+
+# 从子模块导入
+from astrbot_sdk.events import MessageEvent
+
+# 常用配套导入
+from astrbot_sdk import Context  # 上下文对象
+from astrbot_sdk.decorators import on_command, on_message  # 装饰器
+```
+
+---
+
 ## 基本属性
 
 ### 消息内容属性

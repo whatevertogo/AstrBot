@@ -25,6 +25,31 @@
 
 ---
 
+## 导入方式
+
+```python
+# 从主模块导入（推荐）
+from astrbot_sdk import (
+    Plain, At, AtAll, Image, Record, Video, File, Reply, Poke, Forward,
+    MessageChain, MessageBuilder
+)
+
+# 从子模块导入
+from astrbot_sdk.message_components import (
+    Plain, At, AtAll, Image, Record, Video, File, Reply, Poke, Forward
+)
+from astrbot_sdk.message_result import MessageChain, MessageBuilder
+
+# 辅助函数
+from astrbot_sdk.message_components import (
+    payload_to_component,
+    component_to_payload_sync,
+    component_to_payload,
+)
+```
+
+---
+
 ## BaseMessageComponent - 基类
 
 所有消息组件的基类。

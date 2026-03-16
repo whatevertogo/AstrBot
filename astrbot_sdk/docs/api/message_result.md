@@ -17,6 +17,26 @@
 
 ---
 
+## 导入方式
+
+```python
+# 从主模块导入
+from astrbot_sdk import MessageChain, MessageBuilder, MessageEventResult
+
+# 从子模块导入
+from astrbot_sdk.message_result import (
+    MessageChain,
+    MessageBuilder,
+    MessageEventResult,
+    EventResultType,
+)
+
+# 消息组件（用于构建消息链）
+from astrbot_sdk.message_components import Plain, At, Image, File
+```
+
+---
+
 ## EventResultType - 事件结果类型枚举
 
 事件结果的类型枚举，定义消息结果的类型。

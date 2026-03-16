@@ -17,6 +17,26 @@
 
 ---
 
+## 导入方式
+
+```python
+# 类型别名
+from astrbot_sdk.context import PlatformCompatContent
+from astrbot_sdk.clients.llm import ChatMessage, ChatHistoryItem, LLMResponse
+
+# 泛型变量（通常不需要直接导入）
+from astrbot_sdk.session_waiter import _P, _ResultT, _OwnerT
+from astrbot_sdk.plugin_kv import _VT
+
+# 通用类型
+from typing import Callable, Awaitable, Any, Sequence, Mapping
+
+HandlerType = Callable[..., Awaitable[Any]]
+FilterType = Callable[..., Awaitable[bool]]
+```
+
+---
+
 ## 类型别名
 
 ### PlatformCompatContent
@@ -460,26 +480,6 @@ class Container(Generic[T]):
 # 使用
 int_container: Container[int] = Container(42)
 str_container: Container[str] = Container("hello")
-```
-
----
-
-## 导入方式
-
-```python
-# 类型别名
-from astrbot_sdk.context import PlatformCompatContent
-from astrbot_sdk.clients.llm import ChatMessage, ChatHistoryItem, LLMResponse
-
-# 泛型变量（通常不需要直接导入）
-from astrbot_sdk.session_waiter import _P, _ResultT, _OwnerT
-from astrbot_sdk.plugin_kv import _VT
-
-# 通用类型
-from typing import Callable, Awaitable, Any, Sequence, Mapping
-
-HandlerType = Callable[..., Awaitable[Any]]
-FilterType = Callable[..., Awaitable[bool]]
 ```
 
 ---

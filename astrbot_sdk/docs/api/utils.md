@@ -30,6 +30,34 @@
 
 ---
 
+## 导入方式
+
+```python
+# 从主模块导入
+from astrbot_sdk import (
+    CancelToken,
+    MessageSession,
+    GreedyStr,
+    ScheduleContext,
+    SessionController,
+    session_waiter,
+    StarTools,
+    PluginKVStoreMixin,
+)
+
+# 从子模块导入
+from astrbot_sdk.context import CancelToken
+from astrbot_sdk.message_session import MessageSession
+from astrbot_sdk.types import GreedyStr
+from astrbot_sdk.commands import CommandGroup, command_group, print_cmd_tree
+from astrbot_sdk.schedule import ScheduleContext
+from astrbot_sdk.session_waiter import SessionController, session_waiter
+from astrbot_sdk.star_tools import StarTools
+from astrbot_sdk.plugin_kv import PluginKVStoreMixin
+```
+
+---
+
 ## CancelToken - 取消令牌
 
 请求取消令牌，用于协调长时间运行操作的取消。
@@ -1030,34 +1058,6 @@ class MyPlugin(Star, PluginKVStoreMixin):
         # 删除配置
         await self.delete_kv_data(f"config_{key}")
         await event.reply(f"配置已删除: {key}")
-```
-
----
-
-## 导入方式
-
-```python
-# 从主模块导入
-from astrbot_sdk import (
-    CancelToken,
-    MessageSession,
-    GreedyStr,
-    ScheduleContext,
-    SessionController,
-    session_waiter,
-    StarTools,
-    PluginKVStoreMixin,
-)
-
-# 从子模块导入
-from astrbot_sdk.context import CancelToken
-from astrbot_sdk.message_session import MessageSession
-from astrbot_sdk.types import GreedyStr
-from astrbot_sdk.commands import CommandGroup, command_group, print_cmd_tree
-from astrbot_sdk.schedule import ScheduleContext
-from astrbot_sdk.session_waiter import SessionController, session_waiter
-from astrbot_sdk.star_tools import StarTools
-from astrbot_sdk.plugin_kv import PluginKVStoreMixin
 ```
 
 ---

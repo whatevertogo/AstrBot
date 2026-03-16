@@ -20,6 +20,39 @@
 
 ---
 
+## 导入方式
+
+```python
+# 从主模块导入（推荐）
+from astrbot_sdk.decorators import (
+    # 事件触发
+    on_command,
+    on_message,
+    on_event,
+    on_schedule,
+    # 修饰器
+    require_admin,
+    # 过滤器
+    platforms,
+    message_types,
+    group_only,
+    private_only,
+    # 限制器
+    rate_limit,
+    cooldown,
+    # 能力暴露
+    provide_capability,
+    # LLM 工具
+    register_llm_tool,
+    register_agent,
+)
+
+# 或者按需导入
+from astrbot_sdk.decorators import on_command, on_message
+```
+
+---
+
 ## 事件触发装饰器
 
 ### @on_command

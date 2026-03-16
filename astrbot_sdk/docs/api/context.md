@@ -45,6 +45,23 @@ class Context:
 
 ---
 
+## 导入方式
+
+```python
+# 从主模块导入（推荐）
+from astrbot_sdk import Context
+
+# 从子模块导入
+from astrbot_sdk.context import Context
+
+# 常用配套导入
+from astrbot_sdk import MessageEvent  # 消息事件
+from astrbot_sdk.decorators import on_command, on_message  # 装饰器
+from astrbot_sdk.clients.llm import ChatMessage  # 聊天消息（用于历史记录）
+```
+
+---
+
 ## 基本属性
 
 ### `peer`
