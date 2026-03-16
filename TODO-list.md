@@ -21,7 +21,7 @@
 | HTTP Client | 3 | 3 | 0 | 0 | 0 | 100% |
 | MessageEvent | 40 | 33 | 0 | 7 | 0 | 83% |
 | 装饰器/触发器 | 17 | 13 | 0 | 2 | 2 | 76% |
-| 事件类型 | 14 | 4 | 0 | 10 | 0 | 29% |
+| 事件类型 | 14 | 14 | 0 | 0 | 0 | 100% |
 | 消息组件 | 22 | 10 | 0 | 12 | 0 | 45% |
 | Legacy Context | 22 | 8 | 0 | 14 | 0 | 36% |
 | 工具方法 | 6 | 4 | 0 | 2 | 0 | 67% |
@@ -33,7 +33,7 @@
 | TTS/STT/Embedding | 6 | 0 | 0 | 6 | 0 | 0% |
 | Platform实体 | 12 | 0 | 0 | 12 | 0 | 0% |
 | Agent运行器 | 7 | 0 | 0 | 7 | 0 | 0% |
-| Handler注册表 | 5 | 0 | 0 | 5 | 0 | 0% |
+| Handler注册表 | 5 | 5 | 0 | 0 | 0 | 100% |
 | SDK扩展能力 | 19 | 2 | 0 | 17 | 0 | 11% |
 | 其他系统能力 | 52 | 7 | 0 | 44 | 1 | 14% |
 | **Star基类扩展** | **7** | **4** | **1** | **2** | **0** | **64%** |
@@ -45,7 +45,7 @@
 | **消息类型过滤** | **7** | **7** | **0** | **0** | **0** | **100%** |
 | **PluginKVStoreMixin** | **5** | **0** | **0** | **5** | **0** | **0%** |
 | **StarMetadata字段** | **2** | **0** | **0** | **2** | **0** | **0%** |
-| **总计** | **334** | **142** | **2** | **181** | **4** | **43%** |
+| **总计** | **334** | **157** | **2** | **171** | **4** | **47%** |
 
 > 注：覆盖率 = `(已实现 + 部分实现 × 0.5) / 总计`，⚠️ 表示SDK已定义但Core端未实现
 >
@@ -693,12 +693,12 @@
 5. **平台/消息类型过滤** - ✅ `PlatformFilter`, ✅ `MessageTypeFilter`
 6. **命令别名** - ✅ `@on_command(aliases=[])`
 
-#### P0.4 - 事件与处理主链
-1. **完整事件类型** - `waiting_llm_request`, `llm_request`, `llm_response`, `decorating_result`, `calling_func_tool`, `using_llm_tool`, `llm_tool_respond`, `plugin_error`, `plugin_loaded`, `plugin_unloaded`
-2. **默认 LLM 控制** - `request_llm()`, `should_call_llm()`
-3. **结果控制** - `set_result()`, `get_result()`, `clear_result()`
-4. **Handler 注册表与可观测性** - `StarHandlerRegistry`, `get_handlers_by_event_type()`, `get_handler_by_full_name()`
-5. **Handler 白名单** - 按插件名称过滤
+#### P0.4 - 事件与处理主链 ✅ 已完成
+1. **完整事件类型** - ✅ `waiting_llm_request`, ✅ `llm_request`, ✅ `llm_response`, ✅ `decorating_result`, ✅ `calling_func_tool`, ✅ `using_llm_tool`, ✅ `llm_tool_respond`, ✅ `plugin_error`, ✅ `plugin_loaded`, ✅ `plugin_unloaded`
+2. **默认 LLM 控制** - ✅ `request_llm()`, ✅ `should_call_llm()`
+3. **结果控制** - ✅ `set_result()`, ✅ `get_result()`, ✅ `clear_result()`
+4. **Handler 注册表与可观测性** - ✅ `RegistryClient`, ✅ `get_handlers_by_event_type()`, ✅ `get_handler_by_full_name()`
+5. **Handler 白名单** - ✅ `set_handler_whitelist()`, ✅ `get_handler_whitelist()`, ✅ `clear_handler_whitelist()` 按插件名称过滤
 
 #### P0.5 - LLM、工具与 Provider 使用能力
 1. **Agent 运行器** - `BaseAgentRunner`, `tool_loop_agent()`
