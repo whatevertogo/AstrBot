@@ -21,7 +21,7 @@ Attributes:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Iterable, Sequence
+from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -39,6 +39,7 @@ from .clients import (
 )
 from .clients._proxy import CapabilityProxy
 from .clients.llm import LLMResponse
+from .clients.provider import ProviderClient
 from .clients.session import SessionPluginManager, SessionServiceManager
 from .errors import AstrBotError
 from .llm.entities import LLMToolSpec, ProviderMeta, ProviderRequest
@@ -156,6 +157,7 @@ class Context:
         memory: 记忆客户端
         db: 数据库客户端
         platform: 平台客户端
+        providers: Provider 客户端
         http: HTTP 客户端
         metadata: 元数据客户端
         plugin_id: 当前插件 ID
@@ -187,6 +189,7 @@ class Context:
         self.memory = MemoryClient(proxy)
         self.db = DBClient(proxy)
         self.platform = PlatformClient(proxy)
+        self.providers = ProviderClient(proxy)
         self.http = HTTPClient(proxy)
         self.metadata = MetadataClient(proxy, plugin_id)
         self.registry = RegistryClient(proxy)
@@ -199,17 +202,6 @@ class Context:
         self._source_event_payload = (
             dict(source_event_payload) if isinstance(source_event_payload, dict) else {}
         )
-
-    @staticmethod
-    def _provider_meta_list(items: Iterable[Any]) -> list[ProviderMeta]:
-        providers: list[ProviderMeta] = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            provider = ProviderMeta.from_payload(item)
-            if provider is not None:
-                providers.append(provider)
-        return providers
 
     async def get_data_dir(self) -> Path:
         """Return the plugin-scoped data directory path."""
@@ -250,8 +242,7 @@ class Context:
         return str(output.get("result", ""))
 
     async def get_using_provider(self, umo: str | None = None) -> ProviderMeta | None:
-        output = await self._proxy.call("provider.get_using", {"umo": umo})
-        return ProviderMeta.from_payload(output.get("provider"))
+        return await self.providers.get_using_chat(umo)
 
     async def get_current_chat_provider_id(self, umo: str | None = None) -> str | None:
         output = await self._proxy.call(
@@ -262,32 +253,31 @@ class Context:
         return str(value) if value else None
 
     async def get_all_providers(self) -> list[ProviderMeta]:
-        output = await self._proxy.call("provider.list_all", {})
-        return self._provider_meta_list(output.get("providers", []))
+        return await self.providers.list_all()
 
     async def get_all_tts_providers(self) -> list[ProviderMeta]:
-        output = await self._proxy.call("provider.list_all_tts", {})
-        return self._provider_meta_list(output.get("providers", []))
+        return await self.providers.list_tts()
 
     async def get_all_stt_providers(self) -> list[ProviderMeta]:
-        output = await self._proxy.call("provider.list_all_stt", {})
-        return self._provider_meta_list(output.get("providers", []))
+        return await self.providers.list_stt()
 
     async def get_all_embedding_providers(self) -> list[ProviderMeta]:
-        output = await self._proxy.call("provider.list_all_embedding", {})
-        return self._provider_meta_list(output.get("providers", []))
+        return await self.providers.list_embedding()
+
+    async def get_all_rerank_providers(self) -> list[ProviderMeta]:
+        return await self.providers.list_rerank()
 
     async def get_using_tts_provider(
         self, umo: str | None = None
     ) -> ProviderMeta | None:
-        output = await self._proxy.call("provider.get_using_tts", {"umo": umo})
-        return ProviderMeta.from_payload(output.get("provider"))
+        provider = await self.providers.get_using_tts(umo)
+        return provider.meta() if provider is not None else None
 
     async def get_using_stt_provider(
         self, umo: str | None = None
     ) -> ProviderMeta | None:
-        output = await self._proxy.call("provider.get_using_stt", {"umo": umo})
-        return ProviderMeta.from_payload(output.get("provider"))
+        provider = await self.providers.get_using_stt(umo)
+        return provider.meta() if provider is not None else None
 
     def get_llm_tool_manager(self) -> LLMToolManager:
         return self._llm_tool_manager

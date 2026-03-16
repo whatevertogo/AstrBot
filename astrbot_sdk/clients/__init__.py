@@ -12,6 +12,7 @@ capability clients so `Context` keeps a narrow, stable surface.
     - MemoryClient: 记忆搜索、保存、读取、删除
     - DBClient: 键值存储 get/set/delete/list
     - PlatformClient: 平台消息发送与成员查询
+    - ProviderClient: Provider 元信息与专用 provider proxy
     - HTTPClient: Web API 注册
     - MetadataClient: 插件元数据查询
 """
@@ -22,6 +23,7 @@ from .llm import ChatMessage, LLMClient, LLMResponse
 from .memory import MemoryClient
 from .metadata import MetadataClient, PluginMetadata
 from .platform import PlatformClient
+from .provider import ProviderClient
 from .registry import HandlerMetadata, RegistryClient
 from .session import SessionPluginManager, SessionServiceManager
 
@@ -34,6 +36,7 @@ __all__ = [
     "MemoryClient",
     "MetadataClient",
     "PlatformClient",
+    "ProviderClient",
     "PluginMetadata",
     "HandlerMetadata",
     "RegistryClient",

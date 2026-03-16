@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import contextlib
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -48,6 +50,17 @@ def _get_runtime_tool_types():
     from astrbot.core.agent.tool import FunctionTool, ToolSet
 
     return FunctionTool, ToolSet
+
+
+def _get_runtime_provider_types():
+    from astrbot.core.provider.provider import (
+        EmbeddingProvider,
+        RerankProvider,
+        STTProvider,
+        TTSProvider,
+    )
+
+    return STTProvider, TTSProvider, EmbeddingProvider, RerankProvider
 
 
 @dataclass(slots=True)
@@ -1009,6 +1022,15 @@ class CoreCapabilityBridge(CapabilityRouter):
             return {"provider_id": None}
         return {"provider_id": str(provider.meta().id)}
 
+    async def _provider_get_by_id(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        provider = self._get_provider_by_id(payload, "provider.get_by_id")
+        return {"provider": self._provider_to_payload(provider)}
+
     def _provider_list_payload(self, providers: list[Any]) -> dict[str, Any]:
         return {
             "providers": [
@@ -1054,6 +1076,14 @@ class CoreCapabilityBridge(CapabilityRouter):
             self._star_context.get_all_embedding_providers()
         )
 
+    async def _provider_list_all_rerank(
+        self,
+        _request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        return self._provider_list_payload(self._star_context.get_all_rerank_providers())
+
     async def _provider_get_using_tts(
         self,
         _request_id: str,
@@ -1071,6 +1101,253 @@ class CoreCapabilityBridge(CapabilityRouter):
     ) -> dict[str, Any]:
         provider = self._star_context.get_using_stt_provider(payload.get("umo"))
         return {"provider": self._provider_to_payload(provider)}
+
+    @staticmethod
+    def _tts_stream_texts_from_payload(payload: dict[str, Any]) -> list[str]:
+        text = payload.get("text")
+        if isinstance(text, str):
+            return [text]
+        text_chunks = payload.get("text_chunks")
+        if isinstance(text_chunks, list):
+            chunks = [str(item) for item in text_chunks]
+            if chunks:
+                return chunks
+        raise AstrBotError.invalid_input(
+            "provider.tts.get_audio_stream requires text or text_chunks"
+        )
+
+    def _get_provider_by_id(
+        self,
+        payload: dict[str, Any],
+        capability_name: str,
+    ) -> Any:
+        provider_id = str(payload.get("provider_id", "")).strip()
+        if not provider_id:
+            raise AstrBotError.invalid_input(
+                f"{capability_name} requires provider_id",
+            )
+        provider = self._star_context.get_provider_by_id(provider_id)
+        if provider is None:
+            raise AstrBotError.invalid_input(
+                f"{capability_name} unknown provider_id: {provider_id}",
+            )
+        return provider
+
+    def _get_typed_provider(
+        self,
+        payload: dict[str, Any],
+        capability_name: str,
+        provider_label: str,
+        expected_type: type[Any],
+    ) -> Any:
+        provider = self._get_provider_by_id(payload, capability_name)
+        if not isinstance(provider, expected_type):
+            raise AstrBotError.invalid_input(
+                f"{capability_name} requires a {provider_label} provider",
+            )
+        return provider
+
+    async def _provider_stt_get_text(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        stt_provider_cls, _, _, _ = _get_runtime_provider_types()
+        provider = self._get_typed_provider(
+            payload,
+            "provider.stt.get_text",
+            "speech_to_text",
+            stt_provider_cls,
+        )
+        return {"text": await provider.get_text(str(payload.get("audio_url", "")))}
+
+    async def _provider_tts_get_audio(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        _, tts_provider_cls, _, _ = _get_runtime_provider_types()
+        provider = self._get_typed_provider(
+            payload,
+            "provider.tts.get_audio",
+            "text_to_speech",
+            tts_provider_cls,
+        )
+        return {"audio_path": await provider.get_audio(str(payload.get("text", "")))}
+
+    async def _provider_tts_support_stream(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        _, tts_provider_cls, _, _ = _get_runtime_provider_types()
+        provider = self._get_typed_provider(
+            payload,
+            "provider.tts.support_stream",
+            "text_to_speech",
+            tts_provider_cls,
+        )
+        return {"supported": bool(provider.support_stream())}
+
+    async def _provider_tts_get_audio_stream(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        token,
+    ) -> StreamExecution:
+        _, tts_provider_cls, _, _ = _get_runtime_provider_types()
+        provider = self._get_typed_provider(
+            payload,
+            "provider.tts.get_audio_stream",
+            "text_to_speech",
+            tts_provider_cls,
+        )
+        texts = self._tts_stream_texts_from_payload(payload)
+        text_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        audio_queue: asyncio.Queue[bytes | tuple[str, bytes] | None] = asyncio.Queue()
+        for text in texts:
+            await text_queue.put(text)
+        await text_queue.put(None)
+        state: dict[str, BaseException] = {}
+
+        async def producer() -> None:
+            try:
+                await provider.get_audio_stream(text_queue, audio_queue)
+            except Exception as exc:  # pragma: no cover - provider-specific failures
+                state["error"] = exc
+            finally:
+                await audio_queue.put(None)
+
+        task = asyncio.create_task(producer())
+
+        async def iterator() -> AsyncIterator[dict[str, Any]]:
+            try:
+                while True:
+                    token.raise_if_cancelled()
+                    item = await audio_queue.get()
+                    if item is None:
+                        break
+                    chunk_text: str | None = None
+                    chunk_audio: bytes | bytearray
+                    if isinstance(item, tuple):
+                        chunk_text = str(item[0])
+                        chunk_audio = item[1]
+                    else:
+                        chunk_audio = item
+                    yield {
+                        "audio_base64": base64.b64encode(bytes(chunk_audio)).decode(
+                            "ascii"
+                        ),
+                        "text": chunk_text,
+                    }
+                error = state.get("error")
+                if error is not None:
+                    raise error
+            finally:
+                if not task.done():
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+                else:
+                    with contextlib.suppress(Exception):
+                        await task
+
+        def finalize(chunks: list[dict[str, Any]]) -> dict[str, Any]:
+            return chunks[-1] if chunks else {"audio_base64": "", "text": None}
+
+        return StreamExecution(iterator=iterator(), finalize=finalize)
+
+    async def _provider_embedding_get_embedding(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        _, _, embedding_provider_cls, _ = _get_runtime_provider_types()
+        provider = self._get_typed_provider(
+            payload,
+            "provider.embedding.get_embedding",
+            "embedding",
+            embedding_provider_cls,
+        )
+        return {"embedding": await provider.get_embedding(str(payload.get("text", "")))}
+
+    async def _provider_embedding_get_embeddings(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        _, _, embedding_provider_cls, _ = _get_runtime_provider_types()
+        provider = self._get_typed_provider(
+            payload,
+            "provider.embedding.get_embeddings",
+            "embedding",
+            embedding_provider_cls,
+        )
+        texts = payload.get("texts")
+        if not isinstance(texts, list):
+            raise AstrBotError.invalid_input(
+                "provider.embedding.get_embeddings requires texts",
+            )
+        return {"embeddings": await provider.get_embeddings([str(item) for item in texts])}
+
+    async def _provider_embedding_get_dim(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        _, _, embedding_provider_cls, _ = _get_runtime_provider_types()
+        provider = self._get_typed_provider(
+            payload,
+            "provider.embedding.get_dim",
+            "embedding",
+            embedding_provider_cls,
+        )
+        return {"dim": int(provider.get_dim())}
+
+    async def _provider_rerank_rerank(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        _, _, _, rerank_provider_cls = _get_runtime_provider_types()
+        provider = self._get_typed_provider(
+            payload,
+            "provider.rerank.rerank",
+            "rerank",
+            rerank_provider_cls,
+        )
+        documents = payload.get("documents")
+        if not isinstance(documents, list):
+            raise AstrBotError.invalid_input(
+                "provider.rerank.rerank requires documents",
+            )
+        normalized_documents = [str(item) for item in documents]
+        top_n = payload.get("top_n")
+        results = await provider.rerank(
+            str(payload.get("query", "")),
+            normalized_documents,
+            int(top_n) if top_n is not None else None,
+        )
+        serialized = []
+        for item in results:
+            index = int(getattr(item, "index", 0))
+            serialized.append(
+                {
+                    "index": index,
+                    "score": float(getattr(item, "relevance_score", 0.0)),
+                    "document": normalized_documents[index]
+                    if 0 <= index < len(normalized_documents)
+                    else "",
+                }
+            )
+        return {"results": serialized}
 
     async def _llm_tool_manager_get(
         self,
@@ -1538,6 +1815,10 @@ class CoreCapabilityBridge(CapabilityRouter):
             call_handler=self._provider_get_using,
         )
         self.register(
+            self._builtin_descriptor("provider.get_by_id", "Get provider by id"),
+            call_handler=self._provider_get_by_id,
+        )
+        self.register(
             self._builtin_descriptor(
                 "provider.get_current_chat_provider_id",
                 "Get active chat provider id",
@@ -1565,6 +1846,13 @@ class CoreCapabilityBridge(CapabilityRouter):
         )
         self.register(
             self._builtin_descriptor(
+                "provider.list_all_rerank",
+                "List rerank providers",
+            ),
+            call_handler=self._provider_list_all_rerank,
+        )
+        self.register(
+            self._builtin_descriptor(
                 "provider.get_using_tts",
                 "Get active tts provider",
             ),
@@ -1576,6 +1864,64 @@ class CoreCapabilityBridge(CapabilityRouter):
                 "Get active stt provider",
             ),
             call_handler=self._provider_get_using_stt,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.stt.get_text",
+                "Transcribe audio with STT provider",
+            ),
+            call_handler=self._provider_stt_get_text,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.tts.get_audio",
+                "Synthesize audio with TTS provider",
+            ),
+            call_handler=self._provider_tts_get_audio,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.tts.support_stream",
+                "Check whether TTS provider supports native streaming",
+            ),
+            call_handler=self._provider_tts_support_stream,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.tts.get_audio_stream",
+                "Stream audio with TTS provider",
+                supports_stream=True,
+                cancelable=True,
+            ),
+            stream_handler=self._provider_tts_get_audio_stream,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.embedding.get_embedding",
+                "Get embedding vector",
+            ),
+            call_handler=self._provider_embedding_get_embedding,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.embedding.get_embeddings",
+                "Get embedding vectors in batch",
+            ),
+            call_handler=self._provider_embedding_get_embeddings,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.embedding.get_dim",
+                "Get embedding dimension",
+            ),
+            call_handler=self._provider_embedding_get_dim,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.rerank.rerank",
+                "Rerank documents",
+            ),
+            call_handler=self._provider_rerank_rerank,
         )
         self.register(
             self._builtin_descriptor(

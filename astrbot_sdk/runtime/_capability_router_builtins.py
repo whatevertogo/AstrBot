@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
 import json
 from collections.abc import AsyncIterator
@@ -772,11 +773,50 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
                 return dict(item)
         return None
 
+    def _provider_payload_by_id(self, provider_id: str) -> dict[str, Any] | None:
+        normalized = str(provider_id).strip()
+        if not normalized:
+            return None
+        for items in self._provider_catalog.values():
+            for item in items:
+                if str(item.get("id", "")) == normalized:
+                    return dict(item)
+        return None
+
+    def _provider_entry(
+        self,
+        payload: dict[str, Any],
+        capability_name: str,
+        expected_kind: str | None = None,
+    ) -> dict[str, Any]:
+        provider_id = str(payload.get("provider_id", "")).strip()
+        if not provider_id:
+            raise AstrBotError.invalid_input(
+                f"{capability_name} requires provider_id",
+            )
+        provider = self._provider_payload_by_id(provider_id)
+        if provider is None:
+            raise AstrBotError.invalid_input(
+                f"{capability_name} unknown provider_id: {provider_id}",
+            )
+        if expected_kind is not None and str(provider.get("provider_type")) != expected_kind:
+            raise AstrBotError.invalid_input(
+                f"{capability_name} requires a {expected_kind} provider",
+            )
+        return provider
+
     async def _provider_get_using(
         self, _request_id: str, payload: dict[str, Any], _token
     ) -> dict[str, Any]:
         provider_id = self._active_provider_ids.get("chat")
         return {"provider": self._provider_payload("chat", provider_id)}
+
+    async def _provider_get_by_id(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        return {
+            "provider": self._provider_payload_by_id(str(payload.get("provider_id", "")))
+        }
 
     async def _provider_get_current_chat_provider_id(
         self, _request_id: str, payload: dict[str, Any], _token
@@ -808,6 +848,11 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
     ) -> dict[str, Any]:
         return self._provider_list_payload("embedding")
 
+    async def _provider_list_all_rerank(
+        self, _request_id: str, _payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        return self._provider_list_payload("rerank")
+
     async def _provider_get_using_tts(
         self, _request_id: str, _payload: dict[str, Any], _token
     ) -> dict[str, Any]:
@@ -819,6 +864,143 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
     ) -> dict[str, Any]:
         provider_id = self._active_provider_ids.get("stt")
         return {"provider": self._provider_payload("stt", provider_id)}
+
+    async def _provider_stt_get_text(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        self._provider_entry(
+            payload,
+            "provider.stt.get_text",
+            "speech_to_text",
+        )
+        return {"text": f"Mock transcript: {str(payload.get('audio_url', ''))}"}
+
+    async def _provider_tts_get_audio(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        provider = self._provider_entry(
+            payload,
+            "provider.tts.get_audio",
+            "text_to_speech",
+        )
+        return {
+            "audio_path": (
+                f"mock://tts/{provider.get('id', '')}/{str(payload.get('text', ''))}"
+            )
+        }
+
+    async def _provider_tts_support_stream(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        provider = self._provider_entry(
+            payload,
+            "provider.tts.support_stream",
+            "text_to_speech",
+        )
+        return {"supported": bool(provider.get("support_stream", True))}
+
+    async def _provider_tts_get_audio_stream(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        token,
+    ) -> StreamExecution:
+        self._provider_entry(
+            payload,
+            "provider.tts.get_audio_stream",
+            "text_to_speech",
+        )
+        text = payload.get("text")
+        text_chunks = payload.get("text_chunks")
+        if isinstance(text, str):
+            chunks = [text]
+        elif isinstance(text_chunks, list) and text_chunks:
+            chunks = [str(item) for item in text_chunks]
+        else:
+            raise AstrBotError.invalid_input(
+                "provider.tts.get_audio_stream requires text or text_chunks"
+            )
+
+        async def iterator() -> AsyncIterator[dict[str, Any]]:
+            for chunk in chunks:
+                token.raise_if_cancelled()
+                await asyncio.sleep(0)
+                yield {
+                    "audio_base64": base64.b64encode(
+                        f"mock-audio:{chunk}".encode()
+                    ).decode("ascii"),
+                    "text": chunk,
+                }
+
+        return StreamExecution(
+            iterator=iterator(),
+            finalize=lambda items: items[-1]
+            if items
+            else {"audio_base64": "", "text": None},
+        )
+
+    async def _provider_embedding_get_embedding(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        self._provider_entry(
+            payload,
+            "provider.embedding.get_embedding",
+            "embedding",
+        )
+        return {"embedding": [0.0, 0.0, 0.0]}
+
+    async def _provider_embedding_get_embeddings(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        self._provider_entry(
+            payload,
+            "provider.embedding.get_embeddings",
+            "embedding",
+        )
+        texts = payload.get("texts")
+        if not isinstance(texts, list):
+            raise AstrBotError.invalid_input(
+                "provider.embedding.get_embeddings requires texts",
+            )
+        return {
+            "embeddings": [[0.0, 0.0, 0.0] for _ in texts],
+        }
+
+    async def _provider_embedding_get_dim(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        self._provider_entry(
+            payload,
+            "provider.embedding.get_dim",
+            "embedding",
+        )
+        return {"dim": 3}
+
+    async def _provider_rerank_rerank(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        self._provider_entry(
+            payload,
+            "provider.rerank.rerank",
+            "rerank",
+        )
+        documents = payload.get("documents")
+        if not isinstance(documents, list):
+            raise AstrBotError.invalid_input(
+                "provider.rerank.rerank requires documents",
+            )
+        scored = [
+            {
+                "index": index,
+                "score": 1.0,
+                "document": str(raw_document),
+            }
+            for index, raw_document in enumerate(documents)
+        ]
+        top_n = payload.get("top_n")
+        if top_n is not None:
+            scored = scored[: max(int(top_n), 0)]
+        return {"results": scored}
 
     async def _llm_tool_manager_get(
         self, _request_id: str, _payload: dict[str, Any], _token
@@ -948,6 +1130,10 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
             call_handler=self._provider_get_using,
         )
         self.register(
+            self._builtin_descriptor("provider.get_by_id", "按 ID 获取 Provider"),
+            call_handler=self._provider_get_by_id,
+        )
+        self.register(
             self._builtin_descriptor(
                 "provider.get_current_chat_provider_id",
                 "获取当前聊天 Provider ID",
@@ -974,12 +1160,68 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
             call_handler=self._provider_list_all_embedding,
         )
         self.register(
+            self._builtin_descriptor(
+                "provider.list_all_rerank",
+                "列出 Rerank Providers",
+            ),
+            call_handler=self._provider_list_all_rerank,
+        )
+        self.register(
             self._builtin_descriptor("provider.get_using_tts", "获取当前 TTS Provider"),
             call_handler=self._provider_get_using_tts,
         )
         self.register(
             self._builtin_descriptor("provider.get_using_stt", "获取当前 STT Provider"),
             call_handler=self._provider_get_using_stt,
+        )
+        self.register(
+            self._builtin_descriptor("provider.stt.get_text", "STT 转写"),
+            call_handler=self._provider_stt_get_text,
+        )
+        self.register(
+            self._builtin_descriptor("provider.tts.get_audio", "TTS 合成音频"),
+            call_handler=self._provider_tts_get_audio,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.tts.support_stream",
+                "检查 TTS 流式支持",
+            ),
+            call_handler=self._provider_tts_support_stream,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.tts.get_audio_stream",
+                "流式 TTS 音频输出",
+                supports_stream=True,
+                cancelable=True,
+            ),
+            stream_handler=self._provider_tts_get_audio_stream,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.embedding.get_embedding",
+                "获取单条向量",
+            ),
+            call_handler=self._provider_embedding_get_embedding,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.embedding.get_embeddings",
+                "批量获取向量",
+            ),
+            call_handler=self._provider_embedding_get_embeddings,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.embedding.get_dim",
+                "获取向量维度",
+            ),
+            call_handler=self._provider_embedding_get_dim,
+        )
+        self.register(
+            self._builtin_descriptor("provider.rerank.rerank", "文档重排序"),
+            call_handler=self._provider_rerank_rerank,
         )
         self.register(
             self._builtin_descriptor("llm_tool.manager.get", "获取 LLM 工具状态"),

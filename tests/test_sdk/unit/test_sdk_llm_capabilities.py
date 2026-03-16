@@ -1,6 +1,7 @@
 # ruff: noqa: E402
 from __future__ import annotations
 
+import base64
 import sys
 import types
 from types import SimpleNamespace
@@ -109,9 +110,11 @@ class _FakeStarContext:
         *,
         provider_by_id: _FakeProvider | None = None,
         using_provider: _FakeProvider | None = None,
+        rerank_providers: list[object] | None = None,
     ) -> None:
         self._provider_by_id = provider_by_id
         self._using_provider = using_provider
+        self._rerank_providers = rerank_providers or []
         self.provider_by_id_calls: list[str] = []
         self.using_provider_calls: list[str | None] = []
 
@@ -123,6 +126,9 @@ class _FakeStarContext:
         self.using_provider_calls.append(umo)
         return self._using_provider
 
+    def get_all_rerank_providers(self):
+        return list(self._rerank_providers)
+
 
 class _FakePluginBridge:
     def __init__(self, umo: str = "umo:test") -> None:
@@ -132,6 +138,78 @@ class _FakePluginBridge:
 
     def resolve_request_session(self, _request_id: str):
         return self._request_context
+
+
+class _FakeSTTProvider:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def get_text(self, audio_url: str) -> str:
+        self.calls.append(audio_url)
+        return f"text:{audio_url}"
+
+
+class _FakeTTSProvider:
+    def __init__(self, *, support_stream: bool = True) -> None:
+        self.support_stream_value = support_stream
+        self.get_audio_calls: list[str] = []
+        self.stream_inputs: list[str] = []
+
+    def support_stream(self) -> bool:
+        return self.support_stream_value
+
+    async def get_audio(self, text: str) -> str:
+        self.get_audio_calls.append(text)
+        return f"/tmp/{text}.wav"
+
+    async def get_audio_stream(self, text_queue, audio_queue) -> None:
+        while True:
+            item = await text_queue.get()
+            if item is None:
+                break
+            self.stream_inputs.append(item)
+            await audio_queue.put((item, f"audio:{item}".encode()))
+        await audio_queue.put(None)
+
+
+class _FakeEmbeddingProvider:
+    def __init__(self) -> None:
+        self.single_calls: list[str] = []
+        self.batch_calls: list[list[str]] = []
+
+    async def get_embedding(self, text: str) -> list[float]:
+        self.single_calls.append(text)
+        return [0.1, 0.2]
+
+    async def get_embeddings(self, texts: list[str]) -> list[list[float]]:
+        self.batch_calls.append(list(texts))
+        return [[float(index), float(index + 1)] for index, _ in enumerate(texts)]
+
+    def get_dim(self) -> int:
+        return 2
+
+
+class _FakeRerankItem:
+    def __init__(self, index: int, relevance_score: float) -> None:
+        self.index = index
+        self.relevance_score = relevance_score
+
+
+class _FakeRerankProvider:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[str], int | None]] = []
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        top_n: int | None = None,
+    ) -> list[_FakeRerankItem]:
+        self.calls.append((query, list(documents), top_n))
+        return [
+            _FakeRerankItem(index=1, relevance_score=0.9),
+            _FakeRerankItem(index=0, relevance_score=0.3),
+        ]
 
 
 @pytest.mark.unit
@@ -415,3 +493,118 @@ async def test_core_llm_stream_chat_does_not_swallow_non_not_implemented_errors(
 
     assert len(provider.text_chat_stream_calls) == 1
     assert provider.text_chat_calls == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_core_provider_bridge_specialized_capabilities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stt_provider = _FakeSTTProvider()
+    tts_provider = _FakeTTSProvider()
+    embedding_provider = _FakeEmbeddingProvider()
+    rerank_provider = _FakeRerankProvider()
+    monkeypatch.setattr(
+        "astrbot.core.sdk_bridge.capability_bridge._get_runtime_provider_types",
+        lambda: (
+            _FakeSTTProvider,
+            _FakeTTSProvider,
+            _FakeEmbeddingProvider,
+            _FakeRerankProvider,
+        ),
+    )
+
+    bridge = CoreCapabilityBridge(
+        star_context=_FakeStarContext(provider_by_id=stt_provider),
+        plugin_bridge=_FakePluginBridge(),
+    )
+    assert await bridge._provider_stt_get_text(
+        "req-stt",
+        {"provider_id": "stt-provider", "audio_url": "audio.wav"},
+        None,
+    ) == {"text": "text:audio.wav"}
+
+    bridge._star_context._provider_by_id = tts_provider
+    assert await bridge._provider_tts_get_audio(
+        "req-tts",
+        {"provider_id": "tts-provider", "text": "hello"},
+        None,
+    ) == {"audio_path": "/tmp/hello.wav"}
+    assert await bridge._provider_tts_support_stream(
+        "req-tts-support",
+        {"provider_id": "tts-provider"},
+        None,
+    ) == {"supported": True}
+
+    execution = await bridge._provider_tts_get_audio_stream(
+        "req-tts-stream",
+        {"provider_id": "tts-provider", "text_chunks": ["hello", "sdk"]},
+        _FakeToken(),
+    )
+    streamed = [item async for item in execution.iterator]
+    assert [item["text"] for item in streamed] == ["hello", "sdk"]
+    assert [
+        base64.b64decode(item["audio_base64"]) for item in streamed
+    ] == [b"audio:hello", b"audio:sdk"]
+    assert tts_provider.stream_inputs == ["hello", "sdk"]
+
+    bridge._star_context._provider_by_id = embedding_provider
+    assert await bridge._provider_embedding_get_embedding(
+        "req-embedding",
+        {"provider_id": "embedding-provider", "text": "hello"},
+        None,
+    ) == {"embedding": [0.1, 0.2]}
+    assert await bridge._provider_embedding_get_embeddings(
+        "req-embedding-many",
+        {"provider_id": "embedding-provider", "texts": ["a", "b"]},
+        None,
+    ) == {"embeddings": [[0.0, 1.0], [1.0, 2.0]]}
+    assert await bridge._provider_embedding_get_dim(
+        "req-embedding-dim",
+        {"provider_id": "embedding-provider"},
+        None,
+    ) == {"dim": 2}
+
+    bridge._star_context._provider_by_id = rerank_provider
+    assert await bridge._provider_rerank_rerank(
+        "req-rerank",
+        {
+            "provider_id": "rerank-provider",
+            "query": "hello",
+            "documents": ["doc-0", "doc-1"],
+            "top_n": 2,
+        },
+        None,
+    ) == {
+        "results": [
+            {"index": 1, "score": 0.9, "document": "doc-1"},
+            {"index": 0, "score": 0.3, "document": "doc-0"},
+        ]
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_core_provider_bridge_rejects_provider_type_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "astrbot.core.sdk_bridge.capability_bridge._get_runtime_provider_types",
+        lambda: (
+            _FakeSTTProvider,
+            _FakeTTSProvider,
+            _FakeEmbeddingProvider,
+            _FakeRerankProvider,
+        ),
+    )
+    bridge = CoreCapabilityBridge(
+        star_context=_FakeStarContext(provider_by_id=_FakeSTTProvider()),
+        plugin_bridge=_FakePluginBridge(),
+    )
+
+    with pytest.raises(AstrBotError, match="text_to_speech provider"):
+        await bridge._provider_tts_get_audio(
+            "req-mismatch",
+            {"provider_id": "wrong-provider", "text": "hello"},
+            None,
+        )

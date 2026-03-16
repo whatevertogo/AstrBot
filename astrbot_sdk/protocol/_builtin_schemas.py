@@ -522,6 +522,14 @@ PROVIDER_GET_USING_OUTPUT_SCHEMA = _object_schema(
     required=("provider",),
     provider=_nullable(PROVIDER_META_SCHEMA),
 )
+PROVIDER_GET_BY_ID_INPUT_SCHEMA = _object_schema(
+    required=("provider_id",),
+    provider_id={"type": "string"},
+)
+PROVIDER_GET_BY_ID_OUTPUT_SCHEMA = _object_schema(
+    required=("provider",),
+    provider=_nullable(PROVIDER_META_SCHEMA),
+)
 PROVIDER_GET_CURRENT_CHAT_PROVIDER_ID_INPUT_SCHEMA = _object_schema(
     umo=_nullable({"type": "string"}),
 )
@@ -533,6 +541,90 @@ PROVIDER_LIST_ALL_INPUT_SCHEMA = _object_schema()
 PROVIDER_LIST_ALL_OUTPUT_SCHEMA = _object_schema(
     required=("providers",),
     providers={"type": "array", "items": PROVIDER_META_SCHEMA},
+)
+PROVIDER_STT_GET_TEXT_INPUT_SCHEMA = _object_schema(
+    required=("provider_id", "audio_url"),
+    provider_id={"type": "string"},
+    audio_url={"type": "string"},
+)
+PROVIDER_STT_GET_TEXT_OUTPUT_SCHEMA = _object_schema(
+    required=("text",),
+    text={"type": "string"},
+)
+PROVIDER_TTS_GET_AUDIO_INPUT_SCHEMA = _object_schema(
+    required=("provider_id", "text"),
+    provider_id={"type": "string"},
+    text={"type": "string"},
+)
+PROVIDER_TTS_GET_AUDIO_OUTPUT_SCHEMA = _object_schema(
+    required=("audio_path",),
+    audio_path={"type": "string"},
+)
+PROVIDER_TTS_SUPPORT_STREAM_INPUT_SCHEMA = _object_schema(
+    required=("provider_id",),
+    provider_id={"type": "string"},
+)
+PROVIDER_TTS_SUPPORT_STREAM_OUTPUT_SCHEMA = _object_schema(
+    required=("supported",),
+    supported={"type": "boolean"},
+)
+PROVIDER_TTS_AUDIO_CHUNK_SCHEMA = _object_schema(
+    required=("audio_base64",),
+    audio_base64={"type": "string"},
+    text=_nullable({"type": "string"}),
+)
+PROVIDER_TTS_GET_AUDIO_STREAM_INPUT_SCHEMA = _object_schema(
+    required=("provider_id",),
+    provider_id={"type": "string"},
+    text=_nullable({"type": "string"}),
+    text_chunks={"type": "array", "items": {"type": "string"}},
+)
+PROVIDER_TTS_GET_AUDIO_STREAM_OUTPUT_SCHEMA = PROVIDER_TTS_AUDIO_CHUNK_SCHEMA
+PROVIDER_EMBEDDING_GET_INPUT_SCHEMA = _object_schema(
+    required=("provider_id", "text"),
+    provider_id={"type": "string"},
+    text={"type": "string"},
+)
+PROVIDER_EMBEDDING_GET_OUTPUT_SCHEMA = _object_schema(
+    required=("embedding",),
+    embedding={"type": "array", "items": {"type": "number"}},
+)
+PROVIDER_EMBEDDING_GET_MANY_INPUT_SCHEMA = _object_schema(
+    required=("provider_id", "texts"),
+    provider_id={"type": "string"},
+    texts={"type": "array", "items": {"type": "string"}},
+)
+PROVIDER_EMBEDDING_GET_MANY_OUTPUT_SCHEMA = _object_schema(
+    required=("embeddings",),
+    embeddings={
+        "type": "array",
+        "items": {"type": "array", "items": {"type": "number"}},
+    },
+)
+PROVIDER_EMBEDDING_GET_DIM_INPUT_SCHEMA = _object_schema(
+    required=("provider_id",),
+    provider_id={"type": "string"},
+)
+PROVIDER_EMBEDDING_GET_DIM_OUTPUT_SCHEMA = _object_schema(
+    required=("dim",),
+    dim={"type": "integer"},
+)
+PROVIDER_RERANK_RESULT_SCHEMA = _object_schema(
+    required=("index", "score", "document"),
+    index={"type": "integer"},
+    score={"type": "number"},
+    document={"type": "string"},
+)
+PROVIDER_RERANK_INPUT_SCHEMA = _object_schema(
+    required=("provider_id", "query", "documents"),
+    provider_id={"type": "string"},
+    query={"type": "string"},
+    documents={"type": "array", "items": {"type": "string"}},
+    top_n=_nullable({"type": "integer"}),
+)
+PROVIDER_RERANK_OUTPUT_SCHEMA = _object_schema(
+    required=("results",),
+    results={"type": "array", "items": PROVIDER_RERANK_RESULT_SCHEMA},
 )
 LLM_TOOL_MANAGER_GET_INPUT_SCHEMA = _object_schema()
 LLM_TOOL_MANAGER_GET_OUTPUT_SCHEMA = _object_schema(
@@ -740,6 +832,10 @@ BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
         "input": PROVIDER_GET_USING_INPUT_SCHEMA,
         "output": PROVIDER_GET_USING_OUTPUT_SCHEMA,
     },
+    "provider.get_by_id": {
+        "input": PROVIDER_GET_BY_ID_INPUT_SCHEMA,
+        "output": PROVIDER_GET_BY_ID_OUTPUT_SCHEMA,
+    },
     "provider.get_current_chat_provider_id": {
         "input": PROVIDER_GET_CURRENT_CHAT_PROVIDER_ID_INPUT_SCHEMA,
         "output": PROVIDER_GET_CURRENT_CHAT_PROVIDER_ID_OUTPUT_SCHEMA,
@@ -760,6 +856,10 @@ BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
         "input": PROVIDER_LIST_ALL_INPUT_SCHEMA,
         "output": PROVIDER_LIST_ALL_OUTPUT_SCHEMA,
     },
+    "provider.list_all_rerank": {
+        "input": PROVIDER_LIST_ALL_INPUT_SCHEMA,
+        "output": PROVIDER_LIST_ALL_OUTPUT_SCHEMA,
+    },
     "provider.get_using_tts": {
         "input": PROVIDER_GET_USING_INPUT_SCHEMA,
         "output": PROVIDER_GET_USING_OUTPUT_SCHEMA,
@@ -767,6 +867,38 @@ BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
     "provider.get_using_stt": {
         "input": PROVIDER_GET_USING_INPUT_SCHEMA,
         "output": PROVIDER_GET_USING_OUTPUT_SCHEMA,
+    },
+    "provider.stt.get_text": {
+        "input": PROVIDER_STT_GET_TEXT_INPUT_SCHEMA,
+        "output": PROVIDER_STT_GET_TEXT_OUTPUT_SCHEMA,
+    },
+    "provider.tts.get_audio": {
+        "input": PROVIDER_TTS_GET_AUDIO_INPUT_SCHEMA,
+        "output": PROVIDER_TTS_GET_AUDIO_OUTPUT_SCHEMA,
+    },
+    "provider.tts.support_stream": {
+        "input": PROVIDER_TTS_SUPPORT_STREAM_INPUT_SCHEMA,
+        "output": PROVIDER_TTS_SUPPORT_STREAM_OUTPUT_SCHEMA,
+    },
+    "provider.tts.get_audio_stream": {
+        "input": PROVIDER_TTS_GET_AUDIO_STREAM_INPUT_SCHEMA,
+        "output": PROVIDER_TTS_GET_AUDIO_STREAM_OUTPUT_SCHEMA,
+    },
+    "provider.embedding.get_embedding": {
+        "input": PROVIDER_EMBEDDING_GET_INPUT_SCHEMA,
+        "output": PROVIDER_EMBEDDING_GET_OUTPUT_SCHEMA,
+    },
+    "provider.embedding.get_embeddings": {
+        "input": PROVIDER_EMBEDDING_GET_MANY_INPUT_SCHEMA,
+        "output": PROVIDER_EMBEDDING_GET_MANY_OUTPUT_SCHEMA,
+    },
+    "provider.embedding.get_dim": {
+        "input": PROVIDER_EMBEDDING_GET_DIM_INPUT_SCHEMA,
+        "output": PROVIDER_EMBEDDING_GET_DIM_OUTPUT_SCHEMA,
+    },
+    "provider.rerank.rerank": {
+        "input": PROVIDER_RERANK_INPUT_SCHEMA,
+        "output": PROVIDER_RERANK_OUTPUT_SCHEMA,
     },
     "llm_tool.manager.get": {
         "input": LLM_TOOL_MANAGER_GET_INPUT_SCHEMA,
@@ -920,11 +1052,31 @@ __all__ = [
     "METADATA_LIST_PLUGINS_OUTPUT_SCHEMA",
     "PROVIDER_GET_CURRENT_CHAT_PROVIDER_ID_INPUT_SCHEMA",
     "PROVIDER_GET_CURRENT_CHAT_PROVIDER_ID_OUTPUT_SCHEMA",
+    "PROVIDER_GET_BY_ID_INPUT_SCHEMA",
+    "PROVIDER_GET_BY_ID_OUTPUT_SCHEMA",
     "PROVIDER_GET_USING_INPUT_SCHEMA",
     "PROVIDER_GET_USING_OUTPUT_SCHEMA",
+    "PROVIDER_EMBEDDING_GET_DIM_INPUT_SCHEMA",
+    "PROVIDER_EMBEDDING_GET_DIM_OUTPUT_SCHEMA",
+    "PROVIDER_EMBEDDING_GET_INPUT_SCHEMA",
+    "PROVIDER_EMBEDDING_GET_MANY_INPUT_SCHEMA",
+    "PROVIDER_EMBEDDING_GET_MANY_OUTPUT_SCHEMA",
+    "PROVIDER_EMBEDDING_GET_OUTPUT_SCHEMA",
     "PROVIDER_LIST_ALL_INPUT_SCHEMA",
     "PROVIDER_LIST_ALL_OUTPUT_SCHEMA",
     "PROVIDER_META_SCHEMA",
+    "PROVIDER_RERANK_INPUT_SCHEMA",
+    "PROVIDER_RERANK_OUTPUT_SCHEMA",
+    "PROVIDER_RERANK_RESULT_SCHEMA",
+    "PROVIDER_STT_GET_TEXT_INPUT_SCHEMA",
+    "PROVIDER_STT_GET_TEXT_OUTPUT_SCHEMA",
+    "PROVIDER_TTS_AUDIO_CHUNK_SCHEMA",
+    "PROVIDER_TTS_GET_AUDIO_INPUT_SCHEMA",
+    "PROVIDER_TTS_GET_AUDIO_OUTPUT_SCHEMA",
+    "PROVIDER_TTS_GET_AUDIO_STREAM_INPUT_SCHEMA",
+    "PROVIDER_TTS_GET_AUDIO_STREAM_OUTPUT_SCHEMA",
+    "PROVIDER_TTS_SUPPORT_STREAM_INPUT_SCHEMA",
+    "PROVIDER_TTS_SUPPORT_STREAM_OUTPUT_SCHEMA",
     "LLM_TOOL_MANAGER_ACTIVATE_INPUT_SCHEMA",
     "LLM_TOOL_MANAGER_ACTIVATE_OUTPUT_SCHEMA",
     "LLM_TOOL_MANAGER_ADD_INPUT_SCHEMA",

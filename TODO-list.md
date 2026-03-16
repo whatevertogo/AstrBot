@@ -221,7 +221,7 @@
 - **P0.5**：LLM、工具与 Provider 使用能力 - ToolLoop/LLM Tool/TTS-STT-Embedding/Provider 查询
 - **P0.6**：平台与会话能力 - 跨会话发送/群组访问/会话级插件与服务开关
 - **P0.7**：Legacy Context 与开发者入口 - `register_commands`/`register_task`/`get_platform` 等迁移入口
-- **P1.1**：多媒体与专用 Provider - TTS/STT/Embedding/Rerank
+- **P1.1**：多媒体与专用 Provider（已实现 ✅）- TTS/STT/Embedding/Rerank
 - **P1.2**：高级管理器 - Persona/Conversation/KnowledgeBase
 - **P1.3**：Provider 与 Platform 管理面 - Provider CRUD/Platform 状态与统计/Webhook
 - **P1.4**：Star 兼容层与开发工具 - StarTools/PluginKVStoreMixin/StarMetadata/Star.context
@@ -762,11 +762,11 @@
 
 **说明**：这些能力旧系统里有，但不属于首批迁移阻塞项。它们仍然需要补齐，只是优先级低于 P0。
 
-#### P1.1 - 多媒体与专用 Provider
-1. **STTProvider** - `get_text(audio_url)`
-2. **TTSProvider** - `get_audio(text)`, `get_audio_stream()`, `support_stream()`
-3. **EmbeddingProvider** - 嵌入向量提供商
-4. **RerankProvider** - 重排序提供商
+#### P1.1 - 多媒体与专用 Provider ✅ 已完成
+1. **STTProvider** - ✅ `get_text(audio_url)`
+2. **TTSProvider** - ✅ `get_audio(text)`, ✅ `get_audio_stream()`, ✅ `support_stream()`
+3. **EmbeddingProvider** - ✅ 嵌入向量提供商
+4. **RerankProvider** - ✅ 重排序提供商
 
 #### P1.2 - 高级管理器
 1. **PersonaManager** - 人格管理器（`get_persona()`, `get_all_personas()`, `create_persona()`, `update_persona()`, `delete_persona()`）
@@ -862,7 +862,7 @@
   - **P0.7**：Legacy Context 与开发者入口
 
 - **P1**：旧系统有，但可排在首批迁移之后补齐
-  - **P1.1**：多媒体与专用 Provider
+  - **P1.1**：多媒体与专用 Provider（已实现 ✅）
   - **P1.2**：高级管理器
   - **P1.3**：Provider 与 Platform 管理面
   - **P1.4**：Star 兼容层与开发工具

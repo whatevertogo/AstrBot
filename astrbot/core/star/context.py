@@ -346,6 +346,10 @@ class Context:
         """获取所有用于 Embedding 任务的 Provider。"""
         return self.provider_manager.embedding_provider_insts
 
+    def get_all_rerank_providers(self) -> list[RerankProvider]:
+        """获取所有用于 Rerank 任务的 Provider。"""
+        return self.provider_manager.rerank_provider_insts
+
     def get_using_provider(self, umo: str | None = None) -> Provider | None:
         """获取当前使用的用于文本生成任务的 LLM Provider(Chat_Completion 类型)。
 

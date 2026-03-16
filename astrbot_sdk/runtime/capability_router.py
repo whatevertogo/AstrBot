@@ -53,8 +53,18 @@
         provider.list_all_tts: 列出 TTS Providers
         provider.list_all_stt: 列出 STT Providers
         provider.list_all_embedding: 列出 Embedding Providers
+        provider.list_all_rerank: 列出 Rerank Providers
         provider.get_using_tts: 获取当前 TTS Provider
         provider.get_using_stt: 获取当前 STT Provider
+        provider.get_by_id: 按 ID 获取 Provider
+        provider.stt.get_text: STT 转写
+        provider.tts.get_audio: TTS 合成音频
+        provider.tts.support_stream: 检查 TTS 原生流式支持
+        provider.tts.get_audio_stream: 流式 TTS 音频输出
+        provider.embedding.get_embedding: 获取单条向量
+        provider.embedding.get_embeddings: 批量获取向量
+        provider.embedding.get_dim: 获取向量维度
+        provider.rerank.rerank: 文档重排序
     LLM Tool:
         llm_tool.manager.get: 获取 LLM 工具状态
         llm_tool.manager.activate: 激活 LLM 工具
@@ -201,6 +211,14 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
                     "model": "mock-embedding-model",
                     "type": "mock",
                     "provider_type": "embedding",
+                }
+            ],
+            "rerank": [
+                {
+                    "id": "mock-rerank-provider",
+                    "model": "mock-rerank-model",
+                    "type": "mock",
+                    "provider_type": "rerank",
                 }
             ],
         }

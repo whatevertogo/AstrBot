@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,13 +14,14 @@ from astrbot_sdk.errors import AstrBotError
 from astrbot_sdk.events import MessageEvent
 from astrbot_sdk.llm.agents import AgentSpec
 from astrbot_sdk.llm.entities import LLMToolSpec, ProviderMeta, ProviderRequest
-from astrbot_sdk.runtime.capability_dispatcher import CapabilityDispatcher
-from astrbot_sdk.runtime.loader import (
-    LoadedLLMTool,
-    load_plugin,
-    load_plugin_spec,
-    validate_plugin_spec,
+from astrbot_sdk.llm.providers import (
+    EmbeddingProvider,
+    RerankProvider,
+    STTProvider,
+    TTSProvider,
 )
+from astrbot_sdk.runtime.capability_dispatcher import CapabilityDispatcher
+from astrbot_sdk.runtime.loader import LoadedLLMTool
 from astrbot_sdk.testing import MockContext
 
 
@@ -97,6 +97,128 @@ async def test_mock_context_p0_5_provider_queries_and_tool_manager() -> None:
         ProviderRequest(prompt="hello", tool_names=["sdk_static_note"])
     )
     assert response.text == "Mock tool loop: hello tools=sdk_static_note"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_mock_context_p1_1_provider_client_and_specialized_proxies() -> None:
+    ctx = MockContext(plugin_id="sdk_demo_agent_tools")
+    ctx.router.set_provider_catalog(
+        "tts",
+        [
+                {
+                    "id": "tts-provider-1",
+                    "model": "tts-model",
+                    "type": "mock",
+                    "provider_type": "text_to_speech",
+                }
+            ],
+        active_id="tts-provider-1",
+    )
+    ctx.router.set_provider_catalog(
+        "stt",
+        [
+            {
+                "id": "stt-provider-1",
+                "model": "stt-model",
+                "type": "mock",
+                "provider_type": "speech_to_text",
+            }
+        ],
+        active_id="stt-provider-1",
+    )
+    ctx.router.set_provider_catalog(
+        "embedding",
+        [
+            {
+                "id": "embedding-provider-1",
+                "model": "embedding-model",
+                "type": "mock",
+                "provider_type": "embedding",
+            }
+        ],
+    )
+    ctx.router.set_provider_catalog(
+        "rerank",
+        [
+            {
+                "id": "rerank-provider-1",
+                "model": "rerank-model",
+                "type": "mock",
+                "provider_type": "rerank",
+            }
+        ],
+    )
+
+    assert [item.id for item in await ctx.providers.list_tts()] == ["tts-provider-1"]
+    assert [item.id for item in await ctx.providers.list_stt()] == ["stt-provider-1"]
+    assert [item.id for item in await ctx.providers.list_embedding()] == [
+        "embedding-provider-1"
+    ]
+    assert [item.id for item in await ctx.providers.list_rerank()] == [
+        "rerank-provider-1"
+    ]
+    assert [item.id for item in await ctx.get_all_rerank_providers()] == [
+        "rerank-provider-1"
+    ]
+
+    tts = await ctx.providers.get("tts-provider-1")
+    stt = await ctx.providers.get("stt-provider-1")
+    embedding = await ctx.providers.get("embedding-provider-1")
+    rerank = await ctx.providers.get("rerank-provider-1")
+
+    assert isinstance(tts, TTSProvider)
+    assert isinstance(stt, STTProvider)
+    assert isinstance(embedding, EmbeddingProvider)
+    assert isinstance(rerank, RerankProvider)
+    assert await ctx.providers.get("missing-provider") is None
+    assert await ctx.providers.get("mock-chat-provider") is None
+
+    assert await stt.get_text("https://example.com/audio.wav") == (
+        "Mock transcript: https://example.com/audio.wav"
+    )
+    assert await tts.get_audio("hello sdk") == "mock://tts/tts-provider-1/hello sdk"
+    assert tts.support_stream() is True
+
+    single_chunks = [chunk async for chunk in tts.get_audio_stream("hello stream")]
+    assert len(single_chunks) == 1
+    assert single_chunks[0].text == "hello stream"
+    assert single_chunks[0].audio == b"mock-audio:hello stream"
+
+    async def text_source():
+        yield "hello"
+        yield "sdk"
+
+    streamed_chunks = [chunk async for chunk in tts.get_audio_stream(text_source())]
+    assert [chunk.text for chunk in streamed_chunks] == ["hello", "sdk"]
+    assert [chunk.audio for chunk in streamed_chunks] == [
+        b"mock-audio:hello",
+        b"mock-audio:sdk",
+    ]
+
+    assert await embedding.get_embedding("AstrBot") == [0.0, 0.0, 0.0]
+    assert await embedding.get_embeddings(["AstrBot", "SDK"]) == [
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+    ]
+    assert await embedding.get_dim() == 3
+
+    reranked = await rerank.rerank(
+        "hello sdk",
+        ["hello world", "sdk helper", "other"],
+        top_n=2,
+    )
+    assert [(item.document, item.score) for item in reranked] == [
+        ("hello world", 1.0),
+        ("sdk helper", 1.0),
+    ]
+
+    using_tts = await ctx.providers.get_using_tts()
+    using_stt = await ctx.providers.get_using_stt()
+    assert isinstance(using_tts, TTSProvider)
+    assert isinstance(using_stt, STTProvider)
+    assert (await ctx.get_using_tts_provider()) is not None
+    assert (await ctx.get_using_stt_provider()) is not None
 
 
 # Note: test_loader_discovers_p0_5_demo_tools_and_agents removed
