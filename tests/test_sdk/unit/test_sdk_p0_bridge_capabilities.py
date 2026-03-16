@@ -353,7 +353,7 @@ def test_sdk_request_overlay_controls_llm_result_and_whitelist() -> None:
     assert effective_result is not None
     assert effective_result.chain.get_plain_text() == "overlay"
 
-    effective_result.chain.chain.append(Plain(" cached", convert=False))
+    effective_result.chain.chain.append(Plain("cached", convert=False))
     result_payload = bridge.get_result_payload_for_request(request_id)
     assert result_payload is not None
     assert result_payload["chain"][1]["data"]["text"] == "cached"
