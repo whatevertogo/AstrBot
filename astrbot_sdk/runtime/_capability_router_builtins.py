@@ -57,6 +57,7 @@ class _CapabilityRouterHost:
     http_api_store: list[dict[str, Any]]
     _event_streams: dict[str, dict[str, Any]]
     _plugins: dict[str, Any]
+    _request_overlays: dict[str, dict[str, Any]]
     _system_data_root: Path
     _session_waiters: dict[str, set[str]]
     _db_watch_subscriptions: dict[str, tuple[str | None, asyncio.Queue[dict[str, Any]]]]
@@ -711,6 +712,79 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
             call_handler=self._system_event_send_streaming_close,
             exposed=False,
         )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.llm.get_state",
+                "读取当前请求的默认 LLM 状态",
+            ),
+            call_handler=self._system_event_llm_get_state,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.llm.request",
+                "请求当前事件继续进入默认 LLM 链路",
+            ),
+            call_handler=self._system_event_llm_request,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor("system.event.result.get", "读取当前请求结果"),
+            call_handler=self._system_event_result_get,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor("system.event.result.set", "写入当前请求结果"),
+            call_handler=self._system_event_result_set,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor("system.event.result.clear", "清理当前请求结果"),
+            call_handler=self._system_event_result_clear,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.handler_whitelist.get",
+                "读取当前请求 handler 白名单",
+            ),
+            call_handler=self._system_event_handler_whitelist_get,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.handler_whitelist.set",
+                "写入当前请求 handler 白名单",
+            ),
+            call_handler=self._system_event_handler_whitelist_set,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "registry.get_handlers_by_event_type",
+                "按事件类型列出 handler 元数据",
+            ),
+            call_handler=self._registry_get_handlers_by_event_type,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "registry.get_handler_by_full_name",
+                "按 full name 查询 handler 元数据",
+            ),
+            call_handler=self._registry_get_handler_by_full_name,
+        )
+
+    def _ensure_request_overlay(self, request_id: str) -> dict[str, Any]:
+        overlay = self._request_overlays.get(request_id)
+        if overlay is None:
+            overlay = {
+                "should_call_llm": False,
+                "requested_llm": False,
+                "result": None,
+                "handler_whitelist": None,
+            }
+            self._request_overlays[request_id] = overlay
+        return overlay
 
     async def _system_get_data_dir(
         self, _request_id: str, _payload: dict[str, Any], _token
@@ -738,6 +812,100 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
         if bool(payload.get("return_url", True)):
             return {"result": f"mock://html_render/{tmpl}"}
         return {"result": json.dumps({"tmpl": tmpl, "data": data}, ensure_ascii=False)}
+
+    async def _system_event_llm_get_state(
+        self, request_id: str, _payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        overlay = self._ensure_request_overlay(request_id)
+        return {
+            "should_call_llm": bool(overlay["should_call_llm"]),
+            "requested_llm": bool(overlay["requested_llm"]),
+        }
+
+    async def _system_event_llm_request(
+        self, request_id: str, _payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        overlay = self._ensure_request_overlay(request_id)
+        overlay["requested_llm"] = True
+        overlay["should_call_llm"] = True
+        return await self._system_event_llm_get_state(request_id, {}, _token)
+
+    async def _system_event_result_get(
+        self, request_id: str, _payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        overlay = self._ensure_request_overlay(request_id)
+        result = overlay.get("result")
+        return {"result": dict(result) if isinstance(result, dict) else None}
+
+    async def _system_event_result_set(
+        self, request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            raise AstrBotError.invalid_input(
+                "system.event.result.set 的 result 必须是 object"
+            )
+        overlay = self._ensure_request_overlay(request_id)
+        overlay["result"] = dict(result)
+        return {"result": dict(result)}
+
+    async def _system_event_result_clear(
+        self, request_id: str, _payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        overlay = self._ensure_request_overlay(request_id)
+        overlay["result"] = None
+        return {}
+
+    async def _system_event_handler_whitelist_get(
+        self, request_id: str, _payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        overlay = self._ensure_request_overlay(request_id)
+        whitelist = overlay.get("handler_whitelist")
+        if whitelist is None:
+            return {"plugin_names": None}
+        return {"plugin_names": sorted(str(item) for item in whitelist)}
+
+    async def _system_event_handler_whitelist_set(
+        self, request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        overlay = self._ensure_request_overlay(request_id)
+        plugin_names_payload = payload.get("plugin_names")
+        if plugin_names_payload is None:
+            overlay["handler_whitelist"] = None
+        elif isinstance(plugin_names_payload, list):
+            overlay["handler_whitelist"] = {
+                str(item) for item in plugin_names_payload if str(item).strip()
+            }
+        else:
+            raise AstrBotError.invalid_input(
+                "system.event.handler_whitelist.set 的 plugin_names 必须是数组或 null"
+            )
+        return await self._system_event_handler_whitelist_get(request_id, {}, _token)
+
+    async def _registry_get_handlers_by_event_type(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        event_type = str(payload.get("event_type", "")).strip()
+        handlers: list[dict[str, Any]] = []
+        for plugin in self._plugins.values():
+            handlers.extend(
+                [
+                    dict(handler)
+                    for handler in plugin.handlers
+                    if event_type in handler.get("event_types", [])
+                ]
+            )
+        return {"handlers": handlers}
+
+    async def _registry_get_handler_by_full_name(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        full_name = str(payload.get("full_name", "")).strip()
+        for plugin in self._plugins.values():
+            for handler in plugin.handlers:
+                if handler.get("handler_full_name") == full_name:
+                    return {"handler": dict(handler)}
+        return {"handler": None}
 
     async def _system_session_waiter_register(
         self, _request_id: str, payload: dict[str, Any], _token

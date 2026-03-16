@@ -936,6 +936,76 @@ class CoreCapabilityBridge(CapabilityRouter):
             call_handler=self._system_event_send_streaming_close,
             exposed=False,
         )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.llm.get_state",
+                "Read sdk request llm state",
+            ),
+            call_handler=self._system_event_llm_get_state,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.llm.request",
+                "Request default llm for current sdk request",
+            ),
+            call_handler=self._system_event_llm_request,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.result.get",
+                "Read sdk request result",
+            ),
+            call_handler=self._system_event_result_get,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.result.set",
+                "Write sdk request result",
+            ),
+            call_handler=self._system_event_result_set,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.result.clear",
+                "Clear sdk request result",
+            ),
+            call_handler=self._system_event_result_clear,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.handler_whitelist.get",
+                "Read sdk request handler whitelist",
+            ),
+            call_handler=self._system_event_handler_whitelist_get,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "system.event.handler_whitelist.set",
+                "Write sdk request handler whitelist",
+            ),
+            call_handler=self._system_event_handler_whitelist_set,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "registry.get_handlers_by_event_type",
+                "List SDK handlers by event type",
+            ),
+            call_handler=self._registry_get_handlers_by_event_type,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "registry.get_handler_by_full_name",
+                "Get SDK handler metadata by full name",
+            ),
+            call_handler=self._registry_get_handler_by_full_name,
+        )
 
     async def _system_get_data_dir(
         self,
@@ -1127,6 +1197,121 @@ class CoreCapabilityBridge(CapabilityRouter):
                 )
             )
         }
+
+    async def _system_event_llm_get_state(
+        self,
+        request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        overlay = self._plugin_bridge.get_request_overlay_by_request_id(request_id)
+        should_call_llm = self._plugin_bridge.get_should_call_llm_for_request(
+            request_id
+        )
+        return {
+            "should_call_llm": bool(should_call_llm),
+            "requested_llm": bool(overlay.requested_llm)
+            if overlay is not None
+            else False,
+        }
+
+    async def _system_event_llm_request(
+        self,
+        request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        self._plugin_bridge.request_llm_for_request(request_id)
+        return await self._system_event_llm_get_state(request_id, {}, _token)
+
+    async def _system_event_result_get(
+        self,
+        request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        return {
+            "result": self._plugin_bridge.get_result_payload_for_request(request_id)
+        }
+
+    async def _system_event_result_set(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        result_payload = payload.get("result")
+        if not isinstance(result_payload, dict):
+            raise AstrBotError.invalid_input(
+                "system.event.result.set requires an object result payload"
+            )
+        if not self._plugin_bridge.set_result_for_request(request_id, result_payload):
+            raise AstrBotError.cancelled("The SDK request overlay has been closed")
+        return {
+            "result": self._plugin_bridge.get_result_payload_for_request(request_id)
+        }
+
+    async def _system_event_result_clear(
+        self,
+        request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        self._plugin_bridge.clear_result_for_request(request_id)
+        return {}
+
+    async def _system_event_handler_whitelist_get(
+        self,
+        request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_names = self._plugin_bridge.get_handler_whitelist_for_request(request_id)
+        if plugin_names is None:
+            return {"plugin_names": None}
+        return {"plugin_names": sorted(plugin_names)}
+
+    async def _system_event_handler_whitelist_set(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_names_payload = payload.get("plugin_names")
+        plugin_names: set[str] | None
+        if plugin_names_payload is None:
+            plugin_names = None
+        elif isinstance(plugin_names_payload, list):
+            plugin_names = {
+                str(item) for item in plugin_names_payload if str(item).strip()
+            }
+        else:
+            raise AstrBotError.invalid_input(
+                "system.event.handler_whitelist.set requires a string array or null"
+            )
+        if not self._plugin_bridge.set_handler_whitelist_for_request(
+            request_id, plugin_names
+        ):
+            raise AstrBotError.cancelled("The SDK request overlay has been closed")
+        return await self._system_event_handler_whitelist_get(request_id, {}, _token)
+
+    async def _registry_get_handlers_by_event_type(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        event_type = str(payload.get("event_type", "")).strip()
+        return {"handlers": self._plugin_bridge.get_handlers_by_event_type(event_type)}
+
+    async def _registry_get_handler_by_full_name(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        full_name = str(payload.get("full_name", "")).strip()
+        return {"handler": self._plugin_bridge.get_handler_by_full_name(full_name)}
 
     def _resolve_dispatch_target(
         self,

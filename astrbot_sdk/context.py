@@ -34,6 +34,7 @@ from .clients import (
     MemoryClient,
     MetadataClient,
     PlatformClient,
+    RegistryClient,
 )
 from .clients._proxy import CapabilityProxy
 
@@ -124,6 +125,7 @@ class Context:
         self.platform = PlatformClient(proxy)
         self.http = HTTPClient(proxy)
         self.metadata = MetadataClient(proxy, plugin_id)
+        self.registry = RegistryClient(proxy)
         self.plugin_id = plugin_id
         self.logger = logger or base_logger.bind(plugin_id=plugin_id)
         self.cancel_token = cancel_token or CancelToken()

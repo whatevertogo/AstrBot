@@ -281,6 +281,57 @@ SYSTEM_EVENT_SEND_STREAMING_CLOSE_OUTPUT_SCHEMA = _object_schema(
     required=("supported",),
     supported={"type": "boolean"},
 )
+SYSTEM_EVENT_LLM_GET_STATE_INPUT_SCHEMA = _object_schema(
+    target=_nullable(SESSION_REF_SCHEMA),
+)
+SYSTEM_EVENT_LLM_GET_STATE_OUTPUT_SCHEMA = _object_schema(
+    required=("should_call_llm", "requested_llm"),
+    should_call_llm={"type": "boolean"},
+    requested_llm={"type": "boolean"},
+)
+SYSTEM_EVENT_LLM_REQUEST_INPUT_SCHEMA = _object_schema(
+    target=_nullable(SESSION_REF_SCHEMA),
+)
+SYSTEM_EVENT_LLM_REQUEST_OUTPUT_SCHEMA = _object_schema(
+    required=("should_call_llm", "requested_llm"),
+    should_call_llm={"type": "boolean"},
+    requested_llm={"type": "boolean"},
+)
+SYSTEM_EVENT_RESULT_GET_INPUT_SCHEMA = _object_schema(
+    target=_nullable(SESSION_REF_SCHEMA),
+)
+SYSTEM_EVENT_RESULT_GET_OUTPUT_SCHEMA = _object_schema(
+    required=("result",),
+    result=_nullable({"type": "object"}),
+)
+SYSTEM_EVENT_RESULT_SET_INPUT_SCHEMA = _object_schema(
+    required=("result",),
+    target=_nullable(SESSION_REF_SCHEMA),
+    result={"type": "object"},
+)
+SYSTEM_EVENT_RESULT_SET_OUTPUT_SCHEMA = _object_schema(
+    required=("result",),
+    result={"type": "object"},
+)
+SYSTEM_EVENT_RESULT_CLEAR_INPUT_SCHEMA = _object_schema(
+    target=_nullable(SESSION_REF_SCHEMA),
+)
+SYSTEM_EVENT_RESULT_CLEAR_OUTPUT_SCHEMA = _object_schema()
+SYSTEM_EVENT_HANDLER_WHITELIST_GET_INPUT_SCHEMA = _object_schema(
+    target=_nullable(SESSION_REF_SCHEMA),
+)
+SYSTEM_EVENT_HANDLER_WHITELIST_GET_OUTPUT_SCHEMA = _object_schema(
+    required=("plugin_names",),
+    plugin_names=_nullable({"type": "array", "items": {"type": "string"}}),
+)
+SYSTEM_EVENT_HANDLER_WHITELIST_SET_INPUT_SCHEMA = _object_schema(
+    target=_nullable(SESSION_REF_SCHEMA),
+    plugin_names=_nullable({"type": "array", "items": {"type": "string"}}),
+)
+SYSTEM_EVENT_HANDLER_WHITELIST_SET_OUTPUT_SCHEMA = _object_schema(
+    required=("plugin_names",),
+    plugin_names=_nullable({"type": "array", "items": {"type": "string"}}),
+)
 PLATFORM_SEND_INPUT_SCHEMA = _object_schema(
     required=("session", "text"),
     session={"type": "string"},
@@ -359,6 +410,22 @@ METADATA_GET_PLUGIN_CONFIG_INPUT_SCHEMA = _object_schema(
 METADATA_GET_PLUGIN_CONFIG_OUTPUT_SCHEMA = _object_schema(
     required=("config",),
     config=_nullable({"type": "object"}),
+)
+REGISTRY_GET_HANDLERS_BY_EVENT_TYPE_INPUT_SCHEMA = _object_schema(
+    required=("event_type",),
+    event_type={"type": "string"},
+)
+REGISTRY_GET_HANDLERS_BY_EVENT_TYPE_OUTPUT_SCHEMA = _object_schema(
+    required=("handlers",),
+    handlers={"type": "array", "items": {"type": "object"}},
+)
+REGISTRY_GET_HANDLER_BY_FULL_NAME_INPUT_SCHEMA = _object_schema(
+    required=("full_name",),
+    full_name={"type": "string"},
+)
+REGISTRY_GET_HANDLER_BY_FULL_NAME_OUTPUT_SCHEMA = _object_schema(
+    required=("handler",),
+    handler=_nullable({"type": "object"}),
 )
 
 BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
@@ -474,6 +541,14 @@ BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
         "input": METADATA_GET_PLUGIN_CONFIG_INPUT_SCHEMA,
         "output": METADATA_GET_PLUGIN_CONFIG_OUTPUT_SCHEMA,
     },
+    "registry.get_handlers_by_event_type": {
+        "input": REGISTRY_GET_HANDLERS_BY_EVENT_TYPE_INPUT_SCHEMA,
+        "output": REGISTRY_GET_HANDLERS_BY_EVENT_TYPE_OUTPUT_SCHEMA,
+    },
+    "registry.get_handler_by_full_name": {
+        "input": REGISTRY_GET_HANDLER_BY_FULL_NAME_INPUT_SCHEMA,
+        "output": REGISTRY_GET_HANDLER_BY_FULL_NAME_OUTPUT_SCHEMA,
+    },
     "system.get_data_dir": {
         "input": SYSTEM_GET_DATA_DIR_INPUT_SCHEMA,
         "output": SYSTEM_GET_DATA_DIR_OUTPUT_SCHEMA,
@@ -513,6 +588,34 @@ BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
     "system.event.send_streaming_close": {
         "input": SYSTEM_EVENT_SEND_STREAMING_CLOSE_INPUT_SCHEMA,
         "output": SYSTEM_EVENT_SEND_STREAMING_CLOSE_OUTPUT_SCHEMA,
+    },
+    "system.event.llm.get_state": {
+        "input": SYSTEM_EVENT_LLM_GET_STATE_INPUT_SCHEMA,
+        "output": SYSTEM_EVENT_LLM_GET_STATE_OUTPUT_SCHEMA,
+    },
+    "system.event.llm.request": {
+        "input": SYSTEM_EVENT_LLM_REQUEST_INPUT_SCHEMA,
+        "output": SYSTEM_EVENT_LLM_REQUEST_OUTPUT_SCHEMA,
+    },
+    "system.event.result.get": {
+        "input": SYSTEM_EVENT_RESULT_GET_INPUT_SCHEMA,
+        "output": SYSTEM_EVENT_RESULT_GET_OUTPUT_SCHEMA,
+    },
+    "system.event.result.set": {
+        "input": SYSTEM_EVENT_RESULT_SET_INPUT_SCHEMA,
+        "output": SYSTEM_EVENT_RESULT_SET_OUTPUT_SCHEMA,
+    },
+    "system.event.result.clear": {
+        "input": SYSTEM_EVENT_RESULT_CLEAR_INPUT_SCHEMA,
+        "output": SYSTEM_EVENT_RESULT_CLEAR_OUTPUT_SCHEMA,
+    },
+    "system.event.handler_whitelist.get": {
+        "input": SYSTEM_EVENT_HANDLER_WHITELIST_GET_INPUT_SCHEMA,
+        "output": SYSTEM_EVENT_HANDLER_WHITELIST_GET_OUTPUT_SCHEMA,
+    },
+    "system.event.handler_whitelist.set": {
+        "input": SYSTEM_EVENT_HANDLER_WHITELIST_SET_INPUT_SCHEMA,
+        "output": SYSTEM_EVENT_HANDLER_WHITELIST_SET_OUTPUT_SCHEMA,
     },
 }
 

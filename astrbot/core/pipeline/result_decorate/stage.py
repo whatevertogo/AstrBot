@@ -22,6 +22,9 @@ from ..stage import Stage, register_stage, registered_stages
 class ResultDecorateStage(Stage):
     async def initialize(self, ctx: PipelineContext) -> None:
         self.ctx = ctx
+        self.sdk_plugin_bridge = getattr(
+            ctx.plugin_manager.context, "sdk_plugin_bridge", None
+        )
         self.reply_prefix = ctx.astrbot_config["platform_settings"]["reply_prefix"]
         self.reply_with_mention = ctx.astrbot_config["platform_settings"][
             "reply_with_mention"
@@ -101,6 +104,11 @@ class ResultDecorateStage(Stage):
         provider_cfg = ctx.astrbot_config.get("provider_settings", {})
         self.show_reasoning = provider_cfg.get("display_reasoning_text", False)
 
+    def _get_effective_result(self, event: AstrMessageEvent):
+        if self.sdk_plugin_bridge is not None:
+            return self.sdk_plugin_bridge.get_effective_result(event)
+        return event.get_result()
+
     def _split_text_by_words(self, text: str) -> list[str]:
         """使用分段词列表分段文本"""
         if not self.split_words_pattern:
@@ -127,7 +135,7 @@ class ResultDecorateStage(Stage):
         self,
         event: AstrMessageEvent,
     ) -> None | AsyncGenerator[None, None]:
-        result = event.get_result()
+        result = self._get_effective_result(event)
         if result is None or not result.chain:
             return
 
@@ -184,13 +192,31 @@ class ResultDecorateStage(Stage):
                 )
                 return
 
+        result = self._get_effective_result(event)
+        if result is None or not result.chain:
+            return
+
+        if self.sdk_plugin_bridge is not None:
+            try:
+                await self.sdk_plugin_bridge.dispatch_message_event(
+                    "decorating_result",
+                    event,
+                    {
+                        "message_outline": result.chain.get_plain_text(
+                            with_other_comps_mark=True
+                        )
+                    },
+                )
+            except Exception as exc:
+                logger.warning(f"SDK decorating_result dispatch failed: {exc}")
+
         # 流式输出不执行下面的逻辑
         if is_stream:
             logger.info("流式输出已启用，跳过结果装饰阶段")
             return
 
         # 需要再获取一次。插件可能直接对 chain 进行了替换。
-        result = event.get_result()
+        result = self._get_effective_result(event)
         if result is None:
             return
 

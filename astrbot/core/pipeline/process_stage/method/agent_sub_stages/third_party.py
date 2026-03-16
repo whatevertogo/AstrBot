@@ -327,6 +327,21 @@ class ThirdPartyAgentSubStage(Stage):
         # call event hook
         if await call_event_hook(event, EventType.OnLLMRequestEvent, req):
             return
+        sdk_plugin_bridge = getattr(
+            self.ctx.plugin_manager.context, "sdk_plugin_bridge", None
+        )
+        if sdk_plugin_bridge is not None:
+            try:
+                await sdk_plugin_bridge.dispatch_message_event(
+                    "llm_request",
+                    event,
+                    {
+                        "prompt": req.prompt,
+                        "provider_id": self.prov_id,
+                    },
+                )
+            except Exception as exc:
+                logger.warning("SDK llm_request dispatch failed: %s", exc)
 
         if self.runner_type == "dify":
             runner = DifyAgentRunner[AstrAgentContext]()

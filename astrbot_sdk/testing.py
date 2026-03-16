@@ -87,6 +87,29 @@ def _plugin_metadata_from_spec(
     }
 
 
+def _handler_metadata_from_loaded(
+    plugin_id: str, loaded: LoadedHandler
+) -> dict[str, Any]:
+    event_types: list[str] = []
+    trigger = loaded.descriptor.trigger
+    if isinstance(trigger, EventTrigger):
+        event_types.append(trigger.type)
+    return {
+        "plugin_name": plugin_id,
+        "handler_full_name": loaded.descriptor.id,
+        "trigger_type": trigger.type
+        if isinstance(trigger, EventTrigger)
+        else trigger.kind,
+        "event_types": event_types,
+        "enabled": True,
+        "group_path": list(
+            loaded.descriptor.command_route.group_path
+            if loaded.descriptor.command_route is not None
+            else []
+        ),
+    }
+
+
 @dataclass(slots=True)
 class LocalRuntimeConfig:
     """本地 harness 的稳定配置对象。"""
@@ -191,6 +214,13 @@ class PluginHarness:
             metadata=_plugin_metadata_from_spec(self.plugin, enabled=True),
             config=load_plugin_config(self.plugin),
         )
+        self.router.set_plugin_handlers(
+            self.plugin.name,
+            [
+                _handler_metadata_from_loaded(self.plugin.name, handler)
+                for handler in self.loaded_plugin.handlers
+            ],
+        )
         try:
             await self._run_lifecycle("on_start")
         except AstrBotError:
@@ -211,6 +241,7 @@ class PluginHarness:
         finally:
             if self.plugin is not None:
                 self.router.set_plugin_enabled(self.plugin.name, False)
+                self.router.set_plugin_handlers(self.plugin.name, [])
                 self.router.remove_http_apis_for_plugin(self.plugin.name)
             self._started = False
 

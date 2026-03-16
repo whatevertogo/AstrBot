@@ -42,9 +42,10 @@ def _install_optional_dependency_stubs() -> None:
 _install_optional_dependency_stubs()
 
 from astrbot.core.message.components import Plain
-from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
 from astrbot.core.pipeline.respond.stage import RespondStage
 from astrbot.core.sdk_bridge.event_converter import EventConverter
+from astrbot.core.sdk_bridge.plugin_bridge import SdkPluginBridge
 from astrbot_sdk import MessageSession
 from astrbot_sdk.events import MessageEvent
 from astrbot_sdk.testing import MockContext
@@ -201,3 +202,109 @@ def test_respond_stage_sdk_outline_supports_list_and_message_chain() -> None:
         == "hello  world"
     )
     assert RespondStage._message_outline_for_sdk_event(None) == ""
+
+
+class _OverlayFakeStarContext:
+    def __init__(self) -> None:
+        self.registered_web_apis = []
+        self.cron_manager = object()
+
+    def get_all_stars(self) -> list[object]:
+        return []
+
+
+class _OverlayFakeEvent:
+    def __init__(self) -> None:
+        self.call_llm = False
+        self._result = MessageEventResult(chain=[Plain("legacy", convert=False)])
+        self._sdk_dispatch_token = "dispatch-1"
+
+    def get_result(self) -> MessageEventResult | None:
+        return self._result
+
+
+@pytest.mark.unit
+def test_sdk_request_overlay_controls_llm_result_and_whitelist() -> None:
+    bridge = SdkPluginBridge(_OverlayFakeStarContext())
+    event = _OverlayFakeEvent()
+    request_id = "req-1"
+
+    bridge._request_id_to_token[request_id] = "dispatch-1"
+    bridge._request_overlays["dispatch-1"] = bridge._ensure_request_overlay(
+        "dispatch-1",
+        should_call_llm=False,
+    )
+
+    assert bridge.get_effective_should_call_llm(event) is False
+    assert bridge.request_llm_for_request(request_id) is True
+    assert bridge.get_effective_should_call_llm(event) is True
+
+    payload = {
+        "type": "chain",
+        "chain": [{"type": "plain", "data": {"text": "overlay"}}],
+    }
+    assert bridge.set_result_for_request(request_id, payload) is True
+    effective_result = bridge.get_effective_result(event)
+    assert effective_result is not None
+    assert effective_result.chain.get_plain_text() == "overlay"
+
+    effective_result.chain.chain.append(Plain(" cached", convert=False))
+    result_payload = bridge.get_result_payload_for_request(request_id)
+    assert result_payload is not None
+    assert result_payload["chain"][1]["data"]["text"] == "cached"
+
+    assert (
+        bridge.set_handler_whitelist_for_request(request_id, {"sdk-a", "sdk-b"}) is True
+    )
+    assert bridge.get_handler_whitelist_for_request(request_id) == {
+        "sdk-a",
+        "sdk-b",
+    }
+
+    assert bridge.clear_result_for_request(request_id) is True
+    assert bridge.get_effective_result(event) is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_mock_context_registry_client_round_trip() -> None:
+    ctx = MockContext(plugin_id="sdk-demo")
+    ctx.router.set_plugin_handlers(
+        "sdk-demo",
+        [
+            {
+                "plugin_name": "sdk-demo",
+                "handler_full_name": "sdk-demo:demo.on_waiting",
+                "trigger_type": "event",
+                "event_types": ["waiting_llm_request"],
+                "enabled": True,
+                "group_path": [],
+            }
+        ],
+    )
+
+    handlers = await ctx.registry.get_handlers_by_event_type("waiting_llm_request")
+    assert len(handlers) == 1
+    assert handlers[0].handler_full_name == "sdk-demo:demo.on_waiting"
+
+    handler = await ctx.registry.get_handler_by_full_name("sdk-demo:demo.on_waiting")
+    assert handler is not None
+    assert handler.plugin_name == "sdk-demo"
+
+    request_id = "req-registry-whitelist"
+    set_result = await ctx.router.execute(
+        "system.event.handler_whitelist.set",
+        {"plugin_names": ["sdk-demo"]},
+        stream=False,
+        cancel_token=None,
+        request_id=request_id,
+    )
+    assert set_result == {"plugin_names": ["sdk-demo"]}
+    get_result = await ctx.router.execute(
+        "system.event.handler_whitelist.get",
+        {},
+        stream=False,
+        cancel_token=None,
+        request_id=request_id,
+    )
+    assert get_result == {"plugin_names": ["sdk-demo"]}

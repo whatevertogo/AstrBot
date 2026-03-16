@@ -139,6 +139,7 @@ class _CapabilityRegistration:
 class _RegisteredPlugin:
     metadata: dict[str, Any]
     config: dict[str, Any]
+    handlers: list[dict[str, Any]]
 
 
 class CapabilityRouter(BuiltinCapabilityRouterMixin):
@@ -151,6 +152,7 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
         self._event_streams: dict[str, dict[str, Any]] = {}
         self.http_api_store: list[dict[str, Any]] = []
         self._plugins: dict[str, _RegisteredPlugin] = {}
+        self._request_overlays: dict[str, dict[str, Any]] = {}
         self._system_data_root = Path.cwd() / ".astrbot_sdk_testing" / "plugin_data"
         self._session_waiters: dict[str, set[str]] = {}
         self._db_watch_subscriptions: dict[
@@ -176,7 +178,18 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
         self._plugins[name] = _RegisteredPlugin(
             metadata=normalized_metadata,
             config=dict(config or {}),
+            handlers=[],
         )
+
+    def set_plugin_handlers(
+        self,
+        name: str,
+        handlers: list[dict[str, Any]],
+    ) -> None:
+        plugin = self._plugins.get(name)
+        if plugin is None:
+            return
+        plugin.handlers = [dict(item) for item in handlers]
 
     def set_plugin_enabled(self, name: str, enabled: bool) -> None:
         plugin = self._plugins.get(name)

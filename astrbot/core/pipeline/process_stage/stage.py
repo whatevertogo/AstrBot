@@ -61,14 +61,20 @@ class ProcessStage(Stage):
         if not self.ctx.astrbot_config["provider_settings"].get("enable", True):
             return
 
-        if (
-            not event._has_send_oper
-            and event.is_at_or_wake_command
-            and not event.call_llm
-        ):
+        should_call_llm = (
+            self.sdk_plugin_bridge.get_effective_should_call_llm(event)
+            if self.sdk_plugin_bridge is not None
+            and hasattr(self.sdk_plugin_bridge, "get_effective_should_call_llm")
+            else not event.call_llm
+        )
+        effective_result = (
+            self.sdk_plugin_bridge.get_effective_result(event)
+            if self.sdk_plugin_bridge is not None
+            and hasattr(self.sdk_plugin_bridge, "get_effective_result")
+            else event.get_result()
+        )
+        if not event._has_send_oper and event.is_at_or_wake_command and should_call_llm:
             # 是否有过发送操作 and 是否是被 @ 或者通过唤醒前缀
-            if (
-                event.get_result() and not event.is_stopped()
-            ) or not event.get_result():
+            if (effective_result and not event.is_stopped()) or not effective_result:
                 async for _ in self.agent_sub_stage.process(event):
                     yield

@@ -11,9 +11,12 @@ from typing import Any
 from quart import request as quart_request
 
 from astrbot.core import logger
+from astrbot.core.message.components import ComponentTypes, Image, Plain
+from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from astrbot_sdk.errors import AstrBotError
+from astrbot_sdk.message_components import component_to_payload_sync
 from astrbot_sdk.protocol.descriptors import (
     CommandTrigger,
     EventTrigger,
@@ -44,7 +47,22 @@ SKIP_LEGACY_REPLIED = "legacy_replied"
 SKIP_SDK_RELOADING = "sdk_reloading"
 SKIP_NO_MATCH = "no_match"
 SKIP_WORKER_FAILED = "worker_failed"
-SUPPORTED_SYSTEM_EVENTS = {"astrbot_loaded", "platform_loaded", "after_message_sent"}
+OVERLAY_TIMEOUT_SECONDS = 300
+SUPPORTED_SYSTEM_EVENTS = {
+    "astrbot_loaded",
+    "platform_loaded",
+    "after_message_sent",
+    "waiting_llm_request",
+    "llm_request",
+    "llm_response",
+    "decorating_result",
+    "calling_func_tool",
+    "using_llm_tool",
+    "llm_tool_respond",
+    "plugin_error",
+    "plugin_loaded",
+    "plugin_unloaded",
+}
 
 
 @dataclass(slots=True)
@@ -99,6 +117,19 @@ class _InFlightRequest:
 
 
 @dataclass(slots=True)
+class _RequestOverlayState:
+    dispatch_token: str
+    should_call_llm: bool
+    requested_llm: bool = False
+    result_payload: dict[str, Any] | None = None
+    result_object: MessageEventResult | None = None
+    result_is_set: bool = False
+    handler_whitelist: set[str] | None = None
+    closed: bool = False
+    cleanup_task: asyncio.Task[None] | None = None
+
+
+@dataclass(slots=True)
 class SdkPluginRecord:
     plugin: PluginSpec
     load_order: int
@@ -142,6 +173,7 @@ class SdkPluginBridge:
         self._request_contexts: dict[str, _RequestContext] = {}
         self._request_id_to_token: dict[str, str] = {}
         self._request_plugin_ids: dict[str, str] = {}
+        self._request_overlays: dict[str, _RequestOverlayState] = {}
         self._plugin_requests: dict[str, dict[str, _InFlightRequest]] = {}
         self._http_routes: dict[str, list[SdkHttpRoute]] = {}
         self._session_waiters: dict[str, set[str]] = {}
@@ -167,6 +199,10 @@ class SdkPluginBridge:
         self._request_contexts.clear()
         self._request_id_to_token.clear()
         self._request_plugin_ids.clear()
+        for overlay in list(self._request_overlays.values()):
+            if overlay.cleanup_task is not None:
+                overlay.cleanup_task.cancel()
+        self._request_overlays.clear()
         self._plugin_requests.clear()
         self._http_routes.clear()
         self._session_waiters.clear()
@@ -426,6 +462,12 @@ class SdkPluginBridge:
         if waiter_plugins:
             return await self._dispatch_waiter_event(event, waiter_plugins)
 
+        dispatch_token = self._get_dispatch_token(event) or uuid.uuid4().hex
+        self._bind_dispatch_token(event, dispatch_token)
+        overlay = self._ensure_request_overlay(
+            dispatch_token,
+            should_call_llm=not bool(getattr(event, "call_llm", False)),
+        )
         matches = self._match_handlers(event)
         if not matches:
             result.skipped_reason = SKIP_NO_MATCH
@@ -436,8 +478,26 @@ class SdkPluginBridge:
         ]
 
         dispatch_state = _DispatchState(event=event)
+        request_context = self._request_contexts.get(dispatch_token)
+        if request_context is None:
+            request_context = _RequestContext(
+                plugin_id="",
+                request_id="",
+                dispatch_token=dispatch_token,
+                dispatch_state=dispatch_state,
+            )
+            self._request_contexts[dispatch_token] = request_context
+        else:
+            request_context.dispatch_state = dispatch_state
         skipped_reason = None
         for match in matches:
+            whitelist = (
+                None
+                if overlay.handler_whitelist is None
+                else set(overlay.handler_whitelist)
+            )
+            if whitelist is not None and match.plugin_id not in whitelist:
+                continue
             record = self._records.get(match.plugin_id)
             if record is None:
                 continue
@@ -452,7 +512,10 @@ class SdkPluginBridge:
                 continue
 
             request_id = f"sdk_{record.plugin_id}_{uuid.uuid4().hex}"
-            dispatch_token = uuid.uuid4().hex
+            request_context.plugin_id = record.plugin_id
+            request_context.request_id = request_id
+            request_context.cancelled = False
+            setattr(event, "_sdk_last_request_id", request_id)
             payload = EventConverter.core_to_sdk(
                 event,
                 dispatch_token=dispatch_token,
@@ -467,13 +530,6 @@ class SdkPluginBridge:
                     args=match.args,
                 )
             )
-            request_context = _RequestContext(
-                plugin_id=record.plugin_id,
-                request_id=request_id,
-                dispatch_token=dispatch_token,
-                dispatch_state=dispatch_state,
-            )
-            self._request_contexts[dispatch_token] = request_context
             self._request_id_to_token[request_id] = dispatch_token
             self._request_plugin_ids[request_id] = record.plugin_id
             self._plugin_requests.setdefault(record.plugin_id, {})[request_id] = (
@@ -502,7 +558,6 @@ class SdkPluginBridge:
                     request_id,
                     None,
                 )
-                self._request_contexts.pop(dispatch_token, None)
                 self._request_id_to_token.pop(request_id, None)
                 self._request_plugin_ids.pop(request_id, None)
 
@@ -519,6 +574,11 @@ class SdkPluginBridge:
                 dispatch_state.sent_message or handler_result["sent_message"]
             )
             dispatch_state.stopped = dispatch_state.stopped or handler_result["stop"]
+            if handler_result["call_llm"]:
+                overlay.requested_llm = True
+                overlay.should_call_llm = True
+            if handler_result["sent_message"] or handler_result["stop"]:
+                overlay.should_call_llm = False
             if handler_result["stop"]:
                 break
 
@@ -528,19 +588,21 @@ class SdkPluginBridge:
             result.skipped_reason = skipped_reason or SKIP_NO_MATCH
         if result.sent_message:
             event._has_send_oper = True
+            overlay.should_call_llm = False
             event.should_call_llm(True)
         if result.stopped:
             event.stop_event()
+            overlay.should_call_llm = False
             event.should_call_llm(True)
         return result
 
     def resolve_request_plugin_id(self, request_id: str) -> str:
-        token = self._request_id_to_token.get(request_id)
-        if token is not None and token in self._request_contexts:
-            return self._request_contexts[token].plugin_id
         plugin_id = self._request_plugin_ids.get(request_id)
         if plugin_id is not None:
             return plugin_id
+        token = self._request_id_to_token.get(request_id)
+        if token is not None and token in self._request_contexts:
+            return self._request_contexts[token].plugin_id
         raise AstrBotError.invalid_input(f"Unknown SDK request id: {request_id}")
 
     def resolve_request_session(self, request_id: str) -> _RequestContext | None:
@@ -554,12 +616,289 @@ class SdkPluginBridge:
     ) -> _RequestContext | None:
         return self._request_contexts.get(dispatch_token)
 
+    def _bind_dispatch_token(
+        self, event: AstrMessageEvent, dispatch_token: str
+    ) -> None:
+        setattr(event, "_sdk_dispatch_token", dispatch_token)
+
+    def _get_dispatch_token(self, event: AstrMessageEvent) -> str | None:
+        token = getattr(event, "_sdk_dispatch_token", None)
+        return str(token) if token else None
+
+    def _schedule_overlay_cleanup(
+        self, dispatch_token: str
+    ) -> asyncio.Task[None] | None:
+        async def _cleanup_later() -> None:
+            try:
+                await asyncio.sleep(OVERLAY_TIMEOUT_SECONDS)
+            except asyncio.CancelledError:
+                return
+            self._close_request_overlay(dispatch_token)
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+        return loop.create_task(_cleanup_later())
+
+    def _ensure_request_overlay(
+        self,
+        dispatch_token: str,
+        *,
+        should_call_llm: bool,
+    ) -> _RequestOverlayState:
+        overlay = self._request_overlays.get(dispatch_token)
+        if overlay is not None:
+            if overlay.closed:
+                overlay.closed = False
+            if overlay.cleanup_task is None or overlay.cleanup_task.done():
+                overlay.cleanup_task = self._schedule_overlay_cleanup(dispatch_token)
+            return overlay
+        overlay = _RequestOverlayState(
+            dispatch_token=dispatch_token,
+            should_call_llm=should_call_llm,
+            cleanup_task=self._schedule_overlay_cleanup(dispatch_token),
+        )
+        self._request_overlays[dispatch_token] = overlay
+        return overlay
+
+    def _close_request_overlay(self, dispatch_token: str) -> None:
+        overlay = self._request_overlays.pop(dispatch_token, None)
+        if overlay is None:
+            return
+        overlay.closed = True
+        if overlay.cleanup_task is not None:
+            overlay.cleanup_task.cancel()
+        request_context = self._request_contexts.get(dispatch_token)
+        if request_context is not None:
+            request_context.cancelled = True
+
+    def close_request_overlay_for_event(self, event: AstrMessageEvent) -> None:
+        dispatch_token = self._get_dispatch_token(event)
+        if not dispatch_token:
+            return
+        self._close_request_overlay(dispatch_token)
+        self._request_contexts.pop(dispatch_token, None)
+        request_id = getattr(event, "_sdk_last_request_id", None)
+        if request_id:
+            self._request_id_to_token.pop(str(request_id), None)
+            self._request_plugin_ids.pop(str(request_id), None)
+
+    def get_request_overlay_by_token(
+        self, dispatch_token: str
+    ) -> _RequestOverlayState | None:
+        overlay = self._request_overlays.get(dispatch_token)
+        if overlay is None or overlay.closed:
+            return None
+        return overlay
+
+    def get_request_overlay_by_request_id(
+        self, request_id: str
+    ) -> _RequestOverlayState | None:
+        token = self._request_id_to_token.get(request_id)
+        if not token:
+            return None
+        return self.get_request_overlay_by_token(token)
+
+    def request_llm_for_request(self, request_id: str) -> bool:
+        overlay = self.get_request_overlay_by_request_id(request_id)
+        if overlay is None:
+            return False
+        overlay.requested_llm = True
+        overlay.should_call_llm = True
+        return True
+
+    def get_effective_should_call_llm(self, event: AstrMessageEvent) -> bool:
+        dispatch_token = self._get_dispatch_token(event)
+        if dispatch_token:
+            overlay = self.get_request_overlay_by_token(dispatch_token)
+            if overlay is not None:
+                return overlay.should_call_llm
+        return not bool(getattr(event, "call_llm", False))
+
+    def get_should_call_llm_for_request(self, request_id: str) -> bool | None:
+        overlay = self.get_request_overlay_by_request_id(request_id)
+        if overlay is None:
+            return None
+        return overlay.should_call_llm
+
+    def set_result_for_request(
+        self,
+        request_id: str,
+        result_payload: dict[str, Any] | None,
+    ) -> bool:
+        overlay = self.get_request_overlay_by_request_id(request_id)
+        if overlay is None:
+            return False
+        if result_payload is None:
+            overlay.result_payload = None
+            overlay.result_object = None
+        else:
+            normalized_payload = json.loads(json.dumps(result_payload))
+            overlay.result_payload = normalized_payload
+            chain_payload = normalized_payload.get("chain")
+            overlay.result_object = (
+                MessageEventResult(
+                    chain=self._build_core_message_chain_from_payload(chain_payload)
+                )
+                if isinstance(chain_payload, list)
+                else None
+            )
+        overlay.result_is_set = True
+        return True
+
+    def clear_result_for_request(self, request_id: str) -> bool:
+        overlay = self.get_request_overlay_by_request_id(request_id)
+        if overlay is None:
+            return False
+        overlay.result_payload = None
+        overlay.result_object = None
+        overlay.result_is_set = True
+        return True
+
+    def get_result_payload_for_request(self, request_id: str) -> dict[str, Any] | None:
+        overlay = self.get_request_overlay_by_request_id(request_id)
+        request_context = self.resolve_request_session(request_id)
+        if overlay is not None and overlay.result_is_set:
+            if overlay.result_object is not None:
+                overlay.result_payload = self._legacy_result_to_sdk_payload(
+                    overlay.result_object
+                )
+            return (
+                json.loads(json.dumps(overlay.result_payload))
+                if overlay.result_payload is not None
+                else None
+            )
+        if request_context is None:
+            return None
+        return self._legacy_result_to_sdk_payload(request_context.event.get_result())
+
+    def set_handler_whitelist_for_request(
+        self,
+        request_id: str,
+        plugin_names: set[str] | None,
+    ) -> bool:
+        overlay = self.get_request_overlay_by_request_id(request_id)
+        if overlay is None:
+            return False
+        overlay.handler_whitelist = None if plugin_names is None else set(plugin_names)
+        return True
+
+    def get_handler_whitelist_for_request(
+        self, request_id: str
+    ) -> set[str] | None | object:
+        overlay = self.get_request_overlay_by_request_id(request_id)
+        if overlay is None:
+            return None
+        return (
+            None
+            if overlay.handler_whitelist is None
+            else set(overlay.handler_whitelist)
+        )
+
+    def _get_handler_whitelist_for_event(
+        self, event: AstrMessageEvent
+    ) -> set[str] | None:
+        dispatch_token = self._get_dispatch_token(event)
+        if not dispatch_token:
+            return None
+        overlay = self.get_request_overlay_by_token(dispatch_token)
+        if overlay is None:
+            return None
+        return (
+            None
+            if overlay.handler_whitelist is None
+            else set(overlay.handler_whitelist)
+        )
+
+    @staticmethod
+    def _build_core_message_chain_from_payload(
+        chain_payload: list[dict[str, Any]],
+    ) -> MessageChain:
+        components = []
+        for item in chain_payload:
+            if not isinstance(item, dict):
+                continue
+            comp_type = str(item.get("type", "")).lower()
+            data = item.get("data", {})
+            if comp_type in {"text", "plain"} and isinstance(data, dict):
+                components.append(Plain(str(data.get("text", "")), convert=False))
+                continue
+            if comp_type == "image" and isinstance(data, dict):
+                file_value = str(data.get("file") or data.get("url") or "")
+                if file_value.startswith(("http://", "https://")):
+                    components.append(Image.fromURL(file_value))
+                elif file_value:
+                    file_path = (
+                        file_value[8:]
+                        if file_value.startswith("file:///")
+                        else file_value
+                    )
+                    components.append(Image.fromFileSystem(file_path))
+                continue
+            component_cls = ComponentTypes.get(comp_type)
+            if component_cls is None:
+                components.append(
+                    Plain(json.dumps(item, ensure_ascii=False), convert=False)
+                )
+                continue
+            try:
+                if isinstance(data, dict):
+                    components.append(component_cls(**data))
+                else:
+                    components.append(Plain(str(item), convert=False))
+            except Exception:
+                components.append(
+                    Plain(json.dumps(item, ensure_ascii=False), convert=False)
+                )
+        return MessageChain(components)
+
+    @staticmethod
+    def _legacy_result_to_sdk_payload(
+        result: MessageEventResult | None,
+    ) -> dict[str, Any] | None:
+        if result is None:
+            return None
+        chain = (
+            result.chain.chain
+            if isinstance(result.chain, MessageChain)
+            else result.chain
+        )
+        return {
+            "type": "chain" if chain else "empty",
+            "chain": [
+                component_to_payload_sync(component) for component in (chain or [])
+            ],
+        }
+
+    def get_effective_result(
+        self, event: AstrMessageEvent
+    ) -> MessageEventResult | None:
+        dispatch_token = self._get_dispatch_token(event)
+        if dispatch_token:
+            overlay = self.get_request_overlay_by_token(dispatch_token)
+            if overlay is not None and overlay.result_is_set:
+                if overlay.result_payload is None:
+                    return None
+                if overlay.result_object is None:
+                    chain_payload = overlay.result_payload.get("chain")
+                    if not isinstance(chain_payload, list):
+                        return None
+                    overlay.result_object = MessageEventResult(
+                        chain=self._build_core_message_chain_from_payload(chain_payload)
+                    )
+                return overlay.result_object
+        return event.get_result()
+
     def before_platform_send(self, dispatch_token: str) -> None:
         request_context = self._request_contexts.get(dispatch_token)
         if request_context is None:
             raise AstrBotError.invalid_input(
                 "Unknown SDK dispatch token for platform send"
             )
+        overlay = self.get_request_overlay_by_token(dispatch_token)
+        if overlay is None:
+            raise AstrBotError.cancelled("The SDK request overlay has been closed")
         if request_context.cancelled:
             raise AstrBotError.cancelled("The SDK request has been cancelled")
 
@@ -569,9 +908,13 @@ class SdkPluginBridge:
             raise AstrBotError.invalid_input(
                 "Unknown SDK dispatch token for platform send"
             )
+        overlay = self.get_request_overlay_by_token(dispatch_token)
+        if overlay is None:
+            raise AstrBotError.cancelled("The SDK request overlay has been closed")
         if request_context.cancelled:
             raise AstrBotError.cancelled("The SDK request has been cancelled")
         request_context.dispatch_state.sent_message = True
+        overlay.should_call_llm = False
         request_context.event._has_send_oper = True
         return f"sdk_{dispatch_token}"
 
@@ -633,9 +976,83 @@ class SdkPluginBridge:
                     exc,
                 )
 
+    async def dispatch_message_event(
+        self,
+        event_type: str,
+        event: AstrMessageEvent,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        dispatch_token = self._get_dispatch_token(event)
+        if not dispatch_token:
+            return
+        overlay = self.get_request_overlay_by_token(dispatch_token)
+        if overlay is None:
+            return
+        matches = self._match_event_handlers(
+            event_type,
+            allowed_plugins=overlay.handler_whitelist,
+        )
+        for record, descriptor in matches:
+            if record.session is None:
+                continue
+            request_id = f"sdk_event_{record.plugin_id}_{uuid.uuid4().hex}"
+            request_context = self._request_contexts.get(dispatch_token)
+            if request_context is None:
+                request_context = _RequestContext(
+                    plugin_id=record.plugin_id,
+                    request_id=request_id,
+                    dispatch_token=dispatch_token,
+                    dispatch_state=_DispatchState(event=event),
+                )
+                self._request_contexts[dispatch_token] = request_context
+            request_context.plugin_id = record.plugin_id
+            request_context.request_id = request_id
+            request_context.dispatch_state.event = event
+            request_context.cancelled = False
+            self._request_id_to_token[request_id] = dispatch_token
+            self._request_plugin_ids[request_id] = record.plugin_id
+            event_payload = EventConverter.core_to_sdk(
+                event,
+                dispatch_token=dispatch_token,
+                plugin_id=record.plugin_id,
+                request_id=request_id,
+            )
+            event_payload["type"] = event_type
+            event_payload["event_type"] = event_type
+            event_payload["raw"] = {
+                **(
+                    event_payload["raw"]
+                    if isinstance(event_payload.get("raw"), dict)
+                    else {}
+                ),
+                "event_type": event_type,
+                **(payload or {}),
+            }
+            for key, value in (payload or {}).items():
+                event_payload[key] = value
+            try:
+                await record.session.invoke_handler(
+                    descriptor.id,
+                    event_payload,
+                    request_id=request_id,
+                    args={},
+                )
+            except Exception as exc:
+                logger.warning(
+                    "SDK event handler failed: plugin=%s handler=%s error=%s",
+                    record.plugin_id,
+                    descriptor.id,
+                    exc,
+                )
+            finally:
+                self._request_id_to_token.pop(request_id, None)
+                self._request_plugin_ids.pop(request_id, None)
+
     def _match_event_handlers(
         self,
         event_type: str,
+        *,
+        allowed_plugins: set[str] | None = None,
     ) -> list[tuple[SdkPluginRecord, HandlerDescriptor]]:
         matches: list[tuple[int, int, int, SdkPluginRecord, HandlerDescriptor]] = []
         for record in self._records.values():
@@ -644,6 +1061,8 @@ class SdkPluginBridge:
                 SDK_STATE_FAILED,
                 SDK_STATE_RELOADING,
             }:
+                continue
+            if allowed_plugins is not None and record.plugin_id not in allowed_plugins:
                 continue
             for handler in record.handlers:
                 trigger = handler.descriptor.trigger
@@ -662,6 +1081,64 @@ class SdkPluginBridge:
                 )
         matches.sort(key=lambda item: (item[0], item[1], item[2]))
         return [(record, descriptor) for _, _, _, record, descriptor in matches]
+
+    @staticmethod
+    def _descriptor_event_types(descriptor: HandlerDescriptor) -> list[str]:
+        trigger = descriptor.trigger
+        if isinstance(trigger, EventTrigger):
+            return [trigger.event_type]
+        return []
+
+    @staticmethod
+    def _descriptor_group_path(descriptor: HandlerDescriptor) -> list[str]:
+        route = getattr(descriptor, "command_route", None)
+        if route is None:
+            return []
+        return list(route.group_path)
+
+    def _descriptor_metadata(
+        self,
+        *,
+        plugin_id: str,
+        descriptor: HandlerDescriptor,
+    ) -> dict[str, Any]:
+        return {
+            "plugin_name": plugin_id,
+            "handler_full_name": descriptor.id,
+            "trigger_type": getattr(descriptor.trigger, "type", ""),
+            "event_types": self._descriptor_event_types(descriptor),
+            "enabled": True,
+            "group_path": self._descriptor_group_path(descriptor),
+        }
+
+    def get_handlers_by_event_type(self, event_type: str) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        for record in sorted(self._records.values(), key=lambda item: item.load_order):
+            if record.state in {SDK_STATE_DISABLED, SDK_STATE_FAILED}:
+                continue
+            for handler in record.handlers:
+                trigger = handler.descriptor.trigger
+                if (
+                    isinstance(trigger, EventTrigger)
+                    and trigger.event_type == event_type
+                ):
+                    entries.append(
+                        self._descriptor_metadata(
+                            plugin_id=record.plugin_id,
+                            descriptor=handler.descriptor,
+                        )
+                    )
+        return entries
+
+    def get_handler_by_full_name(self, full_name: str) -> dict[str, Any] | None:
+        for record in self._records.values():
+            for handler in record.handlers:
+                if handler.descriptor.id == full_name:
+                    return self._descriptor_metadata(
+                        plugin_id=record.plugin_id,
+                        descriptor=handler.descriptor,
+                    )
+        return None
 
     async def _load_or_reload_plugin(
         self,
@@ -874,6 +1351,7 @@ class SdkPluginBridge:
             request_context = self._request_contexts.get(inflight.dispatch_token)
             if request_context is not None:
                 request_context.cancelled = True
+            self._close_request_overlay(inflight.dispatch_token)
             record = self._records.get(plugin_id)
             if (
                 record is not None
@@ -895,6 +1373,7 @@ class SdkPluginBridge:
     async def _handle_worker_closed(self, plugin_id: str) -> None:
         if self._stopping:
             return
+        await self._cancel_plugin_requests(plugin_id)
         record = self._records.get(plugin_id)
         if record is None:
             return
@@ -1093,6 +1572,19 @@ class SdkPluginBridge:
     ) -> SdkDispatchResult:
         result = SdkDispatchResult()
         dispatch_state = _DispatchState(event=event)
+        dispatch_token = self._get_dispatch_token(event) or uuid.uuid4().hex
+        self._bind_dispatch_token(event, dispatch_token)
+        overlay = self._ensure_request_overlay(
+            dispatch_token,
+            should_call_llm=not bool(getattr(event, "call_llm", False)),
+        )
+        request_context = _RequestContext(
+            plugin_id="",
+            request_id="",
+            dispatch_token=dispatch_token,
+            dispatch_state=dispatch_state,
+        )
+        self._request_contexts[dispatch_token] = request_context
         for record in records:
             if record.state in {
                 SDK_STATE_DISABLED,
@@ -1102,21 +1594,24 @@ class SdkPluginBridge:
                 continue
             if record.session is None:
                 continue
+            whitelist = (
+                None
+                if overlay.handler_whitelist is None
+                else set(overlay.handler_whitelist)
+            )
+            if whitelist is not None and record.plugin_id not in whitelist:
+                continue
             request_id = f"sdk_waiter_{record.plugin_id}_{uuid.uuid4().hex}"
-            dispatch_token = uuid.uuid4().hex
+            request_context.plugin_id = record.plugin_id
+            request_context.request_id = request_id
+            request_context.cancelled = False
+            setattr(event, "_sdk_last_request_id", request_id)
             payload = EventConverter.core_to_sdk(
                 event,
                 dispatch_token=dispatch_token,
                 plugin_id=record.plugin_id,
                 request_id=request_id,
             )
-            request_context = _RequestContext(
-                plugin_id=record.plugin_id,
-                request_id=request_id,
-                dispatch_token=dispatch_token,
-                dispatch_state=dispatch_state,
-            )
-            self._request_contexts[dispatch_token] = request_context
             self._request_id_to_token[request_id] = dispatch_token
             self._request_plugin_ids[request_id] = record.plugin_id
             try:
@@ -1134,7 +1629,6 @@ class SdkPluginBridge:
                 )
                 output = {}
             finally:
-                self._request_contexts.pop(dispatch_token, None)
                 self._request_id_to_token.pop(request_id, None)
                 self._request_plugin_ids.pop(request_id, None)
             handler_result = EventConverter.extract_handler_result(
@@ -1147,6 +1641,11 @@ class SdkPluginBridge:
                 dispatch_state.sent_message or handler_result["sent_message"]
             )
             dispatch_state.stopped = dispatch_state.stopped or handler_result["stop"]
+            if handler_result["call_llm"]:
+                overlay.requested_llm = True
+                overlay.should_call_llm = True
+            if handler_result["sent_message"] or handler_result["stop"]:
+                overlay.should_call_llm = False
             if handler_result["stop"]:
                 break
         result.sent_message = dispatch_state.sent_message
@@ -1155,8 +1654,10 @@ class SdkPluginBridge:
             result.skipped_reason = SKIP_NO_MATCH
         if result.sent_message:
             event._has_send_oper = True
+            overlay.should_call_llm = False
             event.should_call_llm(True)
         if result.stopped:
             event.stop_event()
+            overlay.should_call_llm = False
             event.should_call_llm(True)
         return result
