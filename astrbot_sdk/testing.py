@@ -135,6 +135,34 @@ class LocalRuntimeConfig:
     event_type: str = "message"
 
 
+@dataclass(slots=True)
+class MockClock:
+    now: float = 0.0
+
+    def time(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> float:
+        self.now += float(seconds)
+        return self.now
+
+
+@dataclass(slots=True)
+class SDKTestEnvironment:
+    root: Path
+
+    @property
+    def plugins_dir(self) -> Path:
+        path = self.root / "plugins"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def plugin_dir(self, name: str) -> Path:
+        path = self.plugins_dir / name
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+
 class PluginHarness:
     """本地插件消息泵。
 
@@ -791,12 +819,14 @@ __all__ = [
     "InMemoryDB",
     "InMemoryMemory",
     "LocalRuntimeConfig",
+    "MockClock",
     "MockCapabilityRouter",
     "MockContext",
     "MockLLMClient",
     "MockMessageEvent",
     "MockPeer",
     "MockPlatformClient",
+    "SDKTestEnvironment",
     "PluginHarness",
     "RecordedSend",
     "StdoutPlatformSink",

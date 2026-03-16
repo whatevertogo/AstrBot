@@ -44,8 +44,7 @@ class _SessionWaiterDecorator(Protocol):
             Awaitable[_ResultT],
         ],
         /,
-    ) -> Callable[Concatenate[MessageEvent, _P], Coroutine[Any, Any, _ResultT]]:
-        ...
+    ) -> Callable[Concatenate[MessageEvent, _P], Coroutine[Any, Any, _ResultT]]: ...
 
     @overload
     def __call__(
@@ -58,8 +57,7 @@ class _SessionWaiterDecorator(Protocol):
     ) -> Callable[
         Concatenate[_OwnerT, MessageEvent, _P],
         Coroutine[Any, Any, _ResultT],
-    ]:
-        ...
+    ]: ...
 
 
 @dataclass(slots=True)
@@ -164,6 +162,33 @@ class SessionWaiterManager:
             return await entry.controller.future
         finally:
             await self.unregister(session_key)
+
+    async def wait_for_event(
+        self,
+        *,
+        event: MessageEvent,
+        timeout: int,
+        record_history_chains: bool = False,
+    ) -> MessageEvent:
+        future: asyncio.Future[MessageEvent] = (
+            asyncio.get_running_loop().create_future()
+        )
+
+        async def _handler(
+            controller: SessionController,
+            waiter_event: MessageEvent,
+        ) -> None:
+            if not future.done():
+                future.set_result(waiter_event)
+            controller.stop()
+
+        await self.register(
+            event=event,
+            handler=_handler,
+            timeout=timeout,
+            record_history_chains=record_history_chains,
+        )
+        return future.result()
 
     async def unregister(self, session_key: str) -> None:
         self._entries.pop(session_key, None)

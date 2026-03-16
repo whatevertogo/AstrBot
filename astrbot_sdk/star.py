@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import traceback
 from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING, Any, cast
@@ -103,12 +104,20 @@ class Star(PluginKVStoreMixin):
 
     async def on_error(self, error: Exception, event, ctx) -> None:
         if isinstance(error, AstrBotError):
+            lines: list[str] = []
             if error.retryable:
-                await event.reply("请求失败，请稍后重试")
+                lines.append("请求失败，请稍后重试")
             elif error.hint:
-                await event.reply(error.hint)
+                lines.append(error.hint)
             else:
-                await event.reply(error.message)
+                lines.append(error.message)
+            if error.docs_url:
+                lines.append(f"文档：{error.docs_url}")
+            if error.details:
+                lines.append(
+                    f"详情：{json.dumps(error.details, ensure_ascii=False, sort_keys=True)}"
+                )
+            await event.reply("\n".join(lines))
         else:
             await event.reply("出了点问题，请联系插件作者")
         logger.error("handler 执行失败\n{}", traceback.format_exc())

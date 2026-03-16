@@ -81,9 +81,7 @@ class TTSProvider(_BaseProviderProxy):
             yield TTSAudioChunk(
                 audio=base64.b64decode(audio_base64) if audio_base64 else b"",
                 text=(
-                    str(chunk.get("text"))
-                    if chunk.get("text") is not None
-                    else None
+                    str(chunk.get("text")) if chunk.get("text") is not None else None
                 ),
             )
 

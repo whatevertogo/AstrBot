@@ -7,6 +7,7 @@ SDK工作线程应该保持轻量级并且不能依赖于主机核心引导程�
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import inspect
 import os
@@ -19,6 +20,7 @@ from urllib.parse import urlparse
 from urllib.request import urlretrieve
 
 from ._star_runtime import current_runtime_context
+from .errors import AstrBotError
 
 
 def _temp_path(prefix: str, suffix: str = "") -> Path:
@@ -496,6 +498,82 @@ async def component_to_payload(component: Any) -> dict[str, Any]:
     return component_to_payload_sync(component)
 
 
+class MediaHelper:
+    @staticmethod
+    async def from_url(
+        url: str,
+        *,
+        kind: str = "auto",
+    ) -> BaseMessageComponent:
+        url_text = str(url).strip()
+        if not url_text:
+            raise AstrBotError.invalid_input(
+                "MediaHelper.from_url requires a non-empty url"
+            )
+        normalized_kind = str(kind).strip().lower() or "auto"
+        if normalized_kind == "auto":
+            normalized_kind = MediaHelper._kind_from_url(url_text)
+        if normalized_kind == "image":
+            return Image.fromURL(url_text)
+        if normalized_kind in {"record", "audio"}:
+            return Record.fromURL(url_text)
+        if normalized_kind == "video":
+            return Video.fromURL(url_text)
+        if normalized_kind == "file":
+            return File(name=MediaHelper._filename_from_url(url_text), url=url_text)
+        raise AstrBotError.invalid_input(
+            f"Unsupported media kind: {kind}",
+            details={"kind": kind, "url": url_text},
+        )
+
+    @staticmethod
+    async def download(url: str, save_dir: Path) -> Path:
+        url_text = str(url).strip()
+        if not url_text:
+            raise AstrBotError.invalid_input(
+                "MediaHelper.download requires a non-empty url"
+            )
+        parsed = urlparse(url_text)
+        if parsed.scheme not in {"http", "https"}:
+            raise AstrBotError.invalid_input(
+                "MediaHelper.download only supports http/https urls",
+                details={"url": url_text},
+            )
+        target_dir = Path(save_dir)
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise AstrBotError.internal_error(
+                f"Failed to prepare download directory: {target_dir}",
+                details={"save_dir": str(target_dir)},
+            ) from exc
+        target_path = target_dir / MediaHelper._filename_from_url(url_text)
+        try:
+            await asyncio.to_thread(urlretrieve, url_text, target_path)
+        except Exception as exc:
+            raise AstrBotError.network_error(
+                f"Failed to download media from '{url_text}'",
+                details={"url": url_text},
+            ) from exc
+        return target_path.resolve()
+
+    @staticmethod
+    def _kind_from_url(url: str) -> str:
+        suffix = Path(urlparse(url).path).suffix.lower()
+        if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}:
+            return "image"
+        if suffix in {".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a"}:
+            return "record"
+        if suffix in {".mp4", ".webm", ".mov", ".mkv", ".avi"}:
+            return "video"
+        return "file"
+
+    @staticmethod
+    def _filename_from_url(url: str) -> str:
+        name = Path(urlparse(url).path).name
+        return name or "download"
+
+
 __all__ = [
     "At",
     "AtAll",
@@ -503,6 +581,7 @@ __all__ = [
     "File",
     "Forward",
     "Image",
+    "MediaHelper",
     "Plain",
     "Poke",
     "Record",

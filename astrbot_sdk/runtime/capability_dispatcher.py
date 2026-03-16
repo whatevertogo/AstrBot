@@ -19,11 +19,12 @@ import inspect
 import json
 import typing
 from collections.abc import AsyncIterator, Sequence
-from typing import Any, get_type_hints
+from typing import Any, cast, get_type_hints
 
 from loguru import logger
 
 from .._invocation_context import caller_plugin_scope
+from .._plugin_logger import PluginLogger
 from .._star_runtime import bind_star_runtime
 from .._typing_utils import unwrap_optional
 from ..context import CancelToken, Context
@@ -115,6 +116,11 @@ class CapabilityDispatcher:
             plugin_id=plugin_id,
             cancel_token=cancel_token,
         )
+        bound_logger = cast(PluginLogger, ctx.logger).bind(
+            request_id=message.id,
+            capability=message.capability,
+        )
+        ctx.logger = bound_logger
 
         with caller_plugin_scope(plugin_id):
             task = asyncio.create_task(
@@ -156,6 +162,16 @@ class CapabilityDispatcher:
             if isinstance(event_payload, dict)
             else None,
         )
+        bound_logger = cast(PluginLogger, ctx.logger).bind(
+            request_id=message.id,
+            capability="internal.llm_tool.execute",
+            session_id=str(
+                (event_payload or {}).get("session_id", "")
+                if isinstance(event_payload, dict)
+                else ""
+            ),
+        )
+        ctx.logger = bound_logger
         event = MessageEvent.from_payload(
             event_payload if isinstance(event_payload, dict) else {},
             context=ctx,

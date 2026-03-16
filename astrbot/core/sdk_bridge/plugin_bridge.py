@@ -27,6 +27,7 @@ from astrbot_sdk.protocol.descriptors import (
     ScheduleTrigger,
 )
 from astrbot_sdk.runtime.loader import (
+    PluginDiscoveryIssue,
     PluginEnvironmentManager,
     PluginSpec,
     discover_plugins,
@@ -146,6 +147,7 @@ class SdkPluginRecord:
     session: WorkerSession | None = None
     restart_attempted: bool = False
     failure_reason: str = ""
+    issues: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def plugin_id(self) -> str:
@@ -194,6 +196,7 @@ class SdkPluginBridge:
         self._http_routes: dict[str, list[SdkHttpRoute]] = {}
         self._session_waiters: dict[str, set[str]] = {}
         self._schedule_job_ids: dict[str, set[str]] = {}
+        self._discovery_issues: dict[str, list[dict[str, Any]]] = {}
 
     async def start(self) -> None:
         if self._started:
@@ -228,6 +231,7 @@ class SdkPluginBridge:
 
     async def reload_all(self, *, reset_restart_budget: bool = False) -> None:
         discovered = discover_plugins(self.plugins_dir)
+        self._set_discovery_issues(discovered.issues)
         self.env_manager.plan(discovered.plugins)
         known = {plugin.name for plugin in discovered.plugins}
         for plugin_id in list(self._records.keys()):
@@ -243,6 +247,7 @@ class SdkPluginBridge:
 
     async def reload_plugin(self, plugin_id: str) -> None:
         discovered = discover_plugins(self.plugins_dir)
+        self._set_discovery_issues(discovered.issues)
         self.env_manager.plan(discovered.plugins)
         for load_order, plugin in enumerate(discovered.plugins):
             if plugin.name != plugin_id:
@@ -267,6 +272,7 @@ class SdkPluginBridge:
 
     async def turn_on_plugin(self, plugin_id: str) -> None:
         discovered = discover_plugins(self.plugins_dir)
+        self._set_discovery_issues(discovered.issues)
         self.env_manager.plan(discovered.plugins)
         for load_order, plugin in enumerate(discovered.plugins):
             if plugin.name != plugin_id:
@@ -282,7 +288,12 @@ class SdkPluginBridge:
 
     def list_plugins(self) -> list[dict[str, Any]]:
         records = sorted(self._records.values(), key=lambda item: item.load_order)
-        return [self._record_to_dashboard_item(record) for record in records]
+        items = [self._record_to_dashboard_item(record) for record in records]
+        for plugin_id, issues in sorted(self._discovery_issues.items()):
+            if plugin_id in self._records:
+                continue
+            items.append(self._failed_issue_to_dashboard_item(plugin_id, issues))
+        return items
 
     def get_plugin_metadata(self, plugin_id: str) -> dict[str, Any] | None:
         record = self._records.get(plugin_id)
@@ -309,6 +320,7 @@ class SdkPluginBridge:
                     else None
                 ),
                 "runtime_kind": "sdk",
+                "issues": [dict(item) for item in record.issues],
             }
         for plugin in self.star_context.get_all_stars():
             if plugin.name == plugin_id:
@@ -323,6 +335,20 @@ class SdkPluginBridge:
                     "astrbot_version": plugin.astrbot_version,
                     "runtime_kind": "legacy",
                 }
+        if plugin_id in self._discovery_issues:
+            issue = self._discovery_issues[plugin_id][0]
+            return {
+                "name": plugin_id,
+                "display_name": plugin_id,
+                "description": str(issue.get("message", "")),
+                "author": "",
+                "version": "0.0.0",
+                "enabled": False,
+                "support_platforms": [],
+                "astrbot_version": None,
+                "runtime_kind": "sdk",
+                "issues": [dict(item) for item in self._discovery_issues[plugin_id]],
+            }
         return None
 
     def list_plugin_metadata(self) -> list[dict[str, Any]]:
@@ -342,6 +368,12 @@ class SdkPluginBridge:
                 }
             )
         for plugin_id in sorted(self._records.keys()):
+            plugin_metadata = self.get_plugin_metadata(plugin_id)
+            if plugin_metadata is not None:
+                metadata.append(plugin_metadata)
+        for plugin_id in sorted(self._discovery_issues.keys()):
+            if plugin_id in self._records:
+                continue
             plugin_metadata = self.get_plugin_metadata(plugin_id)
             if plugin_metadata is not None:
                 metadata.append(plugin_metadata)
@@ -1433,6 +1465,7 @@ class SdkPluginBridge:
             restart_attempted=False
             if reset_restart_budget
             else (current.restart_attempted if current is not None else False),
+            issues=[dict(item) for item in self._discovery_issues.get(plugin.name, [])],
         )
         self._records[plugin.name] = record
         if disabled:
@@ -1490,6 +1523,7 @@ class SdkPluginBridge:
                 spec = AgentSpec.from_payload(normalized)
                 record.agents[spec.name] = spec
             await self._register_schedule_handlers(record)
+            record.issues.extend(issue.to_payload() for issue in session.issues)
             record.unsupported_features = sorted(unsupported_features)
             record.state = (
                 SDK_STATE_UNSUPPORTED_PARTIAL
@@ -1501,6 +1535,15 @@ class SdkPluginBridge:
             record.session = None
             record.state = SDK_STATE_FAILED
             record.failure_reason = str(exc)
+            record.issues.append(
+                PluginDiscoveryIssue(
+                    severity="error",
+                    phase="load",
+                    plugin_id=plugin.name,
+                    message="插件 worker 启动失败",
+                    details=str(exc),
+                ).to_payload()
+            )
             logger.warning("Failed to start SDK plugin %s: %s", plugin.name, exc)
         finally:
             self._persist_state_overrides()
@@ -1566,6 +1609,12 @@ class SdkPluginBridge:
             )
 
         return _run
+
+    def _set_discovery_issues(self, issues: list[PluginDiscoveryIssue]) -> None:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for issue in issues:
+            grouped.setdefault(issue.plugin_id, []).append(issue.to_payload())
+        self._discovery_issues = grouped
 
     async def _invoke_schedule_handler(
         self,
@@ -1732,6 +1781,39 @@ class SdkPluginBridge:
             "trigger_summary": [item["cmd"] for item in handlers],
             "unsupported_features": list(record.unsupported_features),
             "failure_reason": record.failure_reason,
+            "issues": [dict(item) for item in record.issues],
+        }
+
+    def _failed_issue_to_dashboard_item(
+        self,
+        plugin_id: str,
+        issues: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        issue = issues[0] if issues else {}
+        failure_reason = str(issue.get("details") or issue.get("message") or "")
+        return {
+            "name": plugin_id,
+            "repo": "",
+            "author": "",
+            "desc": str(issue.get("message", "")),
+            "version": "0.0.0",
+            "reserved": False,
+            "activated": False,
+            "online_vesion": "",
+            "handlers": [],
+            "display_name": plugin_id,
+            "logo": None,
+            "support_platforms": [],
+            "astrbot_version": "",
+            "installed_at": None,
+            "runtime_kind": "sdk",
+            "source_kind": "local_dir",
+            "managed_by": "sdk_bridge",
+            "state": SDK_STATE_FAILED,
+            "trigger_summary": [],
+            "unsupported_features": [],
+            "failure_reason": failure_reason,
+            "issues": [dict(item) for item in issues],
         }
 
     def _handler_to_dashboard_item(self, handler: SdkHandlerRef) -> dict[str, Any]:

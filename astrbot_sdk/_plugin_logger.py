@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 __all__ = ["PluginLogEntry", "PluginLogger"]
@@ -15,6 +15,7 @@ class PluginLogEntry:
     time: float
     message: str
     plugin_id: str
+    context: dict[str, Any] = field(default_factory=dict)
 
 
 class _PluginLogBroker:
@@ -51,10 +52,17 @@ def _get_broker(plugin_id: str) -> _PluginLogBroker:
 
 
 class PluginLogger:
-    def __init__(self, *, plugin_id: str, logger: Any) -> None:
+    def __init__(
+        self,
+        *,
+        plugin_id: str,
+        logger: Any,
+        bound_context: dict[str, Any] | None = None,
+    ) -> None:
         self._plugin_id = plugin_id
         self._logger = logger
         self._broker = _get_broker(plugin_id)
+        self._bound_context = dict(bound_context or {})
 
     @property
     def plugin_id(self) -> str:
@@ -64,12 +72,14 @@ class PluginLogger:
         return PluginLogger(
             plugin_id=self._plugin_id,
             logger=self._logger.bind(**kwargs),
+            bound_context={**self._bound_context, **kwargs},
         )
 
     def opt(self, *args: Any, **kwargs: Any) -> PluginLogger:
         return PluginLogger(
             plugin_id=self._plugin_id,
             logger=self._logger.opt(*args, **kwargs),
+            bound_context=self._bound_context,
         )
 
     async def watch(self) -> AsyncIterator[PluginLogEntry]:
@@ -106,6 +116,7 @@ class PluginLogger:
             time=time.time(),
             message=self._format_message(message, *args, **kwargs),
             plugin_id=self._plugin_id,
+            context=dict(self._bound_context),
         )
         self._broker.publish(entry)
 

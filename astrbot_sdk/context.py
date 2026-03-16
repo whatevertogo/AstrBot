@@ -283,7 +283,7 @@ class Context:
         self.kb_manager = self.kbs
         self._llm_tool_manager = LLMToolManager(proxy)
         self.plugin_id = plugin_id
-        self.logger = (
+        self.logger: PluginLogger = (
             bound_logger
             if isinstance(bound_logger, PluginLogger)
             else PluginLogger(plugin_id=plugin_id, logger=bound_logger)
