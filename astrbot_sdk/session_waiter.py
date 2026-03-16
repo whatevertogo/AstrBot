@@ -205,6 +205,23 @@ class SessionWaiterManager:
                 session_key,
             )
 
+    async def fail(self, session_key: str, error: Exception) -> bool:
+        entry = self._entries.get(session_key)
+        if entry is None:
+            return False
+        lock = self._locks.setdefault(session_key, asyncio.Lock())
+        async with lock:
+            current = self._entries.get(session_key)
+            if current is None:
+                return False
+            current.controller.stop(error)
+            if (
+                current.controller.current_event is not None
+                and not current.controller.current_event.is_set()
+            ):
+                current.controller.current_event.set()
+            return True
+
     def has_waiter(self, event: MessageEvent) -> bool:
         return event.unified_msg_origin in self._entries
 

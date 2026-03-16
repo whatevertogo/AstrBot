@@ -117,8 +117,11 @@ class CapabilityDispatcher:
             cancel_token=cancel_token,
         )
         bound_logger = cast(PluginLogger, ctx.logger).bind(
+            plugin_id=plugin_id,
             request_id=message.id,
             capability=message.capability,
+            session_id=self._logger_session_id(dict(message.input)),
+            event_type=self._logger_event_type(dict(message.input)),
         )
         ctx.logger = bound_logger
 
@@ -163,13 +166,11 @@ class CapabilityDispatcher:
             else None,
         )
         bound_logger = cast(PluginLogger, ctx.logger).bind(
+            plugin_id=plugin_id,
             request_id=message.id,
             capability="internal.llm_tool.execute",
-            session_id=str(
-                (event_payload or {}).get("session_id", "")
-                if isinstance(event_payload, dict)
-                else ""
-            ),
+            session_id=self._logger_session_id(payload),
+            event_type=self._logger_event_type(payload),
         )
         ctx.logger = bound_logger
         event = MessageEvent.from_payload(
@@ -302,6 +303,26 @@ class CapabilityDispatcher:
         if loaded.plugin_id:
             return loaded.plugin_id
         return self._plugin_id
+
+    @staticmethod
+    def _logger_session_id(payload: dict[str, Any]) -> str:
+        if isinstance(payload.get("event"), dict):
+            return str(payload["event"].get("session_id", ""))
+        return str(payload.get("session", ""))
+
+    @staticmethod
+    def _logger_event_type(payload: dict[str, Any]) -> str:
+        if isinstance(payload.get("event"), dict):
+            event_payload = payload["event"]
+            return str(
+                event_payload.get("event_type")
+                or event_payload.get("type")
+                or event_payload.get("message_type")
+                or "message"
+            )
+        if payload.get("session") is not None:
+            return "capability"
+        return "capability"
 
     async def cancel(self, request_id: str) -> None:
         active = self._active.get(request_id)

@@ -82,13 +82,29 @@ def parse_command_model_remainder(
         )
 
     fields = model_param.model_cls.model_fields
-    values: dict[str, Any] = {}
-    positional_tokens: list[str] = []
+    explicit_values: dict[str, Any] = {}
+    positional_values: dict[str, Any] = {}
+    positional_field_names = [
+        name
+        for name, field in fields.items()
+        if _supported_scalar_type(field.annotation)[0] is not bool
+    ]
+    positional_index = 0
     index = 0
     while index < len(tokens):
         token = tokens[index]
         if not token.startswith("--"):
-            positional_tokens.append(token)
+            assigned = False
+            while positional_index < len(positional_field_names):
+                field_name = positional_field_names[positional_index]
+                positional_index += 1
+                if field_name in explicit_values or field_name in positional_values:
+                    continue
+                positional_values[field_name] = token
+                assigned = True
+                break
+            if not assigned:
+                raise _command_parse_error("Too many positional arguments")
             index += 1
             continue
 
@@ -103,7 +119,7 @@ def parse_command_model_remainder(
         field = fields.get(field_name)
         if field is None:
             raise _command_parse_error(f"Unknown field: {field_name}")
-        if field_name in values:
+        if field_name in explicit_values:
             raise _command_parse_error(f"Duplicate field: {field_name}")
         field_type, _is_optional = _supported_scalar_type(field.annotation)
         if field_type is bool:
@@ -111,7 +127,7 @@ def parse_command_model_remainder(
                 raise _command_parse_error(
                     f"Boolean field '{field_name}' only supports --{field_name} or --no-{field_name}"
                 )
-            values[field_name] = not negated
+            explicit_values[field_name] = not negated
             index += 1
             continue
         if negated:
@@ -123,19 +139,10 @@ def parse_command_model_remainder(
             if index >= len(tokens):
                 raise _command_parse_error(f"Missing value for field: {field_name}")
             explicit_value = tokens[index]
-        values[field_name] = explicit_value
+        explicit_values[field_name] = explicit_value
         index += 1
 
-    positional_fields = [
-        name
-        for name, field in fields.items()
-        if name not in values
-        and _supported_scalar_type(field.annotation)[0] is not bool
-    ]
-    if len(positional_tokens) > len(positional_fields):
-        raise _command_parse_error("Too many positional arguments")
-    for index, token in enumerate(positional_tokens):
-        values[positional_fields[index]] = token
+    values = {**positional_values, **explicit_values}
 
     try:
         model = model_param.model_cls.model_validate(values)

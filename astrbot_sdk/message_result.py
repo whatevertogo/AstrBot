@@ -23,11 +23,9 @@ from .message_components import (
     AtAll,
     BaseMessageComponent,
     File,
-    Image,
     Plain,
-    Record,
     Reply,
-    Video,
+    build_media_component_from_url,
     component_to_payload,
     component_to_payload_sync,
     is_message_component,
@@ -121,15 +119,15 @@ class MessageBuilder:
         return self
 
     def image(self, url: str) -> MessageBuilder:
-        self.components.append(Image.fromURL(url))
+        self.components.append(build_media_component_from_url(url, kind="image"))
         return self
 
     def record(self, url: str) -> MessageBuilder:
-        self.components.append(Record.fromURL(url))
+        self.components.append(build_media_component_from_url(url, kind="record"))
         return self
 
     def video(self, url: str) -> MessageBuilder:
-        self.components.append(Video.fromURL(url))
+        self.components.append(build_media_component_from_url(url, kind="video"))
         return self
 
     def file(self, name: str, *, file: str = "", url: str = "") -> MessageBuilder:

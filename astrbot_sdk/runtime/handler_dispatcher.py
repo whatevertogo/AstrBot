@@ -125,6 +125,7 @@ class HandlerDispatcher:
         )
         event = MessageEvent.from_payload(event_payload, context=ctx)
         bound_logger = cast(PluginLogger, ctx.logger).bind(
+            plugin_id=plugin_id,
             request_id=message.id,
             handler_ref=handler_id,
             session_id=event.session_id,
@@ -462,6 +463,11 @@ class HandlerDispatcher:
                 summary["sent_message"] = True
                 return summary
             active.session.mark_replaced()
+            await self._session_waiters.fail(
+                active.session.session_key,
+                ConversationReplaced("conversation replaced by a newer session"),
+            )
+            await asyncio.sleep(0)
             active.task.cancel()
             try:
                 await asyncio.wait_for(

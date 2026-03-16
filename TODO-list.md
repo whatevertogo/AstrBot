@@ -803,7 +803,7 @@
 6. **插件依赖管理** - `PluginVersionIncompatibleError`, `PluginDependencyInstallError`, `_import_plugin_with_dependency_recovery()`
 7. **消息撤回** - 消息撤回 API
 8. **日志系统** - `ctx.logger.watch()` ✅；`LogBroker` / `LogManager.GetLogger()` 延期
-9. **Cron 定时任务管理** - `CronJobManager`, 任务持久化
+9. **Cron 定时任务管理** - `CronJobManager`, 任务持久化 //被替代
 10. **Reply 消息组件属性** - `id`, `chain`, `sender_id`, `sender_nickname`, `message_str` ✅
 
 ---
