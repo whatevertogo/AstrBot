@@ -275,7 +275,11 @@ terminate()       ← 后调用（无 Context）
 
 **签名**:
 ```python
-async def on_error(self, error: Exception, event, ctx) -> None
+    async def on_error(self, error: Exception, event, ctx) -> None
+
+    # 类方法
+    @classmethod
+    def __astrbot_is_new_star__(cls) -> bool
 ```
 
 **参数**:
@@ -334,6 +338,24 @@ class MyPlugin(Star):
 1. 始终记录错误日志
 2. 向用户提供友好的错误提示
 3. 调用 `await super().on_error(...)` 作为后备
+
+---
+
+## 类方法
+
+### `__astrbot_is_new_star__()`
+
+标识类为 v4 原生插件。
+
+**签名**:
+```python
+@classmethod
+def __astrbot_is_new_star__(cls) -> bool
+```
+
+**返回**: `bool` - 始终返回 `True`
+
+**说明**: 此方法用于运行时识别插件类型，v4 原生插件返回 `True`，旧版插件无此方法。
 
 ---
 
