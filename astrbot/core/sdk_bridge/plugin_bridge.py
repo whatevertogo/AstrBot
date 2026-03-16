@@ -16,6 +16,8 @@ from astrbot.core.message.message_event_result import MessageChain, MessageEvent
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from astrbot_sdk.errors import AstrBotError
+from astrbot_sdk.llm.agents import AgentSpec
+from astrbot_sdk.llm.entities import LLMToolSpec
 from astrbot_sdk.message_components import component_to_payload_sync
 from astrbot_sdk.protocol.descriptors import (
     CommandTrigger,
@@ -137,6 +139,9 @@ class SdkPluginRecord:
     unsupported_features: list[str]
     config: dict[str, Any]
     handlers: list[SdkHandlerRef]
+    llm_tools: dict[str, LLMToolSpec] = field(default_factory=dict)
+    active_llm_tools: set[str] = field(default_factory=set)
+    agents: dict[str, AgentSpec] = field(default_factory=dict)
     session: WorkerSession | None = None
     restart_attempted: bool = False
     failure_reason: str = ""
@@ -321,6 +326,82 @@ class SdkPluginBridge:
         if record is None:
             return None
         return dict(record.config)
+
+    def get_registered_llm_tools(self, plugin_id: str) -> list[LLMToolSpec]:
+        record = self._records.get(plugin_id)
+        if record is None:
+            return []
+        return [item.model_copy(deep=True) for item in record.llm_tools.values()]
+
+    def get_active_llm_tools(self, plugin_id: str) -> list[LLMToolSpec]:
+        record = self._records.get(plugin_id)
+        if record is None:
+            return []
+        return [
+            item.model_copy(deep=True)
+            for name, item in record.llm_tools.items()
+            if name in record.active_llm_tools
+        ]
+
+    def get_llm_tool(self, plugin_id: str, name: str) -> LLMToolSpec | None:
+        record = self._records.get(plugin_id)
+        if record is None:
+            return None
+        spec = record.llm_tools.get(name)
+        if spec is None:
+            return None
+        return spec.model_copy(deep=True)
+
+    def add_llm_tools(self, plugin_id: str, tools: list[LLMToolSpec]) -> list[str]:
+        record = self._records.get(plugin_id)
+        if record is None:
+            return []
+        names: list[str] = []
+        for spec in tools:
+            record.llm_tools[spec.name] = spec.model_copy(deep=True)
+            if spec.active:
+                record.active_llm_tools.add(spec.name)
+            else:
+                record.active_llm_tools.discard(spec.name)
+            names.append(spec.name)
+        return names
+
+    def activate_llm_tool(self, plugin_id: str, name: str) -> bool:
+        record = self._records.get(plugin_id)
+        if record is None:
+            return False
+        spec = record.llm_tools.get(name)
+        if spec is None:
+            return False
+        spec.active = True
+        record.active_llm_tools.add(name)
+        return True
+
+    def deactivate_llm_tool(self, plugin_id: str, name: str) -> bool:
+        record = self._records.get(plugin_id)
+        if record is None:
+            return False
+        spec = record.llm_tools.get(name)
+        if spec is None:
+            return False
+        spec.active = False
+        record.active_llm_tools.discard(name)
+        return True
+
+    def get_registered_agents(self, plugin_id: str) -> list[AgentSpec]:
+        record = self._records.get(plugin_id)
+        if record is None:
+            return []
+        return [item.model_copy(deep=True) for item in record.agents.values()]
+
+    def get_registered_agent(self, plugin_id: str, name: str) -> AgentSpec | None:
+        record = self._records.get(plugin_id)
+        if record is None:
+            return None
+        spec = record.agents.get(name)
+        if spec is None:
+            return None
+        return spec.model_copy(deep=True)
 
     def register_http_api(
         self,
@@ -738,9 +819,7 @@ class SdkPluginBridge:
             overlay.result_payload = normalized_payload
             chain_payload = normalized_payload.get("chain")
             overlay.result_object = (
-                MessageEventResult(
-                    chain=self._build_core_message_chain_from_payload(chain_payload)
-                )
+                self._build_core_result_from_chain_payload(chain_payload)
                 if isinstance(chain_payload, list)
                 else None
             )
@@ -853,6 +932,20 @@ class SdkPluginBridge:
                 )
         return MessageChain(components)
 
+    @classmethod
+    def _build_core_result_from_chain_payload(
+        cls,
+        chain_payload: list[dict[str, Any]],
+    ) -> MessageEventResult:
+        chain = cls._build_core_message_chain_from_payload(chain_payload)
+        result = MessageEventResult()
+        # Core stages currently treat result.chain as a MessageChain-like object and
+        # call get_plain_text()/mutate nested components on it directly.
+        setattr(result, "chain", chain)
+        result.use_t2i_ = chain.use_t2i_
+        result.type = chain.type
+        return result
+
     @staticmethod
     def _legacy_result_to_sdk_payload(
         result: MessageEventResult | None,
@@ -884,8 +977,8 @@ class SdkPluginBridge:
                     chain_payload = overlay.result_payload.get("chain")
                     if not isinstance(chain_payload, list):
                         return None
-                    overlay.result_object = MessageEventResult(
-                        chain=self._build_core_message_chain_from_payload(chain_payload)
+                    overlay.result_object = self._build_core_result_from_chain_payload(
+                        chain_payload
                     )
                 return overlay.result_object
         return event.get_result()
@@ -1163,6 +1256,9 @@ class SdkPluginBridge:
             unsupported_features=[],
             config=load_plugin_config(plugin),
             handlers=[],
+            llm_tools={},
+            active_llm_tools=set(),
+            agents={},
             restart_attempted=False
             if reset_restart_budget
             else (current.restart_attempted if current is not None else False),
@@ -1173,14 +1269,15 @@ class SdkPluginBridge:
             return
 
         try:
+            def _schedule_closed(plugin_id: str = plugin.name) -> None:
+                asyncio.create_task(self._handle_worker_closed(plugin_id))
+
             session = WorkerSession(
                 plugin=plugin,
                 repo_root=Path(__file__).resolve().parents[3],
                 env_manager=self.env_manager,
                 capability_router=self.capability_bridge,
-                on_closed=lambda plugin_id=plugin.name: asyncio.create_task(
-                    self._handle_worker_closed(plugin_id)
-                ),
+                on_closed=_schedule_closed,
             )
             await session.start()
             session.start_close_watch()
@@ -1198,6 +1295,28 @@ class SdkPluginBridge:
                         declaration_order=index,
                     )
                 )
+            for item in session.llm_tools:
+                if not isinstance(item, dict):
+                    continue
+                plugin_name = str(item.get("plugin_id") or plugin.name)
+                if plugin_name != plugin.name:
+                    continue
+                normalized = dict(item)
+                normalized.pop("plugin_id", None)
+                spec = LLMToolSpec.from_payload(normalized)
+                record.llm_tools[spec.name] = spec
+                if spec.active:
+                    record.active_llm_tools.add(spec.name)
+            for item in session.agents:
+                if not isinstance(item, dict):
+                    continue
+                plugin_name = str(item.get("plugin_id") or plugin.name)
+                if plugin_name != plugin.name:
+                    continue
+                normalized = dict(item)
+                normalized.pop("plugin_id", None)
+                spec = AgentSpec.from_payload(normalized)
+                record.agents[spec.name] = spec
             await self._register_schedule_handlers(record)
             record.unsupported_features = sorted(unsupported_features)
             record.state = (

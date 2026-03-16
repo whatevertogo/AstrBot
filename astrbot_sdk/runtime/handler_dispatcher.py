@@ -27,6 +27,7 @@ import inspect
 import re
 import shlex
 import typing
+from collections.abc import Sequence
 from typing import Any, get_type_hints
 
 from .._invocation_context import caller_plugin_scope
@@ -49,7 +50,9 @@ from .loader import LoadedHandler
 
 
 class HandlerDispatcher:
-    def __init__(self, *, plugin_id: str, peer, handlers: list[LoadedHandler]) -> None:
+    def __init__(
+        self, *, plugin_id: str, peer, handlers: Sequence[LoadedHandler]
+    ) -> None:
         self._plugin_id = plugin_id
         self._peer = peer
         self._handlers = {item.descriptor.id: item for item in handlers}
@@ -80,11 +83,17 @@ class HandlerDispatcher:
             raise LookupError(f"handler not found: {handler_id}")
 
         plugin_id = self._resolve_plugin_id(loaded)
-        ctx = Context(peer=self._peer, plugin_id=plugin_id, cancel_token=cancel_token)
-        event = MessageEvent.from_payload(message.input.get("event", {}), context=ctx)
+        event_payload = message.input.get("event", {})
+        ctx = Context(
+            peer=self._peer,
+            plugin_id=plugin_id,
+            cancel_token=cancel_token,
+            source_event_payload=event_payload if isinstance(event_payload, dict) else None,
+        )
+        event = MessageEvent.from_payload(event_payload, context=ctx)
         event.bind_reply_handler(self._create_reply_handler(ctx, event))
         schedule_context = self._build_schedule_context(
-            loaded, message.input.get("event", {})
+            loaded, event_payload
         )
 
         # 提取 args 用于兼容 handler 签名
@@ -461,7 +470,7 @@ class HandlerDispatcher:
 
     @classmethod
     def _build_command_args(
-        cls, param_specs: list[ParamSpec], remainder: str
+        cls, param_specs: Sequence[ParamSpec], remainder: str
     ) -> dict[str, Any]:
         if not param_specs or not remainder:
             return {}
@@ -480,7 +489,7 @@ class HandlerDispatcher:
 
     @classmethod
     def _build_regex_args(
-        cls, param_specs: list[ParamSpec], match: re.Match[str]
+        cls, param_specs: Sequence[ParamSpec], match: re.Match[str]
     ) -> dict[str, Any]:
         named = {
             key: value for key, value in match.groupdict().items() if value is not None
@@ -495,7 +504,7 @@ class HandlerDispatcher:
 
     @staticmethod
     def _parse_handler_args(
-        param_specs: list[ParamSpec],
+        param_specs: Sequence[ParamSpec],
         args: dict[str, Any],
     ) -> dict[str, Any]:
         parsed: dict[str, Any] = {}

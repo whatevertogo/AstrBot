@@ -14,7 +14,10 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from astrbot_sdk._invocation_context import current_caller_plugin_id
 from astrbot_sdk.errors import AstrBotError
+from astrbot_sdk.llm.entities import LLMToolSpec, ProviderMeta, ToolCallsResult
 from astrbot_sdk.runtime.capability_router import CapabilityRouter, StreamExecution
+
+from .event_converter import EventConverter
 
 if TYPE_CHECKING:
     from astrbot.core.agent.tool import ToolSet
@@ -55,6 +58,7 @@ class CoreCapabilityBridge(CapabilityRouter):
         self._plugin_bridge = plugin_bridge
         self._event_streams: dict[str, _EventStreamState] = {}
         super().__init__()
+        self._register_p0_5_capabilities()
         self._register_system_capabilities()
 
     def _register_llm_capabilities(self) -> None:
@@ -842,6 +846,405 @@ class CoreCapabilityBridge(CapabilityRouter):
             return {"config": None}
         return {"config": self._plugin_bridge.get_plugin_config(plugin_id)}
 
+    @staticmethod
+    def _provider_to_payload(provider: Any | None) -> dict[str, Any] | None:
+        if provider is None:
+            return None
+        meta = provider.meta()
+        provider_type = getattr(meta, "provider_type", "")
+        if hasattr(provider_type, "value"):
+            provider_type = provider_type.value
+        return ProviderMeta(
+            id=str(getattr(meta, "id", "")),
+            model=(
+                str(getattr(meta, "model", ""))
+                if getattr(meta, "model", None) is not None
+                else None
+            ),
+            type=str(getattr(meta, "type", "")),
+            provider_type=str(provider_type),
+        ).to_payload()
+
+    def _resolve_current_chat_provider_id(
+        self,
+        request_context: Any | None,
+    ) -> str | None:
+        if request_context is None:
+            return None
+        provider = self._star_context.get_using_provider(
+            request_context.event.unified_msg_origin
+        )
+        if provider is None:
+            return None
+        meta = provider.meta()
+        return str(getattr(meta, "id", "") or "")
+
+    async def _provider_get_using(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        provider = self._star_context.get_using_provider(payload.get("umo"))
+        return {"provider": self._provider_to_payload(provider)}
+
+    async def _provider_get_current_chat_provider_id(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        provider = self._star_context.get_using_provider(payload.get("umo"))
+        if provider is None:
+            return {"provider_id": None}
+        return {"provider_id": str(provider.meta().id)}
+
+    def _provider_list_payload(self, providers: list[Any]) -> dict[str, Any]:
+        return {
+            "providers": [
+                payload
+                for payload in (
+                    self._provider_to_payload(provider) for provider in providers
+                )
+                if payload is not None
+            ]
+        }
+
+    async def _provider_list_all(
+        self,
+        _request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        return self._provider_list_payload(self._star_context.get_all_providers())
+
+    async def _provider_list_all_tts(
+        self,
+        _request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        return self._provider_list_payload(self._star_context.get_all_tts_providers())
+
+    async def _provider_list_all_stt(
+        self,
+        _request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        return self._provider_list_payload(self._star_context.get_all_stt_providers())
+
+    async def _provider_list_all_embedding(
+        self,
+        _request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        return self._provider_list_payload(
+            self._star_context.get_all_embedding_providers()
+        )
+
+    async def _provider_get_using_tts(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        provider = self._star_context.get_using_tts_provider(payload.get("umo"))
+        return {"provider": self._provider_to_payload(provider)}
+
+    async def _provider_get_using_stt(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        provider = self._star_context.get_using_stt_provider(payload.get("umo"))
+        return {"provider": self._provider_to_payload(provider)}
+
+    async def _llm_tool_manager_get(
+        self,
+        request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        return {
+            "registered": [
+                item.to_payload()
+                for item in self._plugin_bridge.get_registered_llm_tools(plugin_id)
+            ],
+            "active": [
+                item.to_payload()
+                for item in self._plugin_bridge.get_active_llm_tools(plugin_id)
+            ],
+        }
+
+    async def _llm_tool_manager_activate(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        return {
+            "activated": self._plugin_bridge.activate_llm_tool(
+                plugin_id, str(payload.get("name", ""))
+            )
+        }
+
+    async def _llm_tool_manager_deactivate(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        return {
+            "deactivated": self._plugin_bridge.deactivate_llm_tool(
+                plugin_id, str(payload.get("name", ""))
+            )
+        }
+
+    async def _llm_tool_manager_add(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        tools_payload = payload.get("tools")
+        if not isinstance(tools_payload, list):
+            raise AstrBotError.invalid_input("llm_tool.manager.add requires tools list")
+        tools = [
+            LLMToolSpec.from_payload(item)
+            for item in tools_payload
+            if isinstance(item, dict)
+        ]
+        return {"names": self._plugin_bridge.add_llm_tools(plugin_id, tools)}
+
+    async def _agent_registry_list(
+        self,
+        request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        return {
+            "agents": [
+                item.to_payload()
+                for item in self._plugin_bridge.get_registered_agents(plugin_id)
+            ]
+        }
+
+    async def _agent_registry_get(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        agent = self._plugin_bridge.get_registered_agent(
+            plugin_id, str(payload.get("name", ""))
+        )
+        return {"agent": agent.to_payload() if agent is not None else None}
+
+    def _select_llm_tools_for_request(
+        self,
+        plugin_id: str,
+        payload: dict[str, Any],
+    ) -> list[LLMToolSpec]:
+        active_specs = {
+            item.name: item for item in self._plugin_bridge.get_active_llm_tools(plugin_id)
+        }
+        requested = payload.get("tool_names")
+        if not isinstance(requested, list) or not requested:
+            return list(active_specs.values())
+        names = [str(item) for item in requested if str(item).strip()]
+        return [active_specs[name] for name in names if name in active_specs]
+
+    def _make_sdk_tool_handler(
+        self,
+        *,
+        plugin_id: str,
+        tool_spec: LLMToolSpec,
+        tool_call_timeout: int,
+    ):
+        async def _handler(event: AstrMessageEvent, **tool_args: Any) -> str | None:
+            record = self._plugin_bridge._records.get(plugin_id)
+            if record is None or record.session is None:
+                return json.dumps(
+                    ToolCallsResult(
+                        tool_name=tool_spec.name,
+                        content="SDK plugin worker is unavailable",
+                        success=False,
+                    ).to_payload(),
+                    ensure_ascii=False,
+                )
+            request_id = f"sdk_tool_{plugin_id}_{uuid.uuid4().hex}"
+            dispatch_token = self._plugin_bridge._get_dispatch_token(event) or uuid.uuid4().hex
+            event_payload = EventConverter.core_to_sdk(
+                event,
+                dispatch_token=dispatch_token,
+                plugin_id=plugin_id,
+                request_id=request_id,
+            )
+            call_payload = {
+                "plugin_id": plugin_id,
+                "tool_name": tool_spec.name,
+                "handler_ref": tool_spec.handler_ref,
+                "tool_args": json.loads(
+                    json.dumps(tool_args, ensure_ascii=False, default=str)
+                ),
+                "event": event_payload,
+            }
+            try:
+                if tool_spec.handler_capability:
+                    output = await asyncio.wait_for(
+                        record.session.invoke_capability(
+                            tool_spec.handler_capability,
+                            call_payload,
+                            request_id=request_id,
+                        ),
+                        timeout=tool_call_timeout,
+                    )
+                else:
+                    output = await asyncio.wait_for(
+                        record.session.invoke_capability(
+                            "internal.llm_tool.execute",
+                            call_payload,
+                            request_id=request_id,
+                        ),
+                        timeout=tool_call_timeout,
+                    )
+            except TimeoutError:
+                return json.dumps(
+                    ToolCallsResult(
+                        tool_name=tool_spec.name,
+                        content=(
+                            f"Tool execution timeout after {tool_call_timeout} seconds"
+                        ),
+                        success=False,
+                    ).to_payload(),
+                    ensure_ascii=False,
+                )
+            except Exception as exc:
+                return json.dumps(
+                    ToolCallsResult(
+                        tool_name=tool_spec.name,
+                        content=f"Tool execution failed: {exc}",
+                        success=False,
+                    ).to_payload(),
+                    ensure_ascii=False,
+                )
+            if not isinstance(output, dict):
+                return str(output)
+            content = output.get("content")
+            if output.get("success", True):
+                return None if content is None else str(content)
+            return json.dumps(
+                ToolCallsResult(
+                    tool_name=tool_spec.name,
+                    content=str(content or ""),
+                    success=False,
+                ).to_payload(),
+                ensure_ascii=False,
+            )
+
+        return _handler
+
+    def _build_sdk_toolset(
+        self,
+        *,
+        plugin_id: str,
+        payload: dict[str, Any],
+        tool_call_timeout: int,
+    ) -> Any | None:
+        tool_specs = self._select_llm_tools_for_request(plugin_id, payload)
+        if not tool_specs:
+            return None
+        function_tool_cls, tool_set_cls = _get_runtime_tool_types()
+        tool_set = tool_set_cls()
+        for tool_spec in tool_specs:
+            tool_set.add_tool(
+                function_tool_cls(
+                    name=tool_spec.name,
+                    description=tool_spec.description,
+                    parameters=tool_spec.parameters_schema,
+                    handler=self._make_sdk_tool_handler(
+                        plugin_id=plugin_id,
+                        tool_spec=tool_spec,
+                        tool_call_timeout=tool_call_timeout,
+                    ),
+                )
+            )
+        return tool_set
+
+    def _llm_response_to_payload(self, response: Any) -> dict[str, Any]:
+        usage = None
+        if response.usage is not None:
+            usage = {
+                "input_tokens": response.usage.input,
+                "output_tokens": response.usage.output,
+                "total_tokens": response.usage.total,
+            }
+        return {
+            "text": response.completion_text,
+            "usage": usage,
+            "finish_reason": "tool_calls" if response.tools_call_ids else "stop",
+            "tool_calls": response.to_openai_tool_calls(),
+            "role": response.role,
+            "reasoning_content": response.reasoning_content or None,
+            "reasoning_signature": response.reasoning_signature,
+        }
+
+    async def _agent_tool_loop_run(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        request_context = self._resolve_event_request_context(request_id, payload)
+        if request_context is None:
+            raise AstrBotError.invalid_input(
+                "tool_loop_agent currently requires a message-bound SDK request"
+            )
+        provider_id = str(payload.get("provider_id") or "").strip() or self._resolve_current_chat_provider_id(
+            request_context
+        )
+        if not provider_id:
+            raise AstrBotError.invalid_input("No active chat provider is available")
+        tool_call_timeout = int(payload.get("tool_call_timeout") or 60)
+        llm_resp = await self._star_context.tool_loop_agent(
+            event=request_context.event,
+            chat_provider_id=provider_id,
+            prompt=(
+                str(payload.get("prompt"))
+                if payload.get("prompt") is not None
+                else None
+            ),
+            image_urls=[
+                str(item)
+                for item in payload.get("image_urls", [])
+                if isinstance(item, str)
+            ],
+            tools=self._build_sdk_toolset(
+                plugin_id=plugin_id,
+                payload=payload,
+                tool_call_timeout=tool_call_timeout,
+            ),
+            system_prompt=str(payload.get("system_prompt") or ""),
+            contexts=[
+                dict(item)
+                for item in payload.get("contexts", [])
+                if isinstance(item, dict)
+            ],
+            max_steps=int(payload.get("max_steps") or 30),
+            tool_call_timeout=tool_call_timeout,
+        )
+        return self._llm_response_to_payload(llm_resp)
+
     def _resolve_plugin_id(self, request_id: str) -> str:
         plugin_id = current_caller_plugin_id()
         if plugin_id:
@@ -1005,6 +1408,92 @@ class CoreCapabilityBridge(CapabilityRouter):
                 "Get SDK handler metadata by full name",
             ),
             call_handler=self._registry_get_handler_by_full_name,
+        )
+
+    def _register_p0_5_capabilities(self) -> None:
+        self.register(
+            self._builtin_descriptor("provider.get_using", "Get active provider"),
+            call_handler=self._provider_get_using,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.get_current_chat_provider_id",
+                "Get active chat provider id",
+            ),
+            call_handler=self._provider_get_current_chat_provider_id,
+        )
+        self.register(
+            self._builtin_descriptor("provider.list_all", "List chat providers"),
+            call_handler=self._provider_list_all,
+        )
+        self.register(
+            self._builtin_descriptor("provider.list_all_tts", "List tts providers"),
+            call_handler=self._provider_list_all_tts,
+        )
+        self.register(
+            self._builtin_descriptor("provider.list_all_stt", "List stt providers"),
+            call_handler=self._provider_list_all_stt,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.list_all_embedding",
+                "List embedding providers",
+            ),
+            call_handler=self._provider_list_all_embedding,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.get_using_tts",
+                "Get active tts provider",
+            ),
+            call_handler=self._provider_get_using_tts,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "provider.get_using_stt",
+                "Get active stt provider",
+            ),
+            call_handler=self._provider_get_using_stt,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "llm_tool.manager.get",
+                "Get registered and active sdk llm tools",
+            ),
+            call_handler=self._llm_tool_manager_get,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "llm_tool.manager.activate",
+                "Activate sdk llm tool",
+            ),
+            call_handler=self._llm_tool_manager_activate,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "llm_tool.manager.deactivate",
+                "Deactivate sdk llm tool",
+            ),
+            call_handler=self._llm_tool_manager_deactivate,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "llm_tool.manager.add",
+                "Register sdk llm tool metadata",
+            ),
+            call_handler=self._llm_tool_manager_add,
+        )
+        self.register(
+            self._builtin_descriptor("agent.tool_loop.run", "Run sdk tool loop agent"),
+            call_handler=self._agent_tool_loop_run,
+        )
+        self.register(
+            self._builtin_descriptor("agent.registry.list", "List sdk agents"),
+            call_handler=self._agent_registry_list,
+        )
+        self.register(
+            self._builtin_descriptor("agent.registry.get", "Get sdk agent"),
+            call_handler=self._agent_registry_get,
         )
 
     async def _system_get_data_dir(

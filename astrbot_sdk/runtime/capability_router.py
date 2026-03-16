@@ -100,7 +100,7 @@ import asyncio
 import inspect
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -115,7 +115,9 @@ from ._streaming import StreamExecution
 
 CallHandler = Callable[[str, dict[str, Any], object], Awaitable[dict[str, Any]]]
 FinalizeHandler = Callable[[list[dict[str, Any]]], dict[str, Any]]
-CAPABILITY_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
+CAPABILITY_NAME_PATTERN = re.compile(
+    r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$"
+)
 
 
 StreamHandler = Callable[
@@ -140,6 +142,9 @@ class _RegisteredPlugin:
     metadata: dict[str, Any]
     config: dict[str, Any]
     handlers: list[dict[str, Any]]
+    llm_tools: dict[str, dict[str, Any]] = field(default_factory=dict)
+    active_llm_tools: set[str] = field(default_factory=set)
+    agents: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class CapabilityRouter(BuiltinCapabilityRouterMixin):
@@ -153,6 +158,44 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
         self.http_api_store: list[dict[str, Any]] = []
         self._plugins: dict[str, _RegisteredPlugin] = {}
         self._request_overlays: dict[str, dict[str, Any]] = {}
+        self._provider_catalog: dict[str, list[dict[str, Any]]] = {
+            "chat": [
+                {
+                    "id": "mock-chat-provider",
+                    "model": "mock-chat-model",
+                    "type": "mock",
+                    "provider_type": "chat_completion",
+                }
+            ],
+            "tts": [
+                {
+                    "id": "mock-tts-provider",
+                    "model": "mock-tts-model",
+                    "type": "mock",
+                    "provider_type": "text_to_speech",
+                }
+            ],
+            "stt": [
+                {
+                    "id": "mock-stt-provider",
+                    "model": "mock-stt-model",
+                    "type": "mock",
+                    "provider_type": "speech_to_text",
+                }
+            ],
+            "embedding": [
+                {
+                    "id": "mock-embedding-provider",
+                    "model": "mock-embedding-model",
+                    "type": "mock",
+                    "provider_type": "embedding",
+                }
+            ],
+        }
+        self._active_provider_ids: dict[str, str | None] = {
+            kind: providers[0]["id"] if providers else None
+            for kind, providers in self._provider_catalog.items()
+        }
         self._system_data_root = Path.cwd() / ".astrbot_sdk_testing" / "plugin_data"
         self._session_waiters: dict[str, set[str]] = {}
         self._db_watch_subscriptions: dict[
@@ -196,6 +239,57 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
         if plugin is None:
             return
         plugin.metadata["enabled"] = enabled
+
+    def set_plugin_llm_tools(
+        self,
+        name: str,
+        tools: list[dict[str, Any]],
+    ) -> None:
+        plugin = self._plugins.get(name)
+        if plugin is None:
+            return
+        plugin.llm_tools = {
+            str(item.get("name", "")): dict(item)
+            for item in tools
+            if isinstance(item, dict) and str(item.get("name", "")).strip()
+        }
+        plugin.active_llm_tools = {
+            tool_name
+            for tool_name, item in plugin.llm_tools.items()
+            if bool(item.get("active", True))
+        }
+
+    def set_plugin_agents(
+        self,
+        name: str,
+        agents: list[dict[str, Any]],
+    ) -> None:
+        plugin = self._plugins.get(name)
+        if plugin is None:
+            return
+        plugin.agents = {
+            str(item.get("name", "")): dict(item)
+            for item in agents
+            if isinstance(item, dict) and str(item.get("name", "")).strip()
+        }
+
+    def set_provider_catalog(
+        self,
+        kind: str,
+        providers: list[dict[str, Any]],
+        *,
+        active_id: str | None = None,
+    ) -> None:
+        self._provider_catalog[kind] = [
+            dict(item)
+            for item in providers
+            if isinstance(item, dict) and str(item.get("id", "")).strip()
+        ]
+        if active_id is not None:
+            self._active_provider_ids[kind] = active_id
+        else:
+            catalog = self._provider_catalog[kind]
+            self._active_provider_ids[kind] = catalog[0]["id"] if catalog else None
 
     def remove_http_apis_for_plugin(self, plugin_id: str) -> None:
         self.http_api_store = [

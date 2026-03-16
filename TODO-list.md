@@ -86,6 +86,24 @@
   - 装饰器/触发器：53% → 76%
   - 总覆盖率：32% → 43%
 
+### 2026-03-16 P0.5 LLM、工具与 Provider 查询完成
+- **P0.5 LLM、工具与 Provider 使用能力已完成 ✅**：
+  - **Provider 查询** - `get_using_provider()`, `get_current_chat_provider_id()`, `get_all_providers()`, `get_all_tts_providers()`, `get_all_stt_providers()`, `get_all_embedding_providers()`, `get_using_tts_provider()`, `get_using_stt_provider()`
+  - **LLM 工具管理** - `get_llm_tool_manager()`, `activate_llm_tool()`, `deactivate_llm_tool()`, `add_llm_tools()`
+  - **LLM 工具注册** - `@register_llm_tool()`，支持静态注册与运行时动态增加
+  - **Agent 注册与最小闭环** - `@register_agent()`, `BaseAgentRunner`, `tool_loop_agent()`
+  - **Provider/Tool 实体** - `ProviderType`, `ProviderMeta`, `ProviderRequest`, `ToolCallsResult`, `RerankResult`, `LLMToolSpec`
+- **新增文件**：
+  - `astrbot_sdk/llm/entities.py`
+  - `astrbot_sdk/llm/providers.py`
+  - `astrbot_sdk/llm/tools.py`
+  - `astrbot_sdk/llm/agents.py`
+  - `data/sdk_plugins/sdk_demo_agent_tools/`
+- **边界说明**：
+  - `tool_loop_agent()` 始终复用 Core `ToolLoopAgentRunner`
+  - SDK 工具 callable 只保留在 worker 本地注册表，Core 只持有元数据和激活状态
+  - `@register_agent()` 在 P0.5 仅提供注册与 metadata，不提供独立 `await agent.run()` 调用入口
+
 ### 2026-03-15 全面覆盖率审计
 - **覆盖率表格修正**：
   - 消息组件总数从 13 修正为 22（包含所有平台特定组件）
@@ -334,8 +352,8 @@
 | `@on_schedule(cron="...")` | ✅ | Cron 定时触发 |
 | `@on_schedule(interval_seconds=N)` | ✅ | 间隔定时触发 |
 | `@on_message(message_types=[...])` | ✅ | 消息类型过滤（GROUP/PRIVATE/OTHER） |
-| `@register_llm_tool()` | ❌ | LLM 工具注册 |
-| `@register_agent()` | ❌ | Agent 注册 |
+| `@register_llm_tool()` | ✅ | LLM 工具注册 |
+| `@register_agent()` | ✅ | Agent 注册（metadata 注册，实际执行仍由 Core tool loop 驱动） |
 | `@session_waiter(timeout=30)` | ✅ | 会话等待装饰器 |
 | `@custom_filter` | ✅ | 自定义过滤器 |
 | 命令组/子命令 | ✅ | 子命令路由（CommandGroup） |
@@ -350,17 +368,17 @@
 | 消息事件 | ✅ | `@on_command`, `@on_message` |
 | astrbot_loaded | ✅ | Core 启动完成 |
 | platform_loaded | ✅ | 平台连接成功 |
-| waiting_llm_request | ❌ | 准备调用 LLM（获取锁之前通知） |
-| llm_request | ❌ | LLM 请求开始 |
-| llm_response | ❌ | LLM 响应完成 |
-| decorating_result | ❌ | 发送前装饰 |
-| calling_func_tool | ❌ | 函数工具调用 |
-| using_llm_tool | ❌ | LLM 工具使用 |
-| llm_tool_respond | ❌ | LLM 工具响应 |
+| waiting_llm_request | ✅ | 准备调用 LLM（获取锁之前通知） |
+| llm_request | ✅ | LLM 请求开始 |
+| llm_response | ✅ | LLM 响应完成 |
+| decorating_result | ✅ | 发送前装饰 |
+| calling_func_tool | ✅ | 函数工具调用 |
+| using_llm_tool | ✅ | LLM 工具使用 |
+| llm_tool_respond | ✅ | LLM 工具响应 |
 | after_message_sent | ✅ | 消息发送后（按实际发送次数触发） |
-| plugin_error | ❌ | 插件错误 |
-| plugin_loaded | ❌ | 插件加载 |
-| plugin_unloaded | ❌ | 插件卸载 |
+| plugin_error | ✅ | 插件错误 |
+| plugin_loaded | ✅ | 插件加载 |
+| plugin_unloaded | ✅ | 插件卸载 |
 
 ---
 
@@ -429,19 +447,19 @@
 | `get_db()` | `ctx.db` | ✅ | 数据库 |
 | `llm_generate(image_urls=...)` | `ctx.llm.chat(image_urls=...)` | ✅ | 图片输入 |
 | `llm_generate(tools=...)` | `ctx.llm.chat(tools=...)` | ✅ | 工具调用 |
-| `tool_loop_agent()` | 无 | ❌ | Agent 循环 |
-| `get_llm_tool_manager()` | 无 | ❌ | 工具管理器 |
-| `activate_llm_tool()` | 无 | ❌ | 激活工具 |
-| `deactivate_llm_tool()` | 无 | ❌ | 停用工具 |
-| `add_llm_tools()` | 无 | ❌ | 添加工具 |
-| `get_using_provider()` | 无 | ❌ | 获取 Provider |
-| `get_current_chat_provider_id()` | 无 | ❌ | 获取当前会话正在使用的聊天 Provider ID |
-| `get_all_providers()` | 无 | ❌ | 列出 Provider |
-| `get_all_tts_providers()` | 无 | ❌ | 列出 TTS Provider |
-| `get_all_stt_providers()` | 无 | ❌ | 列出 STT Provider |
-| `get_all_embedding_providers()` | 无 | ❌ | 列出 Embedding Provider |
-| `get_using_tts_provider()` | 无 | ❌ | TTS Provider |
-| `get_using_stt_provider()` | 无 | ❌ | STT Provider |
+| `tool_loop_agent()` | `ctx.tool_loop_agent()` | ✅ | Agent 循环（始终走 Core ToolLoopAgentRunner） |
+| `get_llm_tool_manager()` | `ctx.get_llm_tool_manager()` | ✅ | 工具管理器 |
+| `activate_llm_tool()` | `ctx.activate_llm_tool()` | ✅ | 激活工具 |
+| `deactivate_llm_tool()` | `ctx.deactivate_llm_tool()` | ✅ | 停用工具 |
+| `add_llm_tools()` | `ctx.add_llm_tools()` | ✅ | 添加工具 |
+| `get_using_provider()` | `ctx.get_using_provider()` | ✅ | 获取 Provider |
+| `get_current_chat_provider_id()` | `ctx.get_current_chat_provider_id()` | ✅ | 获取当前会话正在使用的聊天 Provider ID |
+| `get_all_providers()` | `ctx.get_all_providers()` | ✅ | 列出 Provider |
+| `get_all_tts_providers()` | `ctx.get_all_tts_providers()` | ✅ | 列出 TTS Provider |
+| `get_all_stt_providers()` | `ctx.get_all_stt_providers()` | ✅ | 列出 STT Provider |
+| `get_all_embedding_providers()` | `ctx.get_all_embedding_providers()` | ✅ | 列出 Embedding Provider |
+| `get_using_tts_provider()` | `ctx.get_using_tts_provider()` | ✅ | TTS Provider |
+| `get_using_stt_provider()` | `ctx.get_using_stt_provider()` | ✅ | STT Provider |
 | `register_web_api()` | `ctx.http.register_api()` | ✅ | 注册 API |
 | `register_commands()` | 无 | ❌ | 注册命令描述/帮助信息 |
 | `register_task()` | 无 | ❌ | 注册后台任务 |
@@ -533,11 +551,11 @@
 
 | 类型 | 状态 | 说明 |
 | --- | --- | --- |
-| `ProviderType.CHAT_COMPLETION` | ❌ | 聊天完成 |
-| `ProviderType.SPEECH_TO_TEXT` | ❌ | 语音转文字 |
-| `ProviderType.TEXT_TO_SPEECH` | ❌ | 文字转语音 |
-| `ProviderType.EMBEDDING` | ❌ | 嵌入向量 |
-| `ProviderType.RERANK` | ❌ | 重排序 |
+| `ProviderType.CHAT_COMPLETION` | ✅ | 聊天完成 |
+| `ProviderType.SPEECH_TO_TEXT` | ✅ | 语音转文字 |
+| `ProviderType.TEXT_TO_SPEECH` | ✅ | 文字转语音 |
+| `ProviderType.EMBEDDING` | ✅ | 嵌入向量 |
+| `ProviderType.RERANK` | ✅ | 重排序 |
 
 ---
 
@@ -545,12 +563,12 @@
 
 | 类 | 状态 | 说明 |
 | --- | --- | --- |
-| `ProviderMeta` | ❌ | 提供商元数据（id, model, type, provider_type） |
-| `ProviderRequest` | ❌ | 提供商请求对象 |
+| `ProviderMeta` | ✅ | 提供商元数据（id, model, type, provider_type） |
+| `ProviderRequest` | ✅ | 提供商请求对象 |
 | `TokenUsage` | ❌ | Token 使用统计 |
 | `LLMResponse` (完整版) | ❌ | LLM 完整响应（含 result_chain, reasoning_content 等） |
-| `ToolCallsResult` | ❌ | 工具调用结果 |
-| `RerankResult` | ❌ | 重排序结果 |
+| `ToolCallsResult` | ✅ | 工具调用结果 |
+| `RerankResult` | ✅ | 重排序结果 |
 | `MessageSession` | ✅ | 消息会话对象（platform_name, message_type, session_id） |
 | `MessageSession.from_str()` | ✅ | 从字符串解析会话 |
 | `Providers` 类型别名 | ❌ | Provider/STT/TTS/Embedding/Rerank 联合类型 |
@@ -595,7 +613,7 @@
 
 | 类/方法 | 状态 | 说明 |
 | --- | --- | --- |
-| `BaseAgentRunner` | ❌ | Agent 运行器基类 |
+| `BaseAgentRunner` | ✅ | Agent 运行器基类（SDK 抽象入口） |
 | `AgentState` 枚举 | ❌ | Agent 状态（IDLE/RUNNING/DONE/ERROR） |
 | `reset(context, hooks)` | ❌ | 重置 Agent 状态 |
 | `step()` | ❌ | 执行单步 |
@@ -700,13 +718,13 @@
 4. **Handler 注册表与可观测性** - ✅ `RegistryClient`, ✅ `get_handlers_by_event_type()`, ✅ `get_handler_by_full_name()`
 5. **Handler 白名单** - ✅ `set_handler_whitelist()`, ✅ `get_handler_whitelist()`, ✅ `clear_handler_whitelist()` 按插件名称过滤
 
-#### P0.5 - LLM、工具与 Provider 使用能力
-1. **Agent 运行器** - `BaseAgentRunner`, `tool_loop_agent()`
-2. **LLM 工具管理** - `get_llm_tool_manager()`, `activate_llm_tool()`, `deactivate_llm_tool()`, `add_llm_tools()`
-3. **LLM 工具注册** - `@register_llm_tool()`
-4. **Agent 注册** - `@register_agent()`
-5. **Provider 查询** - `get_using_provider()`, `get_current_chat_provider_id()`, `get_all_providers()`, `get_all_tts_providers()`, `get_all_stt_providers()`, `get_all_embedding_providers()`, `get_using_tts_provider()`, `get_using_stt_provider()`
-6. **Provider 类型与结果实体** - `ProviderType.*`, `ProviderMeta`, `ProviderRequest`, `ToolCallsResult`, `RerankResult`
+#### P0.5 - LLM、工具与 Provider 使用能力 ✅ 已完成
+1. **Agent 运行器** - ✅ `BaseAgentRunner`, ✅ `tool_loop_agent()`
+2. **LLM 工具管理** - ✅ `get_llm_tool_manager()`, ✅ `activate_llm_tool()`, ✅ `deactivate_llm_tool()`, ✅ `add_llm_tools()`
+3. **LLM 工具注册** - ✅ `@register_llm_tool()`
+4. **Agent 注册** - ✅ `@register_agent()`
+5. **Provider 查询** - ✅ `get_using_provider()`, ✅ `get_current_chat_provider_id()`, ✅ `get_all_providers()`, ✅ `get_all_tts_providers()`, ✅ `get_all_stt_providers()`, ✅ `get_all_embedding_providers()`, ✅ `get_using_tts_provider()`, ✅ `get_using_stt_provider()`
+6. **Provider 类型与结果实体** - ✅ `ProviderType.*`, ✅ `ProviderMeta`, ✅ `ProviderRequest`, ✅ `ToolCallsResult`, ✅ `RerankResult`
 
 #### P0.6 - 平台与会话能力
 1. **PlatformClient 扩展** - `send_by_id()`, `send_by_session()`, `get_members()`

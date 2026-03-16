@@ -427,6 +427,104 @@ REGISTRY_GET_HANDLER_BY_FULL_NAME_OUTPUT_SCHEMA = _object_schema(
     required=("handler",),
     handler=_nullable({"type": "object"}),
 )
+PROVIDER_META_SCHEMA = _object_schema(
+    required=("id", "type", "provider_type"),
+    id={"type": "string"},
+    model=_nullable({"type": "string"}),
+    type={"type": "string"},
+    provider_type={"type": "string"},
+)
+LLM_TOOL_SPEC_SCHEMA = _object_schema(
+    required=("name", "description", "parameters_schema", "active"),
+    name={"type": "string"},
+    description={"type": "string"},
+    parameters_schema={"type": "object"},
+    handler_ref=_nullable({"type": "string"}),
+    handler_capability=_nullable({"type": "string"}),
+    active={"type": "boolean"},
+)
+AGENT_SPEC_SCHEMA = _object_schema(
+    required=("name", "description", "tool_names", "runner_class"),
+    name={"type": "string"},
+    description={"type": "string"},
+    tool_names={"type": "array", "items": {"type": "string"}},
+    runner_class={"type": "string"},
+)
+PROVIDER_GET_USING_INPUT_SCHEMA = _object_schema(umo=_nullable({"type": "string"}))
+PROVIDER_GET_USING_OUTPUT_SCHEMA = _object_schema(
+    required=("provider",),
+    provider=_nullable(PROVIDER_META_SCHEMA),
+)
+PROVIDER_GET_CURRENT_CHAT_PROVIDER_ID_INPUT_SCHEMA = _object_schema(
+    umo=_nullable({"type": "string"}),
+)
+PROVIDER_GET_CURRENT_CHAT_PROVIDER_ID_OUTPUT_SCHEMA = _object_schema(
+    required=("provider_id",),
+    provider_id=_nullable({"type": "string"}),
+)
+PROVIDER_LIST_ALL_INPUT_SCHEMA = _object_schema()
+PROVIDER_LIST_ALL_OUTPUT_SCHEMA = _object_schema(
+    required=("providers",),
+    providers={"type": "array", "items": PROVIDER_META_SCHEMA},
+)
+LLM_TOOL_MANAGER_GET_INPUT_SCHEMA = _object_schema()
+LLM_TOOL_MANAGER_GET_OUTPUT_SCHEMA = _object_schema(
+    required=("registered", "active"),
+    registered={"type": "array", "items": LLM_TOOL_SPEC_SCHEMA},
+    active={"type": "array", "items": LLM_TOOL_SPEC_SCHEMA},
+)
+LLM_TOOL_MANAGER_ACTIVATE_INPUT_SCHEMA = _object_schema(
+    required=("name",),
+    name={"type": "string"},
+)
+LLM_TOOL_MANAGER_ACTIVATE_OUTPUT_SCHEMA = _object_schema(
+    required=("activated",),
+    activated={"type": "boolean"},
+)
+LLM_TOOL_MANAGER_DEACTIVATE_INPUT_SCHEMA = _object_schema(
+    required=("name",),
+    name={"type": "string"},
+)
+LLM_TOOL_MANAGER_DEACTIVATE_OUTPUT_SCHEMA = _object_schema(
+    required=("deactivated",),
+    deactivated={"type": "boolean"},
+)
+LLM_TOOL_MANAGER_ADD_INPUT_SCHEMA = _object_schema(
+    required=("tools",),
+    tools={"type": "array", "items": LLM_TOOL_SPEC_SCHEMA},
+)
+LLM_TOOL_MANAGER_ADD_OUTPUT_SCHEMA = _object_schema(
+    required=("names",),
+    names={"type": "array", "items": {"type": "string"}},
+)
+AGENT_TOOL_LOOP_RUN_INPUT_SCHEMA = _object_schema(
+    prompt=_nullable({"type": "string"}),
+    system_prompt=_nullable({"type": "string"}),
+    session_id=_nullable({"type": "string"}),
+    contexts={"type": "array", "items": {"type": "object"}},
+    image_urls={"type": "array", "items": {"type": "string"}},
+    tool_names=_nullable({"type": "array", "items": {"type": "string"}}),
+    tool_calls_result={"type": "array", "items": {"type": "object"}},
+    provider_id=_nullable({"type": "string"}),
+    model=_nullable({"type": "string"}),
+    temperature={"type": "number"},
+    max_steps={"type": "integer"},
+    tool_call_timeout={"type": "integer"},
+)
+AGENT_TOOL_LOOP_RUN_OUTPUT_SCHEMA = LLM_CHAT_RAW_OUTPUT_SCHEMA
+AGENT_REGISTRY_LIST_INPUT_SCHEMA = _object_schema()
+AGENT_REGISTRY_LIST_OUTPUT_SCHEMA = _object_schema(
+    required=("agents",),
+    agents={"type": "array", "items": AGENT_SPEC_SCHEMA},
+)
+AGENT_REGISTRY_GET_INPUT_SCHEMA = _object_schema(
+    required=("name",),
+    name={"type": "string"},
+)
+AGENT_REGISTRY_GET_OUTPUT_SCHEMA = _object_schema(
+    required=("agent",),
+    agent=_nullable(AGENT_SPEC_SCHEMA),
+)
 
 BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
     "llm.chat": {
@@ -548,6 +646,66 @@ BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
     "registry.get_handler_by_full_name": {
         "input": REGISTRY_GET_HANDLER_BY_FULL_NAME_INPUT_SCHEMA,
         "output": REGISTRY_GET_HANDLER_BY_FULL_NAME_OUTPUT_SCHEMA,
+    },
+    "provider.get_using": {
+        "input": PROVIDER_GET_USING_INPUT_SCHEMA,
+        "output": PROVIDER_GET_USING_OUTPUT_SCHEMA,
+    },
+    "provider.get_current_chat_provider_id": {
+        "input": PROVIDER_GET_CURRENT_CHAT_PROVIDER_ID_INPUT_SCHEMA,
+        "output": PROVIDER_GET_CURRENT_CHAT_PROVIDER_ID_OUTPUT_SCHEMA,
+    },
+    "provider.list_all": {
+        "input": PROVIDER_LIST_ALL_INPUT_SCHEMA,
+        "output": PROVIDER_LIST_ALL_OUTPUT_SCHEMA,
+    },
+    "provider.list_all_tts": {
+        "input": PROVIDER_LIST_ALL_INPUT_SCHEMA,
+        "output": PROVIDER_LIST_ALL_OUTPUT_SCHEMA,
+    },
+    "provider.list_all_stt": {
+        "input": PROVIDER_LIST_ALL_INPUT_SCHEMA,
+        "output": PROVIDER_LIST_ALL_OUTPUT_SCHEMA,
+    },
+    "provider.list_all_embedding": {
+        "input": PROVIDER_LIST_ALL_INPUT_SCHEMA,
+        "output": PROVIDER_LIST_ALL_OUTPUT_SCHEMA,
+    },
+    "provider.get_using_tts": {
+        "input": PROVIDER_GET_USING_INPUT_SCHEMA,
+        "output": PROVIDER_GET_USING_OUTPUT_SCHEMA,
+    },
+    "provider.get_using_stt": {
+        "input": PROVIDER_GET_USING_INPUT_SCHEMA,
+        "output": PROVIDER_GET_USING_OUTPUT_SCHEMA,
+    },
+    "llm_tool.manager.get": {
+        "input": LLM_TOOL_MANAGER_GET_INPUT_SCHEMA,
+        "output": LLM_TOOL_MANAGER_GET_OUTPUT_SCHEMA,
+    },
+    "llm_tool.manager.activate": {
+        "input": LLM_TOOL_MANAGER_ACTIVATE_INPUT_SCHEMA,
+        "output": LLM_TOOL_MANAGER_ACTIVATE_OUTPUT_SCHEMA,
+    },
+    "llm_tool.manager.deactivate": {
+        "input": LLM_TOOL_MANAGER_DEACTIVATE_INPUT_SCHEMA,
+        "output": LLM_TOOL_MANAGER_DEACTIVATE_OUTPUT_SCHEMA,
+    },
+    "llm_tool.manager.add": {
+        "input": LLM_TOOL_MANAGER_ADD_INPUT_SCHEMA,
+        "output": LLM_TOOL_MANAGER_ADD_OUTPUT_SCHEMA,
+    },
+    "agent.tool_loop.run": {
+        "input": AGENT_TOOL_LOOP_RUN_INPUT_SCHEMA,
+        "output": AGENT_TOOL_LOOP_RUN_OUTPUT_SCHEMA,
+    },
+    "agent.registry.list": {
+        "input": AGENT_REGISTRY_LIST_INPUT_SCHEMA,
+        "output": AGENT_REGISTRY_LIST_OUTPUT_SCHEMA,
+    },
+    "agent.registry.get": {
+        "input": AGENT_REGISTRY_GET_INPUT_SCHEMA,
+        "output": AGENT_REGISTRY_GET_OUTPUT_SCHEMA,
     },
     "system.get_data_dir": {
         "input": SYSTEM_GET_DATA_DIR_INPUT_SCHEMA,

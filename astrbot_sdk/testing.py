@@ -99,7 +99,7 @@ def _handler_metadata_from_loaded(
         "handler_full_name": loaded.descriptor.id,
         "trigger_type": trigger.type
         if isinstance(trigger, EventTrigger)
-        else trigger.kind,
+        else str(getattr(trigger, "kind", trigger.type)),
         "event_types": event_types,
         "enabled": True,
         "group_path": list(
@@ -205,6 +205,7 @@ class PluginHarness:
             plugin_id=self.plugin.name,
             peer=self.peer,
             capabilities=self.loaded_plugin.capabilities,
+            llm_tools=self.loaded_plugin.llm_tools,
         )
         self.lifecycle_context = RuntimeContext(
             peer=self.peer,
@@ -220,6 +221,14 @@ class PluginHarness:
                 _handler_metadata_from_loaded(self.plugin.name, handler)
                 for handler in self.loaded_plugin.handlers
             ],
+        )
+        self.router.set_plugin_llm_tools(
+            self.plugin.name,
+            [tool.spec.to_payload() for tool in self.loaded_plugin.llm_tools],
+        )
+        self.router.set_plugin_agents(
+            self.plugin.name,
+            [agent.spec.to_payload() for agent in self.loaded_plugin.agents],
         )
         try:
             await self._run_lifecycle("on_start")
