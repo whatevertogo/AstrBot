@@ -13,6 +13,9 @@ capability clients so `Context` keeps a narrow, stable surface.
     - DBClient: 键值存储 get/set/delete/list
     - PlatformClient: 平台消息发送与成员查询
     - ProviderClient: Provider 元信息与专用 provider proxy
+    - PersonaManagerClient: 人格管理
+    - ConversationManagerClient: 对话管理
+    - KnowledgeBaseManagerClient: 知识库管理
     - HTTPClient: Web API 注册
     - MetadataClient: 插件元数据查询
 """
@@ -20,6 +23,19 @@ capability clients so `Context` keeps a narrow, stable surface.
 from .db import DBClient
 from .http import HTTPClient
 from .llm import ChatMessage, LLMClient, LLMResponse
+from .managers import (
+    ConversationCreateParams,
+    ConversationManagerClient,
+    ConversationRecord,
+    ConversationUpdateParams,
+    KnowledgeBaseCreateParams,
+    KnowledgeBaseManagerClient,
+    KnowledgeBaseRecord,
+    PersonaCreateParams,
+    PersonaManagerClient,
+    PersonaRecord,
+    PersonaUpdateParams,
+)
 from .memory import MemoryClient
 from .metadata import MetadataClient, PluginMetadata
 from .platform import PlatformClient
@@ -29,13 +45,24 @@ from .session import SessionPluginManager, SessionServiceManager
 
 __all__ = [
     "ChatMessage",
+    "ConversationCreateParams",
+    "ConversationManagerClient",
+    "ConversationRecord",
+    "ConversationUpdateParams",
     "DBClient",
     "HTTPClient",
+    "KnowledgeBaseCreateParams",
+    "KnowledgeBaseManagerClient",
+    "KnowledgeBaseRecord",
     "LLMClient",
     "LLMResponse",
     "MemoryClient",
     "MetadataClient",
     "PlatformClient",
+    "PersonaCreateParams",
+    "PersonaManagerClient",
+    "PersonaRecord",
+    "PersonaUpdateParams",
     "ProviderClient",
     "PluginMetadata",
     "HandlerMetadata",

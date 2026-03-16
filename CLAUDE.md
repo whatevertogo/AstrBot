@@ -27,6 +27,7 @@
 - Message-bound `Context.tool_loop_agent()` calls cannot rely on the capability RPC `request_id` alone. The worker must propagate the original event `target/raw.dispatch_token` back to core, or `agent.tool_loop.run` will lose the current request context and falsely fail as a non-message invocation.
 - SDK has multiple type-injection paths (`decorators`, `loader`, `handler_dispatcher`, `capability_dispatcher`, `testing`). Optional annotations must be normalized consistently for both `typing.Optional[T]` and PEP 604 `T | None`; otherwise plugin code can pass in `PluginHarness` but fail in the real subprocess runtime.
 - `astrbot_sdk/protocol/descriptors.py` once contained full-width smart quotes in a triple-quoted docstring (`“””` / `”`), which caused a module-level `SyntaxError` during pytest collection and any import path reaching `astrbot_sdk.protocol`. Keep docstrings ASCII-quoted even in Chinese prose.
+- `CoreCapabilityBridge.__init__()` currently inherits built-in capability registration from `CapabilityRouter.__init__()` and then manually calls some registration helpers again. The duplicate registration is harmless because later entries overwrite earlier ones, but it is easy to misread when adding new capability groups. Check the constructor flow before assuming a registration hook only runs once.
 
 
 旧插件走旧逻辑，新插件走sdk，保证旧逻辑依旧能使用的情况下写新sdk桥接或者astrbot适配

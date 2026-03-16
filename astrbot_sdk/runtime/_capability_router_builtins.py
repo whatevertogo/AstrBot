@@ -21,7 +21,9 @@ import asyncio
 import base64
 import copy
 import json
+import uuid
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +70,10 @@ class _CapabilityRouterHost:
     _db_watch_subscriptions: dict[str, tuple[str | None, asyncio.Queue[dict[str, Any]]]]
     _dynamic_command_routes: dict[str, list[dict[str, Any]]]
     _platform_instances: list[dict[str, Any]]
+    _persona_store: dict[str, dict[str, Any]]
+    _conversation_store: dict[str, dict[str, Any]]
+    _session_current_conversation_ids: dict[str, str]
+    _kb_store: dict[str, dict[str, Any]]
 
     def register(
         self,
@@ -113,6 +119,7 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
         self._register_metadata_capabilities()
         self._register_p0_5_capabilities()
         self._register_p0_6_capabilities()
+        self._register_p1_2_capabilities()
         self._register_system_capabilities()
 
     def _builtin_descriptor(
@@ -179,6 +186,23 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
     def _session_service_config(self, session: str) -> dict[str, Any]:
         config = self._session_service_configs.get(str(session), {})
         return dict(config) if isinstance(config, dict) else {}
+
+    @staticmethod
+    def _now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _session_platform_id(session: str) -> str:
+        parts = str(session).split(":", maxsplit=1)
+        if parts and parts[0].strip():
+            return parts[0].strip()
+        return "unknown"
+
+    @staticmethod
+    def _normalize_history_payload(value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        return [dict(item) for item in value if isinstance(item, dict)]
 
     async def _llm_chat(
         self, _request_id: str, payload: dict[str, Any], _token
@@ -1374,6 +1398,427 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
                 "写入会话级 TTS 开关",
             ),
             call_handler=self._session_service_set_tts_status,
+        )
+
+    async def _persona_get(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        persona_id = str(payload.get("persona_id", "")).strip()
+        record = self._persona_store.get(persona_id)
+        if record is None:
+            raise AstrBotError.invalid_input(f"persona not found: {persona_id}")
+        return {"persona": dict(record)}
+
+    async def _persona_list(
+        self, _request_id: str, _payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        personas = [
+            dict(self._persona_store[persona_id])
+            for persona_id in sorted(self._persona_store.keys())
+        ]
+        return {"personas": personas}
+
+    async def _persona_create(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        raw_persona = payload.get("persona")
+        if not isinstance(raw_persona, dict):
+            raise AstrBotError.invalid_input("persona.create requires persona object")
+        persona_id = str(raw_persona.get("persona_id", "")).strip()
+        if not persona_id:
+            raise AstrBotError.invalid_input("persona.create requires persona_id")
+        if persona_id in self._persona_store:
+            raise AstrBotError.invalid_input(f"persona already exists: {persona_id}")
+        now = self._now_iso()
+        record = {
+            "persona_id": persona_id,
+            "system_prompt": str(raw_persona.get("system_prompt", "")),
+            "begin_dialogs": self._normalize_history_payload(
+                raw_persona.get("begin_dialogs")
+            ),
+            "tools": (
+                [str(item) for item in raw_persona.get("tools", [])]
+                if isinstance(raw_persona.get("tools"), list)
+                else None
+            ),
+            "skills": (
+                [str(item) for item in raw_persona.get("skills", [])]
+                if isinstance(raw_persona.get("skills"), list)
+                else None
+            ),
+            "custom_error_message": (
+                str(raw_persona.get("custom_error_message"))
+                if raw_persona.get("custom_error_message") is not None
+                else None
+            ),
+            "folder_id": (
+                str(raw_persona.get("folder_id"))
+                if raw_persona.get("folder_id") is not None
+                else None
+            ),
+            "sort_order": int(raw_persona.get("sort_order", 0)),
+            "created_at": now,
+            "updated_at": now,
+        }
+        self._persona_store[persona_id] = record
+        return {"persona": dict(record)}
+
+    async def _persona_update(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        persona_id = str(payload.get("persona_id", "")).strip()
+        record = self._persona_store.get(persona_id)
+        if record is None:
+            return {"persona": None}
+        raw_persona = payload.get("persona")
+        if not isinstance(raw_persona, dict):
+            raise AstrBotError.invalid_input("persona.update requires persona object")
+        if "system_prompt" in raw_persona and raw_persona.get("system_prompt") is not None:
+            record["system_prompt"] = str(raw_persona.get("system_prompt", ""))
+        if "begin_dialogs" in raw_persona:
+            begin_dialogs = raw_persona.get("begin_dialogs")
+            record["begin_dialogs"] = (
+                self._normalize_history_payload(begin_dialogs)
+                if begin_dialogs is not None
+                else []
+            )
+        if "tools" in raw_persona:
+            tools = raw_persona.get("tools")
+            record["tools"] = (
+                [str(item) for item in tools] if isinstance(tools, list) else None
+            )
+        if "skills" in raw_persona:
+            skills = raw_persona.get("skills")
+            record["skills"] = (
+                [str(item) for item in skills] if isinstance(skills, list) else None
+            )
+        if "custom_error_message" in raw_persona:
+            custom_error_message = raw_persona.get("custom_error_message")
+            record["custom_error_message"] = (
+                str(custom_error_message)
+                if custom_error_message is not None
+                else None
+            )
+        record["updated_at"] = self._now_iso()
+        return {"persona": dict(record)}
+
+    async def _persona_delete(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        persona_id = str(payload.get("persona_id", "")).strip()
+        if persona_id not in self._persona_store:
+            raise AstrBotError.invalid_input(f"persona not found: {persona_id}")
+        del self._persona_store[persona_id]
+        return {}
+
+    async def _conversation_new(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        session = str(payload.get("session", "")).strip()
+        if not session:
+            raise AstrBotError.invalid_input("conversation.new requires session")
+        raw_conversation = payload.get("conversation")
+        if raw_conversation is None:
+            raw_conversation = {}
+        if not isinstance(raw_conversation, dict):
+            raise AstrBotError.invalid_input(
+                "conversation.new requires conversation object"
+            )
+        conversation_id = uuid.uuid4().hex
+        now = self._now_iso()
+        record = {
+            "conversation_id": conversation_id,
+            "session": session,
+            "platform_id": (
+                str(raw_conversation.get("platform_id"))
+                if raw_conversation.get("platform_id") is not None
+                else self._session_platform_id(session)
+            ),
+            "history": self._normalize_history_payload(raw_conversation.get("history")),
+            "title": (
+                str(raw_conversation.get("title"))
+                if raw_conversation.get("title") is not None
+                else None
+            ),
+            "persona_id": (
+                str(raw_conversation.get("persona_id"))
+                if raw_conversation.get("persona_id") is not None
+                else None
+            ),
+            "created_at": now,
+            "updated_at": now,
+            "token_usage": None,
+        }
+        self._conversation_store[conversation_id] = record
+        self._session_current_conversation_ids[session] = conversation_id
+        return {"conversation_id": conversation_id}
+
+    async def _conversation_switch(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        session = str(payload.get("session", "")).strip()
+        conversation_id = str(payload.get("conversation_id", "")).strip()
+        record = self._conversation_store.get(conversation_id)
+        if record is None or str(record.get("session", "")) != session:
+            raise AstrBotError.invalid_input(
+                "conversation.switch requires a conversation in the same session"
+            )
+        self._session_current_conversation_ids[session] = conversation_id
+        return {}
+
+    async def _conversation_delete(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        session = str(payload.get("session", "")).strip()
+        conversation_id = payload.get("conversation_id")
+        normalized_conversation_id = (
+            str(conversation_id).strip() if conversation_id is not None else ""
+        )
+        if not normalized_conversation_id:
+            normalized_conversation_id = self._session_current_conversation_ids.get(
+                session, ""
+            )
+        if not normalized_conversation_id:
+            return {}
+        record = self._conversation_store.get(normalized_conversation_id)
+        if record is None:
+            return {}
+        if str(record.get("session", "")) != session:
+            raise AstrBotError.invalid_input(
+                "conversation.delete requires a conversation in the same session"
+            )
+        del self._conversation_store[normalized_conversation_id]
+        current_conversation_id = self._session_current_conversation_ids.get(session)
+        if current_conversation_id == normalized_conversation_id:
+            replacement = next(
+                (
+                    conversation_id
+                    for conversation_id, item in self._conversation_store.items()
+                    if str(item.get("session", "")) == session
+                ),
+                None,
+            )
+            if replacement is None:
+                self._session_current_conversation_ids.pop(session, None)
+            else:
+                self._session_current_conversation_ids[session] = replacement
+        return {}
+
+    async def _conversation_get(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        session = str(payload.get("session", "")).strip()
+        conversation_id = str(payload.get("conversation_id", "")).strip()
+        record = self._conversation_store.get(conversation_id)
+        if record is None and bool(payload.get("create_if_not_exists", False)):
+            created = await self._conversation_new(
+                _request_id,
+                {"session": session, "conversation": {}},
+                _token,
+            )
+            record = self._conversation_store.get(
+                str(created.get("conversation_id", "")).strip()
+            )
+        if record is None:
+            return {"conversation": None}
+        if str(record.get("session", "")) != session:
+            return {"conversation": None}
+        return {"conversation": dict(record)}
+
+    async def _conversation_list(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        session = payload.get("session")
+        platform_id = payload.get("platform_id")
+        conversations = []
+        for conversation_id in sorted(self._conversation_store.keys()):
+            item = self._conversation_store[conversation_id]
+            if session is not None and str(item.get("session", "")) != str(session):
+                continue
+            if (
+                platform_id is not None
+                and str(item.get("platform_id", "")) != str(platform_id)
+            ):
+                continue
+            conversations.append(dict(item))
+        return {"conversations": conversations}
+
+    async def _conversation_update(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        session = str(payload.get("session", "")).strip()
+        conversation_id = payload.get("conversation_id")
+        normalized_conversation_id = (
+            str(conversation_id).strip() if conversation_id is not None else ""
+        )
+        if not normalized_conversation_id:
+            normalized_conversation_id = self._session_current_conversation_ids.get(
+                session, ""
+            )
+        if not normalized_conversation_id:
+            return {}
+        record = self._conversation_store.get(normalized_conversation_id)
+        if record is None:
+            return {}
+        if str(record.get("session", "")) != session:
+            raise AstrBotError.invalid_input(
+                "conversation.update requires a conversation in the same session"
+            )
+        raw_conversation = payload.get("conversation")
+        if not isinstance(raw_conversation, dict):
+            raw_conversation = {}
+        if "history" in raw_conversation:
+            history = raw_conversation.get("history")
+            record["history"] = (
+                self._normalize_history_payload(history) if history is not None else []
+            )
+        if "title" in raw_conversation:
+            title = raw_conversation.get("title")
+            record["title"] = str(title) if title is not None else None
+        if "persona_id" in raw_conversation:
+            persona_id = raw_conversation.get("persona_id")
+            record["persona_id"] = str(persona_id) if persona_id is not None else None
+        if "token_usage" in raw_conversation:
+            token_usage = raw_conversation.get("token_usage")
+            record["token_usage"] = (
+                int(token_usage) if token_usage is not None else None
+            )
+        record["updated_at"] = self._now_iso()
+        return {}
+
+    async def _kb_get(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        kb_id = str(payload.get("kb_id", "")).strip()
+        record = self._kb_store.get(kb_id)
+        return {"kb": dict(record) if isinstance(record, dict) else None}
+
+    async def _kb_create(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        raw_kb = payload.get("kb")
+        if not isinstance(raw_kb, dict):
+            raise AstrBotError.invalid_input("kb.create requires kb object")
+        embedding_provider_id = str(raw_kb.get("embedding_provider_id", "")).strip()
+        if not embedding_provider_id:
+            raise AstrBotError.invalid_input(
+                "kb.create requires embedding_provider_id"
+            )
+        kb_id = uuid.uuid4().hex
+        now = self._now_iso()
+        record = {
+            "kb_id": kb_id,
+            "kb_name": str(raw_kb.get("kb_name", "")),
+            "description": (
+                str(raw_kb.get("description"))
+                if raw_kb.get("description") is not None
+                else None
+            ),
+            "emoji": (
+                str(raw_kb.get("emoji")) if raw_kb.get("emoji") is not None else None
+            ),
+            "embedding_provider_id": embedding_provider_id,
+            "rerank_provider_id": (
+                str(raw_kb.get("rerank_provider_id"))
+                if raw_kb.get("rerank_provider_id") is not None
+                else None
+            ),
+            "chunk_size": (
+                int(raw_kb.get("chunk_size"))
+                if raw_kb.get("chunk_size") is not None
+                else None
+            ),
+            "chunk_overlap": (
+                int(raw_kb.get("chunk_overlap"))
+                if raw_kb.get("chunk_overlap") is not None
+                else None
+            ),
+            "top_k_dense": (
+                int(raw_kb.get("top_k_dense"))
+                if raw_kb.get("top_k_dense") is not None
+                else None
+            ),
+            "top_k_sparse": (
+                int(raw_kb.get("top_k_sparse"))
+                if raw_kb.get("top_k_sparse") is not None
+                else None
+            ),
+            "top_m_final": (
+                int(raw_kb.get("top_m_final"))
+                if raw_kb.get("top_m_final") is not None
+                else None
+            ),
+            "doc_count": 0,
+            "chunk_count": 0,
+            "created_at": now,
+            "updated_at": now,
+        }
+        self._kb_store[kb_id] = record
+        return {"kb": dict(record)}
+
+    async def _kb_delete(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        kb_id = str(payload.get("kb_id", "")).strip()
+        deleted = self._kb_store.pop(kb_id, None) is not None
+        return {"deleted": deleted}
+
+    def _register_p1_2_capabilities(self) -> None:
+        self.register(
+            self._builtin_descriptor("persona.get", "获取人格"),
+            call_handler=self._persona_get,
+        )
+        self.register(
+            self._builtin_descriptor("persona.list", "列出人格"),
+            call_handler=self._persona_list,
+        )
+        self.register(
+            self._builtin_descriptor("persona.create", "创建人格"),
+            call_handler=self._persona_create,
+        )
+        self.register(
+            self._builtin_descriptor("persona.update", "更新人格"),
+            call_handler=self._persona_update,
+        )
+        self.register(
+            self._builtin_descriptor("persona.delete", "删除人格"),
+            call_handler=self._persona_delete,
+        )
+        self.register(
+            self._builtin_descriptor("conversation.new", "新建对话"),
+            call_handler=self._conversation_new,
+        )
+        self.register(
+            self._builtin_descriptor("conversation.switch", "切换对话"),
+            call_handler=self._conversation_switch,
+        )
+        self.register(
+            self._builtin_descriptor("conversation.delete", "删除对话"),
+            call_handler=self._conversation_delete,
+        )
+        self.register(
+            self._builtin_descriptor("conversation.get", "获取对话"),
+            call_handler=self._conversation_get,
+        )
+        self.register(
+            self._builtin_descriptor("conversation.list", "列出对话"),
+            call_handler=self._conversation_list,
+        )
+        self.register(
+            self._builtin_descriptor("conversation.update", "更新对话"),
+            call_handler=self._conversation_update,
+        )
+        self.register(
+            self._builtin_descriptor("kb.get", "获取知识库"),
+            call_handler=self._kb_get,
+        )
+        self.register(
+            self._builtin_descriptor("kb.create", "创建知识库"),
+            call_handler=self._kb_create,
+        )
+        self.register(
+            self._builtin_descriptor("kb.delete", "删除知识库"),
+            call_handler=self._kb_delete,
         )
 
     def _register_system_capabilities(self) -> None:

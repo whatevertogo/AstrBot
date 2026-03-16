@@ -7,6 +7,7 @@ import json
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -77,6 +78,8 @@ class CoreCapabilityBridge(CapabilityRouter):
         self._star_context = star_context
         self._plugin_bridge = plugin_bridge
         self._event_streams: dict[str, _EventStreamState] = {}
+        # CapabilityRouter.__init__() calls _register_builtin_capabilities(),
+        # which reaches the override methods on this class, including P1.2.
         super().__init__()
         self._register_p0_5_capabilities()
         self._register_system_capabilities()
@@ -264,6 +267,155 @@ class CoreCapabilityBridge(CapabilityRouter):
             "temperature": payload.get("temperature"),
         }
         return request_kwargs
+
+    @staticmethod
+    def _to_iso_datetime(value: Any) -> str | None:
+        if value is None:
+            return None
+        isoformat = getattr(value, "isoformat", None)
+        if callable(isoformat):
+            return str(isoformat())
+        if isinstance(value, (int, float)) and value > 0:
+            return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
+        return None
+
+    @staticmethod
+    def _normalize_history_items(value: Any) -> list[dict[str, Any]]:
+        if isinstance(value, list):
+            return [dict(item) for item in value if isinstance(item, dict)]
+        if isinstance(value, str):
+            with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
+                decoded = json.loads(value)
+                if isinstance(decoded, list):
+                    return [
+                        dict(item) for item in decoded if isinstance(item, dict)
+                    ]
+        return []
+
+    def _serialize_persona(self, persona: Any) -> dict[str, Any] | None:
+        if persona is None:
+            return None
+        return {
+            "persona_id": str(getattr(persona, "persona_id", "") or ""),
+            "system_prompt": str(getattr(persona, "system_prompt", "") or ""),
+            "begin_dialogs": self._normalize_history_items(
+                getattr(persona, "begin_dialogs", None)
+            ),
+            "tools": (
+                [str(item) for item in getattr(persona, "tools", [])]
+                if isinstance(getattr(persona, "tools", None), list)
+                else None
+            ),
+            "skills": (
+                [str(item) for item in getattr(persona, "skills", [])]
+                if isinstance(getattr(persona, "skills", None), list)
+                else None
+            ),
+            "custom_error_message": (
+                str(getattr(persona, "custom_error_message", ""))
+                if getattr(persona, "custom_error_message", None) is not None
+                else None
+            ),
+            "folder_id": (
+                str(getattr(persona, "folder_id", ""))
+                if getattr(persona, "folder_id", None) is not None
+                else None
+            ),
+            "sort_order": int(getattr(persona, "sort_order", 0) or 0),
+            "created_at": self._to_iso_datetime(getattr(persona, "created_at", None)),
+            "updated_at": self._to_iso_datetime(getattr(persona, "updated_at", None)),
+        }
+
+    def _serialize_conversation(self, conversation: Any) -> dict[str, Any] | None:
+        if conversation is None:
+            return None
+        return {
+            "conversation_id": str(getattr(conversation, "cid", "") or ""),
+            "session": str(getattr(conversation, "user_id", "") or ""),
+            "platform_id": str(getattr(conversation, "platform_id", "") or ""),
+            "history": self._normalize_history_items(
+                getattr(conversation, "history", None)
+            ),
+            "title": (
+                str(getattr(conversation, "title", ""))
+                if getattr(conversation, "title", None) is not None
+                else None
+            ),
+            "persona_id": (
+                str(getattr(conversation, "persona_id", ""))
+                if getattr(conversation, "persona_id", None) is not None
+                else None
+            ),
+            "created_at": self._to_iso_datetime(
+                getattr(conversation, "created_at", None)
+            ),
+            "updated_at": self._to_iso_datetime(
+                getattr(conversation, "updated_at", None)
+            ),
+            "token_usage": (
+                int(getattr(conversation, "token_usage"))
+                if getattr(conversation, "token_usage", None) is not None
+                else None
+            ),
+        }
+
+    def _serialize_kb(self, kb_helper_or_record: Any) -> dict[str, Any] | None:
+        # KnowledgeBaseManager returns KBHelper for get/create, while some tests
+        # pass the knowledge-base record directly. Accept both shapes here.
+        kb = getattr(kb_helper_or_record, "kb", kb_helper_or_record)
+        if kb is None:
+            return None
+        return {
+            "kb_id": str(getattr(kb, "kb_id", "") or ""),
+            "kb_name": str(getattr(kb, "kb_name", "") or ""),
+            "description": (
+                str(getattr(kb, "description", ""))
+                if getattr(kb, "description", None) is not None
+                else None
+            ),
+            "emoji": (
+                str(getattr(kb, "emoji", ""))
+                if getattr(kb, "emoji", None) is not None
+                else None
+            ),
+            "embedding_provider_id": str(
+                getattr(kb, "embedding_provider_id", "") or ""
+            ),
+            "rerank_provider_id": (
+                str(getattr(kb, "rerank_provider_id", ""))
+                if getattr(kb, "rerank_provider_id", None) is not None
+                else None
+            ),
+            "chunk_size": (
+                int(getattr(kb, "chunk_size"))
+                if getattr(kb, "chunk_size", None) is not None
+                else None
+            ),
+            "chunk_overlap": (
+                int(getattr(kb, "chunk_overlap"))
+                if getattr(kb, "chunk_overlap", None) is not None
+                else None
+            ),
+            "top_k_dense": (
+                int(getattr(kb, "top_k_dense"))
+                if getattr(kb, "top_k_dense", None) is not None
+                else None
+            ),
+            "top_k_sparse": (
+                int(getattr(kb, "top_k_sparse"))
+                if getattr(kb, "top_k_sparse", None) is not None
+                else None
+            ),
+            "top_m_final": (
+                int(getattr(kb, "top_m_final"))
+                if getattr(kb, "top_m_final", None) is not None
+                else None
+            ),
+            "doc_count": int(getattr(kb, "doc_count", 0) or 0),
+            "chunk_count": int(getattr(kb, "chunk_count", 0) or 0),
+            "created_at": self._to_iso_datetime(getattr(kb, "created_at", None)),
+            "updated_at": self._to_iso_datetime(getattr(kb, "updated_at", None)),
+        }
 
     @staticmethod
     def _build_toolset(tools_payload: list[Any]) -> ToolSet:
@@ -2008,6 +2160,64 @@ class CoreCapabilityBridge(CapabilityRouter):
             call_handler=self._session_service_set_tts_status,
         )
 
+    def _register_p1_2_capabilities(self) -> None:
+        self.register(
+            self._builtin_descriptor("persona.get", "Get persona"),
+            call_handler=self._persona_get,
+        )
+        self.register(
+            self._builtin_descriptor("persona.list", "List personas"),
+            call_handler=self._persona_list,
+        )
+        self.register(
+            self._builtin_descriptor("persona.create", "Create persona"),
+            call_handler=self._persona_create,
+        )
+        self.register(
+            self._builtin_descriptor("persona.update", "Update persona"),
+            call_handler=self._persona_update,
+        )
+        self.register(
+            self._builtin_descriptor("persona.delete", "Delete persona"),
+            call_handler=self._persona_delete,
+        )
+        self.register(
+            self._builtin_descriptor("conversation.new", "Create conversation"),
+            call_handler=self._conversation_new,
+        )
+        self.register(
+            self._builtin_descriptor("conversation.switch", "Switch conversation"),
+            call_handler=self._conversation_switch,
+        )
+        self.register(
+            self._builtin_descriptor("conversation.delete", "Delete conversation"),
+            call_handler=self._conversation_delete,
+        )
+        self.register(
+            self._builtin_descriptor("conversation.get", "Get conversation"),
+            call_handler=self._conversation_get,
+        )
+        self.register(
+            self._builtin_descriptor("conversation.list", "List conversations"),
+            call_handler=self._conversation_list,
+        )
+        self.register(
+            self._builtin_descriptor("conversation.update", "Update conversation"),
+            call_handler=self._conversation_update,
+        )
+        self.register(
+            self._builtin_descriptor("kb.get", "Get knowledge base"),
+            call_handler=self._kb_get,
+        )
+        self.register(
+            self._builtin_descriptor("kb.create", "Create knowledge base"),
+            call_handler=self._kb_create,
+        )
+        self.register(
+            self._builtin_descriptor("kb.delete", "Delete knowledge base"),
+            call_handler=self._kb_delete,
+        )
+
     @staticmethod
     def _normalize_session_scoped_config(
         raw_config: Any,
@@ -2239,6 +2449,360 @@ class CoreCapabilityBridge(CapabilityRouter):
             value=config,
         )
         return {}
+
+    async def _persona_get(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        persona_id = str(payload.get("persona_id", "")).strip()
+        try:
+            persona = await self._star_context.persona_manager.get_persona(persona_id)
+        except ValueError as exc:
+            raise AstrBotError.invalid_input(str(exc)) from exc
+        return {"persona": self._serialize_persona(persona)}
+
+    async def _persona_list(
+        self,
+        _request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        personas = await self._star_context.persona_manager.get_all_personas()
+        return {
+            "personas": [
+                payload
+                for payload in (
+                    self._serialize_persona(persona) for persona in personas
+                )
+                if payload is not None
+            ]
+        }
+
+    async def _persona_create(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        raw_persona = payload.get("persona")
+        if not isinstance(raw_persona, dict):
+            raise AstrBotError.invalid_input("persona.create requires persona object")
+        try:
+            persona = await self._star_context.persona_manager.create_persona(
+                persona_id=str(raw_persona.get("persona_id", "")),
+                system_prompt=str(raw_persona.get("system_prompt", "")),
+                begin_dialogs=self._normalize_history_items(
+                    raw_persona.get("begin_dialogs")
+                ),
+                tools=(
+                    [str(item) for item in raw_persona.get("tools", [])]
+                    if isinstance(raw_persona.get("tools"), list)
+                    else None
+                ),
+                skills=(
+                    [str(item) for item in raw_persona.get("skills", [])]
+                    if isinstance(raw_persona.get("skills"), list)
+                    else None
+                ),
+                custom_error_message=(
+                    str(raw_persona.get("custom_error_message"))
+                    if raw_persona.get("custom_error_message") is not None
+                    else None
+                ),
+                folder_id=(
+                    str(raw_persona.get("folder_id"))
+                    if raw_persona.get("folder_id") is not None
+                    else None
+                ),
+                sort_order=int(raw_persona.get("sort_order", 0)),
+            )
+        except ValueError as exc:
+            raise AstrBotError.invalid_input(str(exc)) from exc
+        return {"persona": self._serialize_persona(persona)}
+
+    async def _persona_update(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        raw_persona = payload.get("persona")
+        if not isinstance(raw_persona, dict):
+            raise AstrBotError.invalid_input("persona.update requires persona object")
+        persona = await self._star_context.persona_manager.update_persona(
+            persona_id=str(payload.get("persona_id", "")),
+            system_prompt=raw_persona.get("system_prompt"),
+            begin_dialogs=(
+                self._normalize_history_items(raw_persona.get("begin_dialogs"))
+                if "begin_dialogs" in raw_persona
+                else None
+            ),
+            tools=(
+                [str(item) for item in raw_persona.get("tools", [])]
+                if isinstance(raw_persona.get("tools"), list)
+                else raw_persona.get("tools")
+            ),
+            skills=(
+                [str(item) for item in raw_persona.get("skills", [])]
+                if isinstance(raw_persona.get("skills"), list)
+                else raw_persona.get("skills")
+            ),
+            custom_error_message=raw_persona.get("custom_error_message"),
+        )
+        return {"persona": self._serialize_persona(persona)}
+
+    async def _persona_delete(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        persona_id = str(payload.get("persona_id", "")).strip()
+        try:
+            await self._star_context.persona_manager.delete_persona(persona_id)
+        except ValueError as exc:
+            raise AstrBotError.invalid_input(str(exc)) from exc
+        return {}
+
+    async def _conversation_new(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        session = str(payload.get("session", "")).strip()
+        if not session:
+            raise AstrBotError.invalid_input("conversation.new requires session")
+        raw_conversation = payload.get("conversation")
+        if raw_conversation is None:
+            raw_conversation = {}
+        if not isinstance(raw_conversation, dict):
+            raise AstrBotError.invalid_input(
+                "conversation.new requires conversation object"
+            )
+        conversation_id = await self._star_context.conversation_manager.new_conversation(
+            unified_msg_origin=session,
+            platform_id=(
+                str(raw_conversation.get("platform_id"))
+                if raw_conversation.get("platform_id") is not None
+                else None
+            ),
+            content=self._normalize_history_items(raw_conversation.get("history")),
+            title=(
+                str(raw_conversation.get("title"))
+                if raw_conversation.get("title") is not None
+                else None
+            ),
+            persona_id=(
+                str(raw_conversation.get("persona_id"))
+                if raw_conversation.get("persona_id") is not None
+                else None
+            ),
+        )
+        return {"conversation_id": conversation_id}
+
+    async def _conversation_switch(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        session = str(payload.get("session", "")).strip()
+        conversation_id = str(payload.get("conversation_id", "")).strip()
+        if not session:
+            raise AstrBotError.invalid_input("conversation.switch requires session")
+        if not conversation_id:
+            raise AstrBotError.invalid_input(
+                "conversation.switch requires conversation_id"
+            )
+        await self._star_context.conversation_manager.switch_conversation(
+            unified_msg_origin=session,
+            conversation_id=conversation_id,
+        )
+        return {}
+
+    async def _conversation_delete(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        await self._star_context.conversation_manager.delete_conversation(
+            unified_msg_origin=str(payload.get("session", "")),
+            conversation_id=(
+                str(payload.get("conversation_id"))
+                if payload.get("conversation_id") is not None
+                else None
+            ),
+        )
+        return {}
+
+    async def _conversation_get(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        conversation = await self._star_context.conversation_manager.get_conversation(
+            unified_msg_origin=str(payload.get("session", "")),
+            conversation_id=str(payload.get("conversation_id", "")),
+            create_if_not_exists=bool(payload.get("create_if_not_exists", False)),
+        )
+        return {"conversation": self._serialize_conversation(conversation)}
+
+    async def _conversation_list(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        session = payload.get("session")
+        platform_id = payload.get("platform_id")
+        conversations = await self._star_context.conversation_manager.get_conversations(
+            unified_msg_origin=(
+                str(session) if session is not None and str(session).strip() else None
+            ),
+            platform_id=(
+                str(platform_id)
+                if platform_id is not None and str(platform_id).strip()
+                else None
+            ),
+        )
+        return {
+            "conversations": [
+                payload
+                for payload in (
+                    self._serialize_conversation(conversation)
+                    for conversation in conversations
+                )
+                if payload is not None
+            ]
+        }
+
+    async def _conversation_update(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        raw_conversation = payload.get("conversation")
+        if raw_conversation is None:
+            raw_conversation = {}
+        if not isinstance(raw_conversation, dict):
+            raise AstrBotError.invalid_input(
+                "conversation.update requires conversation object"
+            )
+        await self._star_context.conversation_manager.update_conversation(
+            unified_msg_origin=str(payload.get("session", "")),
+            conversation_id=(
+                str(payload.get("conversation_id"))
+                if payload.get("conversation_id") is not None
+                else None
+            ),
+            history=(
+                self._normalize_history_items(raw_conversation.get("history"))
+                if "history" in raw_conversation
+                else None
+            ),
+            title=(
+                str(raw_conversation.get("title"))
+                if raw_conversation.get("title") is not None
+                else None
+            ),
+            persona_id=(
+                str(raw_conversation.get("persona_id"))
+                if raw_conversation.get("persona_id") is not None
+                else None
+            ),
+            token_usage=(
+                int(raw_conversation.get("token_usage"))
+                if raw_conversation.get("token_usage") is not None
+                else None
+            ),
+        )
+        return {}
+
+    async def _kb_get(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        kb_helper = self._star_context.kb_manager.get_kb(str(payload.get("kb_id", "")))
+        return {"kb": self._serialize_kb(kb_helper)}
+
+    async def _kb_create(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        raw_kb = payload.get("kb")
+        if not isinstance(raw_kb, dict):
+            raise AstrBotError.invalid_input("kb.create requires kb object")
+        try:
+            kb_helper = self._star_context.kb_manager.create_kb(
+                kb_name=str(raw_kb.get("kb_name", "")),
+                description=(
+                    str(raw_kb.get("description"))
+                    if raw_kb.get("description") is not None
+                    else None
+                ),
+                emoji=(
+                    str(raw_kb.get("emoji"))
+                    if raw_kb.get("emoji") is not None
+                    else None
+                ),
+                embedding_provider_id=(
+                    str(raw_kb.get("embedding_provider_id"))
+                    if raw_kb.get("embedding_provider_id") is not None
+                    else None
+                ),
+                rerank_provider_id=(
+                    str(raw_kb.get("rerank_provider_id"))
+                    if raw_kb.get("rerank_provider_id") is not None
+                    else None
+                ),
+                chunk_size=(
+                    int(raw_kb.get("chunk_size"))
+                    if raw_kb.get("chunk_size") is not None
+                    else None
+                ),
+                chunk_overlap=(
+                    int(raw_kb.get("chunk_overlap"))
+                    if raw_kb.get("chunk_overlap") is not None
+                    else None
+                ),
+                top_k_dense=(
+                    int(raw_kb.get("top_k_dense"))
+                    if raw_kb.get("top_k_dense") is not None
+                    else None
+                ),
+                top_k_sparse=(
+                    int(raw_kb.get("top_k_sparse"))
+                    if raw_kb.get("top_k_sparse") is not None
+                    else None
+                ),
+                top_m_final=(
+                    int(raw_kb.get("top_m_final"))
+                    if raw_kb.get("top_m_final") is not None
+                    else None
+                ),
+            )
+        except ValueError as exc:
+            raise AstrBotError.invalid_input(str(exc)) from exc
+        return {"kb": self._serialize_kb(kb_helper)}
+
+    async def _kb_delete(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        deleted = self._star_context.kb_manager.delete_kb(str(payload.get("kb_id", "")))
+        return {"deleted": bool(deleted)}
 
     async def _system_get_data_dir(
         self,

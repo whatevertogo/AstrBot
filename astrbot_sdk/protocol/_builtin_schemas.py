@@ -427,6 +427,197 @@ SESSION_SERVICE_SET_TTS_STATUS_INPUT_SCHEMA = _object_schema(
     enabled={"type": "boolean"},
 )
 SESSION_SERVICE_SET_TTS_STATUS_OUTPUT_SCHEMA = _object_schema()
+PERSONA_RECORD_SCHEMA = _object_schema(
+    required=("persona_id", "system_prompt", "begin_dialogs", "sort_order"),
+    persona_id={"type": "string"},
+    system_prompt={"type": "string"},
+    begin_dialogs={"type": "array", "items": {"type": "object"}},
+    tools=_nullable({"type": "array", "items": {"type": "string"}}),
+    skills=_nullable({"type": "array", "items": {"type": "string"}}),
+    custom_error_message=_nullable({"type": "string"}),
+    folder_id=_nullable({"type": "string"}),
+    sort_order={"type": "integer"},
+    created_at=_nullable({"type": "string"}),
+    updated_at=_nullable({"type": "string"}),
+)
+PERSONA_CREATE_SCHEMA = _object_schema(
+    required=("persona_id", "system_prompt"),
+    persona_id={"type": "string"},
+    system_prompt={"type": "string"},
+    begin_dialogs={"type": "array", "items": {"type": "object"}},
+    tools=_nullable({"type": "array", "items": {"type": "string"}}),
+    skills=_nullable({"type": "array", "items": {"type": "string"}}),
+    custom_error_message=_nullable({"type": "string"}),
+    folder_id=_nullable({"type": "string"}),
+    sort_order={"type": "integer"},
+)
+PERSONA_UPDATE_SCHEMA = _object_schema(
+    system_prompt=_nullable({"type": "string"}),
+    begin_dialogs=_nullable({"type": "array", "items": {"type": "object"}}),
+    tools=_nullable({"type": "array", "items": {"type": "string"}}),
+    skills=_nullable({"type": "array", "items": {"type": "string"}}),
+    custom_error_message=_nullable({"type": "string"}),
+)
+PERSONA_GET_INPUT_SCHEMA = _object_schema(
+    required=("persona_id",),
+    persona_id={"type": "string"},
+)
+PERSONA_GET_OUTPUT_SCHEMA = _object_schema(
+    required=("persona",),
+    persona=PERSONA_RECORD_SCHEMA,
+)
+PERSONA_LIST_INPUT_SCHEMA = _object_schema()
+PERSONA_LIST_OUTPUT_SCHEMA = _object_schema(
+    required=("personas",),
+    personas={"type": "array", "items": PERSONA_RECORD_SCHEMA},
+)
+PERSONA_CREATE_INPUT_SCHEMA = _object_schema(
+    required=("persona",),
+    persona=PERSONA_CREATE_SCHEMA,
+)
+PERSONA_CREATE_OUTPUT_SCHEMA = _object_schema(
+    required=("persona",),
+    persona=PERSONA_RECORD_SCHEMA,
+)
+PERSONA_UPDATE_INPUT_SCHEMA = _object_schema(
+    required=("persona_id", "persona"),
+    persona_id={"type": "string"},
+    persona=PERSONA_UPDATE_SCHEMA,
+)
+PERSONA_UPDATE_OUTPUT_SCHEMA = _object_schema(
+    required=("persona",),
+    persona=_nullable(PERSONA_RECORD_SCHEMA),
+)
+PERSONA_DELETE_INPUT_SCHEMA = _object_schema(
+    required=("persona_id",),
+    persona_id={"type": "string"},
+)
+PERSONA_DELETE_OUTPUT_SCHEMA = _object_schema()
+CONVERSATION_RECORD_SCHEMA = _object_schema(
+    required=("conversation_id", "session", "platform_id", "history"),
+    conversation_id={"type": "string"},
+    session={"type": "string"},
+    platform_id={"type": "string"},
+    history={"type": "array", "items": {"type": "object"}},
+    title=_nullable({"type": "string"}),
+    persona_id=_nullable({"type": "string"}),
+    created_at=_nullable({"type": "string"}),
+    updated_at=_nullable({"type": "string"}),
+    token_usage=_nullable({"type": "integer"}),
+)
+CONVERSATION_CREATE_SCHEMA = _object_schema(
+    platform_id=_nullable({"type": "string"}),
+    history=_nullable({"type": "array", "items": {"type": "object"}}),
+    title=_nullable({"type": "string"}),
+    persona_id=_nullable({"type": "string"}),
+)
+CONVERSATION_UPDATE_SCHEMA = _object_schema(
+    history=_nullable({"type": "array", "items": {"type": "object"}}),
+    title=_nullable({"type": "string"}),
+    persona_id=_nullable({"type": "string"}),
+    token_usage=_nullable({"type": "integer"}),
+)
+CONVERSATION_NEW_INPUT_SCHEMA = _object_schema(
+    required=("session",),
+    session={"type": "string"},
+    conversation=_nullable(CONVERSATION_CREATE_SCHEMA),
+)
+CONVERSATION_NEW_OUTPUT_SCHEMA = _object_schema(
+    required=("conversation_id",),
+    conversation_id={"type": "string"},
+)
+CONVERSATION_SWITCH_INPUT_SCHEMA = _object_schema(
+    required=("session", "conversation_id"),
+    session={"type": "string"},
+    conversation_id={"type": "string"},
+)
+CONVERSATION_SWITCH_OUTPUT_SCHEMA = _object_schema()
+CONVERSATION_DELETE_INPUT_SCHEMA = _object_schema(
+    required=("session",),
+    session={"type": "string"},
+    conversation_id=_nullable({"type": "string"}),
+)
+CONVERSATION_DELETE_OUTPUT_SCHEMA = _object_schema()
+CONVERSATION_GET_INPUT_SCHEMA = _object_schema(
+    required=("session", "conversation_id"),
+    session={"type": "string"},
+    conversation_id={"type": "string"},
+    create_if_not_exists={"type": "boolean"},
+)
+CONVERSATION_GET_OUTPUT_SCHEMA = _object_schema(
+    required=("conversation",),
+    conversation=_nullable(CONVERSATION_RECORD_SCHEMA),
+)
+CONVERSATION_LIST_INPUT_SCHEMA = _object_schema(
+    session=_nullable({"type": "string"}),
+    platform_id=_nullable({"type": "string"}),
+)
+CONVERSATION_LIST_OUTPUT_SCHEMA = _object_schema(
+    required=("conversations",),
+    conversations={"type": "array", "items": CONVERSATION_RECORD_SCHEMA},
+)
+CONVERSATION_UPDATE_INPUT_SCHEMA = _object_schema(
+    required=("session",),
+    session={"type": "string"},
+    conversation_id=_nullable({"type": "string"}),
+    conversation=_nullable(CONVERSATION_UPDATE_SCHEMA),
+)
+CONVERSATION_UPDATE_OUTPUT_SCHEMA = _object_schema()
+KNOWLEDGE_BASE_RECORD_SCHEMA = _object_schema(
+    required=("kb_id", "kb_name", "embedding_provider_id", "doc_count", "chunk_count"),
+    kb_id={"type": "string"},
+    kb_name={"type": "string"},
+    description=_nullable({"type": "string"}),
+    emoji=_nullable({"type": "string"}),
+    embedding_provider_id={"type": "string"},
+    rerank_provider_id=_nullable({"type": "string"}),
+    chunk_size=_nullable({"type": "integer"}),
+    chunk_overlap=_nullable({"type": "integer"}),
+    top_k_dense=_nullable({"type": "integer"}),
+    top_k_sparse=_nullable({"type": "integer"}),
+    top_m_final=_nullable({"type": "integer"}),
+    doc_count={"type": "integer"},
+    chunk_count={"type": "integer"},
+    created_at=_nullable({"type": "string"}),
+    updated_at=_nullable({"type": "string"}),
+)
+KNOWLEDGE_BASE_CREATE_SCHEMA = _object_schema(
+    required=("kb_name", "embedding_provider_id"),
+    kb_name={"type": "string"},
+    embedding_provider_id={"type": "string"},
+    description=_nullable({"type": "string"}),
+    emoji=_nullable({"type": "string"}),
+    rerank_provider_id=_nullable({"type": "string"}),
+    chunk_size=_nullable({"type": "integer"}),
+    chunk_overlap=_nullable({"type": "integer"}),
+    top_k_dense=_nullable({"type": "integer"}),
+    top_k_sparse=_nullable({"type": "integer"}),
+    top_m_final=_nullable({"type": "integer"}),
+)
+KB_GET_INPUT_SCHEMA = _object_schema(
+    required=("kb_id",),
+    kb_id={"type": "string"},
+)
+KB_GET_OUTPUT_SCHEMA = _object_schema(
+    required=("kb",),
+    kb=_nullable(KNOWLEDGE_BASE_RECORD_SCHEMA),
+)
+KB_CREATE_INPUT_SCHEMA = _object_schema(
+    required=("kb",),
+    kb=KNOWLEDGE_BASE_CREATE_SCHEMA,
+)
+KB_CREATE_OUTPUT_SCHEMA = _object_schema(
+    required=("kb",),
+    kb=KNOWLEDGE_BASE_RECORD_SCHEMA,
+)
+KB_DELETE_INPUT_SCHEMA = _object_schema(
+    required=("kb_id",),
+    kb_id={"type": "string"},
+)
+KB_DELETE_OUTPUT_SCHEMA = _object_schema(
+    required=("deleted",),
+    deleted={"type": "boolean"},
+)
 REGISTRY_COMMAND_REGISTER_INPUT_SCHEMA = _object_schema(
     required=("command_name", "handler_full_name"),
     command_name={"type": "string"},
@@ -792,6 +983,59 @@ BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
         "input": SESSION_SERVICE_SET_TTS_STATUS_INPUT_SCHEMA,
         "output": SESSION_SERVICE_SET_TTS_STATUS_OUTPUT_SCHEMA,
     },
+    "persona.get": {
+        "input": PERSONA_GET_INPUT_SCHEMA,
+        "output": PERSONA_GET_OUTPUT_SCHEMA,
+    },
+    "persona.list": {
+        "input": PERSONA_LIST_INPUT_SCHEMA,
+        "output": PERSONA_LIST_OUTPUT_SCHEMA,
+    },
+    "persona.create": {
+        "input": PERSONA_CREATE_INPUT_SCHEMA,
+        "output": PERSONA_CREATE_OUTPUT_SCHEMA,
+    },
+    "persona.update": {
+        "input": PERSONA_UPDATE_INPUT_SCHEMA,
+        "output": PERSONA_UPDATE_OUTPUT_SCHEMA,
+    },
+    "persona.delete": {
+        "input": PERSONA_DELETE_INPUT_SCHEMA,
+        "output": PERSONA_DELETE_OUTPUT_SCHEMA,
+    },
+    "conversation.new": {
+        "input": CONVERSATION_NEW_INPUT_SCHEMA,
+        "output": CONVERSATION_NEW_OUTPUT_SCHEMA,
+    },
+    "conversation.switch": {
+        "input": CONVERSATION_SWITCH_INPUT_SCHEMA,
+        "output": CONVERSATION_SWITCH_OUTPUT_SCHEMA,
+    },
+    "conversation.delete": {
+        "input": CONVERSATION_DELETE_INPUT_SCHEMA,
+        "output": CONVERSATION_DELETE_OUTPUT_SCHEMA,
+    },
+    "conversation.get": {
+        "input": CONVERSATION_GET_INPUT_SCHEMA,
+        "output": CONVERSATION_GET_OUTPUT_SCHEMA,
+    },
+    "conversation.list": {
+        "input": CONVERSATION_LIST_INPUT_SCHEMA,
+        "output": CONVERSATION_LIST_OUTPUT_SCHEMA,
+    },
+    "conversation.update": {
+        "input": CONVERSATION_UPDATE_INPUT_SCHEMA,
+        "output": CONVERSATION_UPDATE_OUTPUT_SCHEMA,
+    },
+    "kb.get": {"input": KB_GET_INPUT_SCHEMA, "output": KB_GET_OUTPUT_SCHEMA},
+    "kb.create": {
+        "input": KB_CREATE_INPUT_SCHEMA,
+        "output": KB_CREATE_OUTPUT_SCHEMA,
+    },
+    "kb.delete": {
+        "input": KB_DELETE_INPUT_SCHEMA,
+        "output": KB_DELETE_OUTPUT_SCHEMA,
+    },
     "registry.command.register": {
         "input": REGISTRY_COMMAND_REGISTER_INPUT_SCHEMA,
         "output": REGISTRY_COMMAND_REGISTER_OUTPUT_SCHEMA,
@@ -1108,6 +1352,42 @@ __all__ = [
     "PLATFORM_SEND_IMAGE_OUTPUT_SCHEMA",
     "PLATFORM_SEND_INPUT_SCHEMA",
     "PLATFORM_SEND_OUTPUT_SCHEMA",
+    "PERSONA_CREATE_INPUT_SCHEMA",
+    "PERSONA_CREATE_OUTPUT_SCHEMA",
+    "PERSONA_CREATE_SCHEMA",
+    "PERSONA_DELETE_INPUT_SCHEMA",
+    "PERSONA_DELETE_OUTPUT_SCHEMA",
+    "PERSONA_GET_INPUT_SCHEMA",
+    "PERSONA_GET_OUTPUT_SCHEMA",
+    "PERSONA_LIST_INPUT_SCHEMA",
+    "PERSONA_LIST_OUTPUT_SCHEMA",
+    "PERSONA_RECORD_SCHEMA",
+    "PERSONA_UPDATE_INPUT_SCHEMA",
+    "PERSONA_UPDATE_OUTPUT_SCHEMA",
+    "PERSONA_UPDATE_SCHEMA",
+    "CONVERSATION_CREATE_SCHEMA",
+    "CONVERSATION_DELETE_INPUT_SCHEMA",
+    "CONVERSATION_DELETE_OUTPUT_SCHEMA",
+    "CONVERSATION_GET_INPUT_SCHEMA",
+    "CONVERSATION_GET_OUTPUT_SCHEMA",
+    "CONVERSATION_LIST_INPUT_SCHEMA",
+    "CONVERSATION_LIST_OUTPUT_SCHEMA",
+    "CONVERSATION_NEW_INPUT_SCHEMA",
+    "CONVERSATION_NEW_OUTPUT_SCHEMA",
+    "CONVERSATION_RECORD_SCHEMA",
+    "CONVERSATION_SWITCH_INPUT_SCHEMA",
+    "CONVERSATION_SWITCH_OUTPUT_SCHEMA",
+    "CONVERSATION_UPDATE_INPUT_SCHEMA",
+    "CONVERSATION_UPDATE_OUTPUT_SCHEMA",
+    "CONVERSATION_UPDATE_SCHEMA",
+    "KB_CREATE_INPUT_SCHEMA",
+    "KB_CREATE_OUTPUT_SCHEMA",
+    "KB_DELETE_INPUT_SCHEMA",
+    "KB_DELETE_OUTPUT_SCHEMA",
+    "KB_GET_INPUT_SCHEMA",
+    "KB_GET_OUTPUT_SCHEMA",
+    "KNOWLEDGE_BASE_CREATE_SCHEMA",
+    "KNOWLEDGE_BASE_RECORD_SCHEMA",
     "REGISTRY_COMMAND_REGISTER_INPUT_SCHEMA",
     "REGISTRY_COMMAND_REGISTER_OUTPUT_SCHEMA",
     "REGISTRY_GET_HANDLER_BY_FULL_NAME_INPUT_SCHEMA",

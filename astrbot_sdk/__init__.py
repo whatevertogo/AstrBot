@@ -9,6 +9,20 @@
 迁移期适配入口位于独立模块；此处只暴露 v4 原生主入口。
 """
 
+from .clients.managers import (
+    ConversationCreateParams,
+    ConversationManagerClient,
+    ConversationRecord,
+    ConversationUpdateParams,
+    KnowledgeBaseCreateParams,
+    KnowledgeBaseManagerClient,
+    KnowledgeBaseRecord,
+    PersonaCreateParams,
+    PersonaManagerClient,
+    PersonaRecord,
+    PersonaUpdateParams,
+)
+from .clients.session import SessionPluginManager, SessionServiceManager
 from .commands import CommandGroup, command_group, print_cmd_tree
 from .context import Context
 from .decorators import (
@@ -45,7 +59,6 @@ from .message_components import (
 from .message_result import EventResultType, MessageChain, MessageEventResult
 from .message_session import MessageSession
 from .schedule import ScheduleContext
-from .clients.session import SessionPluginManager, SessionServiceManager
 from .session_waiter import SessionController, session_waiter
 from .star import Star
 from .types import GreedyStr
@@ -55,6 +68,10 @@ __all__ = [
     "At",
     "AtAll",
     "CommandGroup",
+    "ConversationCreateParams",
+    "ConversationManagerClient",
+    "ConversationRecord",
+    "ConversationUpdateParams",
     "Context",
     "CustomFilter",
     "EventResultType",
@@ -62,6 +79,9 @@ __all__ = [
     "Forward",
     "GreedyStr",
     "Image",
+    "KnowledgeBaseCreateParams",
+    "KnowledgeBaseManagerClient",
+    "KnowledgeBaseRecord",
     "MessageEvent",
     "MessageEventResult",
     "MessageChain",
@@ -70,6 +90,10 @@ __all__ = [
     "Plain",
     "PlatformFilter",
     "Poke",
+    "PersonaCreateParams",
+    "PersonaManagerClient",
+    "PersonaRecord",
+    "PersonaUpdateParams",
     "Record",
     "Reply",
     "ScheduleContext",

@@ -77,6 +77,11 @@
     Registry:
         registry.get_handlers_by_event_type: 按事件类型列出 handler 元数据
         registry.get_handler_by_full_name: 按 full name 查询 handler 元数据
+    Managers:
+        persona.get / persona.list / persona.create / persona.update / persona.delete
+        conversation.new / conversation.switch / conversation.delete
+        conversation.get / conversation.list / conversation.update
+        kb.get / kb.create / kb.delete
 
 能力命名规范：
     - 格式: {namespace}.{action} 或 {namespace}.{sub_namespace}.{action}
@@ -234,6 +239,10 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
         self._session_plugin_configs: dict[str, dict[str, Any]] = {}
         self._session_service_configs: dict[str, dict[str, Any]] = {}
         self._dynamic_command_routes: dict[str, list[dict[str, Any]]] = {}
+        self._persona_store: dict[str, dict[str, Any]] = {}
+        self._conversation_store: dict[str, dict[str, Any]] = {}
+        self._session_current_conversation_ids: dict[str, str] = {}
+        self._kb_store: dict[str, dict[str, Any]] = {}
         self._platform_instances: list[dict[str, Any]] = [
             {
                 "id": "mock-platform",

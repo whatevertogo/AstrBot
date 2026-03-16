@@ -27,7 +27,7 @@
 | 工具方法 | 6 | 6 | 0 | 0 | 0 | 100% |
 | 会话控制 | 5 | 5 | 0 | 0 | 0 | 100% |
 | 过滤器 | 5 | 5 | 0 | 0 | 0 | 100% |
-| 高级管理器 | 12 | 0 | 0 | 12 | 0 | 0% |
+| 高级管理器 | 12 | 12 | 0 | 0 | 0 | 100% |
 | Provider管理 | 12 | 0 | 0 | 12 | 0 | 0% |
 | Provider实体 | 10 | 1 | 0 | 9 | 0 | 10% |
 | TTS/STT/Embedding | 6 | 0 | 0 | 6 | 0 | 0% |
@@ -531,23 +531,23 @@
 
 | 管理器/方法 | 状态 | 说明 |
 | --- | --- | --- |
-| **PersonaManager** | ❌ | 人格管理器 |
-| `get_persona(persona_id)` | ❌ | 获取人格 |
-| `get_all_personas()` | ❌ | 获取所有人格 |
-| `create_persona(...)` | ❌ | 创建人格 |
-| `update_persona(...)` | ❌ | 更新人格 |
-| `delete_persona(persona_id)` | ❌ | 删除人格 |
-| **ConversationManager** | ❌ | 对话管理器 |
-| `new_conversation(umo)` | ❌ | 新建对话 |
-| `switch_conversation(umo, cid)` | ❌ | 切换对话 |
-| `delete_conversation(umo, cid)` | ❌ | 删除对话 |
-| `get_conversation(umo, cid)` | ❌ | 获取对话 |
-| `get_conversations(umo)` | ❌ | 获取对话列表 |
-| `update_conversation(...)` | ❌ | 更新对话 |
-| **KnowledgeBaseManager** | ❌ | 知识库管理器 |
-| `get_kb(kb_id)` | ❌ | 获取知识库 |
-| `create_kb(...)` | ❌ | 创建知识库 |
-| `delete_kb(kb_id)` | ❌ | 删除知识库 |
+| **PersonaManager** | ✅ | 人格管理器 |
+| `get_persona(persona_id)` | ✅ | 获取人格 |
+| `get_all_personas()` | ✅ | 获取所有人格 |
+| `create_persona(...)` | ✅ | 创建人格 |
+| `update_persona(...)` | ✅ | 更新人格 |
+| `delete_persona(persona_id)` | ✅ | 删除人格 |
+| **ConversationManager** | ✅ | 对话管理器 |
+| `new_conversation(umo)` | ✅ | 新建对话 |
+| `switch_conversation(umo, cid)` | ✅ | 切换对话 |
+| `delete_conversation(umo, cid)` | ✅ | 删除对话 |
+| `get_conversation(umo, cid)` | ✅ | 获取对话 |
+| `get_conversations(umo)` | ✅ | 获取对话列表 |
+| `update_conversation(...)` | ✅ | 更新对话 |
+| **KnowledgeBaseManager** | ✅ | 知识库管理器 |
+| `get_kb(kb_id)` | ✅ | 获取知识库 |
+| `create_kb(...)` | ✅ | 创建知识库 |
+| `delete_kb(kb_id)` | ✅ | 删除知识库 |
 
 ---
 
@@ -769,9 +769,9 @@
 4. **RerankProvider** - ✅ 重排序提供商
 
 #### P1.2 - 高级管理器
-1. **PersonaManager** - 人格管理器（`get_persona()`, `get_all_personas()`, `create_persona()`, `update_persona()`, `delete_persona()`）
-2. **ConversationManager** - 对话管理器（`new_conversation()`, `switch_conversation()`, `delete_conversation()`, `get_conversation()`, `get_conversations()`, `update_conversation()`）
-3. **KnowledgeBaseManager** - 知识库管理器（`get_kb()`, `create_kb()`, `delete_kb()`）
+1. **PersonaManager** - ✅ 人格管理器（`get_persona()`, `get_all_personas()`, `create_persona()`, `update_persona()`, `delete_persona()`）
+2. **ConversationManager** - ✅ 对话管理器（`new_conversation()`, `switch_conversation()`, `delete_conversation()`, `get_conversation()`, `get_conversations()`, `update_conversation()`）
+3. **KnowledgeBaseManager** - ✅ 知识库管理器（`get_kb()`, `create_kb()`, `delete_kb()`）
 
 #### P1.3 - Provider 与 Platform 管理面
 1. **Provider 管理** - `set_provider()`, `get_provider_by_id()`, `load_provider()`, `terminate_provider()`, `create_provider()`, `update_provider()`, `delete_provider()`, `register_provider_change_hook()`, `get_insts()`

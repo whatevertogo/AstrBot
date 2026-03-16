@@ -11,6 +11,10 @@ Attributes:
     memory: 记忆能力客户端，用于语义存储
     db: 数据库客户端，用于 KV 持久化
     platform: 平台客户端，用于发送消息
+    providers: Provider 客户端，用于查询和调用专用 Provider
+    personas: 人格管理客户端
+    conversations: 对话管理客户端
+    kbs: 知识库管理客户端
     http: HTTP 客户端，用于注册 API 端点
     metadata: 元数据客户端，用于查询插件信息
     plugin_id: 当前插件的唯一标识
@@ -39,6 +43,11 @@ from .clients import (
 )
 from .clients._proxy import CapabilityProxy
 from .clients.llm import LLMResponse
+from .clients.managers import (
+    ConversationManagerClient,
+    KnowledgeBaseManagerClient,
+    PersonaManagerClient,
+)
 from .clients.provider import ProviderClient
 from .clients.session import SessionPluginManager, SessionServiceManager
 from .errors import AstrBotError
@@ -158,6 +167,9 @@ class Context:
         db: 数据库客户端
         platform: 平台客户端
         providers: Provider 客户端
+        personas: 人格管理客户端
+        conversations: 对话管理客户端
+        kbs: 知识库管理客户端
         http: HTTP 客户端
         metadata: 元数据客户端
         plugin_id: 当前插件 ID
@@ -190,11 +202,17 @@ class Context:
         self.db = DBClient(proxy)
         self.platform = PlatformClient(proxy)
         self.providers = ProviderClient(proxy)
+        self.personas = PersonaManagerClient(proxy)
+        self.conversations = ConversationManagerClient(proxy)
+        self.kbs = KnowledgeBaseManagerClient(proxy)
         self.http = HTTPClient(proxy)
         self.metadata = MetadataClient(proxy, plugin_id)
         self.registry = RegistryClient(proxy)
         self.session_plugins = SessionPluginManager(proxy)
         self.session_services = SessionServiceManager(proxy)
+        self.persona_manager = self.personas
+        self.conversation_manager = self.conversations
+        self.kb_manager = self.kbs
         self._llm_tool_manager = LLMToolManager(proxy)
         self.plugin_id = plugin_id
         self.logger = logger or base_logger.bind(plugin_id=plugin_id)
