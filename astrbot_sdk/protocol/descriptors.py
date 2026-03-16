@@ -220,6 +220,37 @@ class HandlerDescriptor(_DescriptorBase):
         contract: 运行时契约名，描述入参/执行语义
         priority: 优先级，数值越大越先执行
         permissions: 权限配置，控制谁可以触发该处理器
+
+    使用场景：
+        HandlerDescriptor 通常由 `@on_command`、`@on_message` 等装饰器自动创建，
+        插件作者一般不需要手动实例化。但了解其结构有助于理解插件注册机制。
+
+    触发器类型：
+        - CommandTrigger: 响应特定命令，如 `/help`
+        - MessageTrigger: 响应消息（正则/关键词匹配）
+        - EventTrigger: 响应特定事件类型
+        - ScheduleTrigger: 定时触发
+
+    示例：
+        插件作者通常通过装饰器声明处理器，框架会自动生成 HandlerDescriptor：
+
+        ```python
+        from astrbot_sdk.decorators import on_command, on_message
+
+        # 命令处理器
+        @on_command("hello")
+        async def hello_handler(ctx: Context):
+            await ctx.reply("Hello!")
+
+        # 消息处理器（正则匹配）
+        @on_message(regex=r"^test\\s+(.+)$")
+        async def test_handler(ctx: Context):
+            await ctx.reply(f"收到: {ctx.match.group(1)}")
+        ```
+
+    See Also:
+        Trigger: 触发器联合类型
+        Permissions: 权限配置
     """
 
     id: str
@@ -247,7 +278,13 @@ class CapabilityDescriptor(_DescriptorBase):
 
     能力命名规范：
         - 使用 "namespace.action" 格式，如 "llm.chat"、"db.set"
+        - 支持多级命名空间，如 "llm_tool.manager.activate"
         - 内置能力以 "internal." 开头，如 "internal.legacy.call_context_function"
+
+    保留命名空间（插件不可使用）：
+        - `handler.` - 处理器相关
+        - `system.` - 系统内部能力
+        - `internal.` - 内部实现细节
 
     Attributes:
         name: 能力名称，格式为 "namespace.action"
@@ -256,6 +293,52 @@ class CapabilityDescriptor(_DescriptorBase):
         output_schema: 输出结果的 JSON Schema，用于验证
         supports_stream: 是否支持流式响应
         cancelable: 是否支持取消
+
+    使用场景：
+        当你的插件需要**暴露**一个可被其他插件调用的能力时，使用此类声明。
+
+    示例：
+        ```python
+        from astrbot_sdk.protocol import CapabilityDescriptor
+
+        # 声明一个翻译能力
+        translate_desc = CapabilityDescriptor(
+            name="my_plugin.translate",
+            description="翻译文本到指定语言",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "要翻译的文本"},
+                    "target_lang": {"type": "string", "description": "目标语言"},
+                },
+                "required": ["text", "target_lang"],
+            },
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "translated": {"type": "string"},
+                },
+            },
+        )
+
+        # 声明一个流式数据能力
+        stream_desc = CapabilityDescriptor(
+            name="my_plugin.stream_data",
+            description="流式返回数据",
+            supports_stream=True,
+            cancelable=True,
+            input_schema={"type": "object", "properties": {"count": {"type": "integer"}}},
+            output_schema={"type": "object", "properties": {"items": {"type": "array"}}},
+        )
+        ```
+
+    注意：
+        如果你要调用**内置能力**（如 `llm.chat`、`db.set`），不需要手动创建
+        CapabilityDescriptor，而是直接通过 `Context.invoke()` 调用，或查阅
+        `BUILTIN_CAPABILITY_SCHEMAS` 了解参数格式。
+
+    See Also:
+        BUILTIN_CAPABILITY_SCHEMAS: 内置能力的 schema 定义，用于查询参数格式
     """
 
     name: str

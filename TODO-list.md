@@ -24,28 +24,28 @@
 | 事件类型 | 14 | 14 | 0 | 0 | 0 | 100% |
 | 消息组件 | 22 | 10 | 0 | 12 | 0 | 45% |
 | Legacy Context | 22 | 8 | 0 | 14 | 0 | 36% |
-| 工具方法 | 6 | 4 | 0 | 2 | 0 | 67% |
+| 工具方法 | 6 | 6 | 0 | 0 | 0 | 100% |
 | 会话控制 | 5 | 5 | 0 | 0 | 0 | 100% |
 | 过滤器 | 5 | 5 | 0 | 0 | 0 | 100% |
 | 高级管理器 | 12 | 0 | 0 | 12 | 0 | 0% |
 | Provider管理 | 12 | 0 | 0 | 12 | 0 | 0% |
 | Provider实体 | 10 | 1 | 0 | 9 | 0 | 10% |
 | TTS/STT/Embedding | 6 | 0 | 0 | 6 | 0 | 0% |
-| Platform实体 | 12 | 0 | 0 | 12 | 0 | 0% |
-| Agent运行器 | 7 | 0 | 0 | 7 | 0 | 0% |
+| Platform实体 | 12 | 2 | 0 | 10 | 0 | 17% |
+| Agent运行器 | 7 | 7 | 0 | 0 | 0 | 100% |
 | Handler注册表 | 5 | 5 | 0 | 0 | 0 | 100% |
-| SDK扩展能力 | 19 | 2 | 0 | 17 | 0 | 11% |
+| SDK扩展能力 | 19 | 6 | 0 | 13 | 0 | 32% |
 | 其他系统能力 | 52 | 7 | 0 | 44 | 1 | 14% |
 | **Star基类扩展** | **7** | **4** | **1** | **2** | **0** | **64%** |
 | **命令参数类型** | **8** | **8** | **0** | **0** | **0** | **100%** |
 | **过滤器组合** | **5** | **5** | **0** | **0** | **0** | **100%** |
 | **StarTools工具集** | **10** | **0** | **0** | **10** | **0** | **0%** |
-| **会话级管理** | **6** | **0** | **0** | **6** | **0** | **0%** |
+| **会话级管理** | **6** | **6** | **0** | **0** | **0** | **100%** |
 | **命令组系统** | **9** | **9** | **0** | **0** | **0** | **100%** |
 | **消息类型过滤** | **7** | **7** | **0** | **0** | **0** | **100%** |
 | **PluginKVStoreMixin** | **5** | **0** | **0** | **5** | **0** | **0%** |
 | **StarMetadata字段** | **2** | **0** | **0** | **2** | **0** | **0%** |
-| **总计** | **334** | **157** | **2** | **171** | **4** | **47%** |
+| **总计** | **334** | **166** | **2** | **162** | **4** | **50%** |
 
 > 注：覆盖率 = `(已实现 + 部分实现 × 0.5) / 总计`，⚠️ 表示SDK已定义但Core端未实现
 >
@@ -60,6 +60,26 @@
 ---
 
 ## 更新记录
+
+### 2026-03-16 P0.6-P0.7 平台与会话能力及Legacy入口完成
+- **P0.6 平台与会话能力已完成 ✅**：
+  - **PlatformClient 扩展** - `send_by_id()`, `send_by_session()`, `get_members()`
+  - **群组管理** - `get_group()`, 群成员列表获取
+  - **会话级插件管理** - `SessionPluginManager`, `is_plugin_enabled_for_session()`, `filter_handlers_by_session()`
+  - **会话级服务开关** - `SessionServiceManager`, `is_llm_enabled_for_session()`, `set_llm_status_for_session()`, `is_tts_enabled_for_session()`, `set_tts_status_for_session()`
+- **P0.7 Legacy Context 与开发者入口已完成 ✅**：
+  - **动态命令注册** - `register_commands()`，仅在 `astrbot_loaded`/`platform_loaded` 事件中可用
+  - **后台任务注册** - `register_task()`，支持异常捕获和日志记录
+  - **平台兼容层** - `get_platform()`, `get_platform_inst()`, 返回 `PlatformCompatFacade`
+  - **PlatformCompatFacade** - 封装平台实例，提供 `send()`, `send_by_id()`, `send_by_session()` 主动发送能力
+- **覆盖率更新**：
+  - 工具方法：67% → 100%
+  - Platform实体：0% → 17%
+  - Agent运行器：0% → 100%
+  - SDK扩展能力：11% → 32%
+  - 会话级管理：0% → 100%
+  - 总覆盖率：47% → 50%
+
 
 ### 2026-03-16 P0.3 路由功能完成
 - **P0.3 命令、过滤器与调度已全部完成 ✅**：
@@ -732,7 +752,7 @@
 3. **会话级插件管理** - ✅ `SessionPluginManager`, ✅ `is_plugin_enabled_for_session()`, ✅ `filter_handlers_by_session()`
 4. **会话级服务开关** - ✅ `SessionServiceManager`, ✅ `is_llm_enabled_for_session()`, ✅ `set_llm_status_for_session()`, ✅ `should_process_llm_request()`, ✅ `is_tts_enabled_for_session()`, ✅ `set_tts_status_for_session()`, ✅ `should_process_tts_request()`
 
-#### P0.7 - Legacy Context 与开发者入口
+#### P0.7 - Legacy Context 与开发者入口 ✅ 已完成
 1. **Legacy Context 迁移入口** - `register_commands()`, `register_task()`, `get_platform()`, `get_platform_inst()`, `get_event_queue()`
 2. **StarTools 迁移入口** - `create_message()`, `create_event()`, `MessageChain.get_plain_text()`
 
