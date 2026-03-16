@@ -41,9 +41,9 @@ def _install_optional_dependency_stubs() -> None:
 
 _install_optional_dependency_stubs()
 
+from astrbot.core.message.components import File as CoreFile
 from astrbot_sdk import MessageEvent
 from astrbot_sdk import message_components as sdk_message_components
-from astrbot.core.message.components import File as CoreFile
 from astrbot_sdk.context import Context
 from astrbot_sdk.message_components import (
     File,
@@ -63,15 +63,13 @@ class _DummyPeer:
         self.remote_capability_map = {
             "platform.send": SimpleNamespace(supports_stream=False),
             "platform.send_chain": SimpleNamespace(supports_stream=False),
+            "platform.send_by_session": SimpleNamespace(supports_stream=False),
+            "platform.get_group": SimpleNamespace(supports_stream=False),
             "system.event.react": SimpleNamespace(supports_stream=False),
             "system.event.send_typing": SimpleNamespace(supports_stream=False),
             "system.event.send_streaming": SimpleNamespace(supports_stream=False),
-            "system.event.send_streaming_chunk": SimpleNamespace(
-                supports_stream=False
-            ),
-            "system.event.send_streaming_close": SimpleNamespace(
-                supports_stream=False
-            ),
+            "system.event.send_streaming_chunk": SimpleNamespace(supports_stream=False),
+            "system.event.send_streaming_close": SimpleNamespace(supports_stream=False),
         }
         self.sent_messages: list[dict] = []
         self.event_actions: list[dict] = []
@@ -98,6 +96,35 @@ class _DummyPeer:
                 }
             )
             return {"message_id": "chain-1"}
+        if capability == "platform.send_by_session":
+            self.sent_messages.append(
+                {
+                    "kind": "chain",
+                    "session": payload.get("session"),
+                    "chain": payload.get("chain"),
+                }
+            )
+            return {"message_id": "proactive-1"}
+        if capability == "platform.get_group":
+            session = str(payload.get("session", ""))
+            if ":group:" not in session:
+                return {"group": None}
+            return {
+                "group": {
+                    "group_id": "room-7",
+                    "group_name": "Room 7",
+                    "group_avatar": "",
+                    "group_owner": "owner-1",
+                    "group_admins": ["admin-1"],
+                    "members": [
+                        {
+                            "user_id": "member-1",
+                            "nickname": "Member 1",
+                            "role": "member",
+                        }
+                    ],
+                }
+            }
         if capability == "system.event.react":
             self.event_actions.append(
                 {"action": "react", "emoji": payload.get("emoji")}
@@ -286,6 +313,80 @@ async def test_event_actions_and_send_chain_with_mock_context() -> None:
         {"chain": [{"type": "text", "data": {"text": " stream"}}]},
     ]
     assert peer.sent_messages[-1]["kind"] == "chain"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_platform_send_by_session_accepts_existing_payload_shapes() -> None:
+    peer = _DummyPeer()
+    ctx = Context(peer=peer, plugin_id="sdk-demo")
+
+    await ctx.platform.send_by_session(
+        "demo:private:user-2",
+        [{"type": "text", "data": {"text": "dict-payload"}}],
+    )
+    await ctx.platform.send_by_session(
+        "demo:private:user-3",
+        MessageChain([Plain("message-chain", convert=False)]),
+    )
+    await ctx.platform.send_by_session(
+        "demo:private:user-4",
+        [Plain("component-list", convert=False)],
+    )
+    await ctx.platform.send_by_id("demo", "user-5", "plain-text")
+
+    assert peer.sent_messages[0] == {
+        "kind": "chain",
+        "session": "demo:private:user-2",
+        "chain": [{"type": "text", "data": {"text": "dict-payload"}}],
+    }
+    assert peer.sent_messages[1]["chain"] == [
+        {"type": "text", "data": {"text": "message-chain"}}
+    ]
+    assert peer.sent_messages[2]["chain"] == [
+        {"type": "text", "data": {"text": "component-list"}}
+    ]
+    assert peer.sent_messages[3] == {
+        "kind": "chain",
+        "session": "demo:private:user-5",
+        "chain": [{"type": "text", "data": {"text": "plain-text"}}],
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_message_event_get_group_returns_group_only_for_group_session() -> None:
+    peer = _DummyPeer()
+    ctx = Context(peer=peer, plugin_id="sdk-demo")
+    group_event = MessageEvent.from_payload(
+        {
+            "text": "hello",
+            "session_id": "demo:group:room-7",
+            "platform": "demo",
+            "platform_id": "demo",
+            "message_type": "group",
+            "target": SessionRef(conversation_id="demo:group:room-7").to_payload(),
+        },
+        context=ctx,
+    )
+    private_event = MessageEvent.from_payload(
+        {
+            "text": "hello",
+            "session_id": "demo:private:user-1",
+            "platform": "demo",
+            "platform_id": "demo",
+            "message_type": "private",
+            "target": SessionRef(conversation_id="demo:private:user-1").to_payload(),
+        },
+        context=ctx,
+    )
+
+    group = await group_event.get_group()
+    private_group = await private_event.get_group()
+
+    assert group is not None
+    assert group["group_id"] == "room-7"
+    assert private_group is None
 
 
 @pytest.mark.unit

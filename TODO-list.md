@@ -253,9 +253,9 @@
 | `send(session, text)` | ✅ | 发送文本 |
 | `send_image(session, url)` | ✅ | 发送图片 |
 | `send_chain(session, chain)` | ✅ | 发送消息链 |
-| `get_members(session)` | 🔄 | 获取群成员（依赖Core端event.get_group()） |
-| `send_by_id(platform_id, session_id, ...)` | ❌ | 根据ID发送消息（跨会话发送） |
-| `send_by_session(session, chain)` | ❌ | 通过可持久化会话数据发送消息 |
+| `get_members(session)` | ✅ | 获取当前消息所属群成员；不支持任意群主动查询 |
+| `send_by_id(platform_id, session_id, ...)` | ✅ | 根据ID发送消息（跨会话发送） |
+| `send_by_session(session, chain)` | ✅ | 通过可持久化会话数据发送消息 |
 
 ### MetadataClient
 
@@ -324,7 +324,7 @@
 | `clear_extra()` | ✅ | 清除当前事件本地附加信息 |
 | `image_result(url)` | ✅ | 创建图片结果 |
 | `chain_result(chain)` | ✅ | 创建消息链结果 |
-| `get_group()` | ❌ | 获取群聊数据 |
+| `get_group()` | ✅ | 获取当前消息所属群聊数据；私聊返回 `None` |
 | `request_llm()` | ❌ | 触发默认 LLM 请求 |
 | `set_result()` | ❌ | 设置处理结果 |
 | `get_result()` | ❌ | 获取处理结果 |
@@ -726,16 +726,15 @@
 5. **Provider 查询** - ✅ `get_using_provider()`, ✅ `get_current_chat_provider_id()`, ✅ `get_all_providers()`, ✅ `get_all_tts_providers()`, ✅ `get_all_stt_providers()`, ✅ `get_all_embedding_providers()`, ✅ `get_using_tts_provider()`, ✅ `get_using_stt_provider()`
 6. **Provider 类型与结果实体** - ✅ `ProviderType.*`, ✅ `ProviderMeta`, ✅ `ProviderRequest`, ✅ `ToolCallsResult`, ✅ `RerankResult`
 
-#### P0.6 - 平台与会话能力
-1. **PlatformClient 扩展** - `send_by_id()`, `send_by_session()`, `get_members()`
-2. **群组管理** - `get_group()`, 群成员列表获取
-3. **会话级插件管理** - `SessionPluginManager`, `is_plugin_enabled_for_session()`, `filter_handlers_by_session()`
-4. **会话级服务开关** - `SessionServiceManager`, `is_llm_enabled_for_session()`, `set_llm_status_for_session()`, `should_process_llm_request()`, `is_tts_enabled_for_session()`, `set_tts_status_for_session()`, `should_process_tts_request()`
+#### P0.6 - 平台与会话能力 ✅ 已完成
+1. **PlatformClient 扩展** - ✅ `send_by_id()`, ✅ `send_by_session()`, ✅ `get_members()`
+2. **群组管理** - ✅ `get_group()`, ✅ 群成员列表获取
+3. **会话级插件管理** - ✅ `SessionPluginManager`, ✅ `is_plugin_enabled_for_session()`, ✅ `filter_handlers_by_session()`
+4. **会话级服务开关** - ✅ `SessionServiceManager`, ✅ `is_llm_enabled_for_session()`, ✅ `set_llm_status_for_session()`, ✅ `should_process_llm_request()`, ✅ `is_tts_enabled_for_session()`, ✅ `set_tts_status_for_session()`, ✅ `should_process_tts_request()`
 
 #### P0.7 - Legacy Context 与开发者入口
 1. **Legacy Context 迁移入口** - `register_commands()`, `register_task()`, `get_platform()`, `get_platform_inst()`, `get_event_queue()`
 2. **StarTools 迁移入口** - `create_message()`, `create_event()`, `MessageChain.get_plain_text()`
-3. **MessageEvent 补齐入口** - `get_group()`
 
 ---
 
@@ -958,24 +957,24 @@
 
 | 功能 | 状态 | 说明 |
 | --- | --- | --- |
-| `SessionPluginManager` 类 | ❌ | 会话级插件管理器 |
-| `is_plugin_enabled_for_session(session_id, plugin_name)` | ❌ | 检查插件在会话中是否启用 |
-| `filter_handlers_by_session(event, handlers)` | ❌ | 根据会话配置过滤处理器 |
-| `session_plugin_config` 配置 | ❌ | 会话插件配置存储 |
-| `enabled_plugins` 列表 | ❌ | 会话启用的插件列表 |
-| `disabled_plugins` 列表 | ❌ | 会话禁用的插件列表 |
+| `SessionPluginManager` 类 | ✅ | 会话级插件管理器 |
+| `is_plugin_enabled_for_session(session_id, plugin_name)` | ✅ | 检查插件在会话中是否启用 |
+| `filter_handlers_by_session(event, handlers)` | ✅ | 根据会话配置过滤处理器 |
+| `session_plugin_config` 配置 | ✅ | 会话插件配置存储 |
+| `enabled_plugins` 列表 | ✅ | 会话启用的插件列表 |
+| `disabled_plugins` 列表 | ✅ | 会话禁用的插件列表 |
 
 ### 会话级 LLM/TTS 开关 → P0.6
 
 | 功能 | 状态 | 说明 |
 | --- | --- | --- |
-| `SessionServiceManager` 类 | ❌ | 会话级服务开关管理器 |
-| `is_llm_enabled_for_session(session_id)` | ❌ | 检查会话是否启用 LLM |
-| `set_llm_status_for_session(session_id, enabled)` | ❌ | 设置会话 LLM 开关 |
-| `should_process_llm_request(session_id)` | ❌ | 判断是否处理默认 LLM 请求 |
-| `is_tts_enabled_for_session(session_id)` | ❌ | 检查会话是否启用 TTS |
-| `set_tts_status_for_session(session_id, enabled)` | ❌ | 设置会话 TTS 开关 |
-| `should_process_tts_request(session_id)` | ❌ | 判断是否处理 TTS 请求 |
+| `SessionServiceManager` 类 | ✅ | 会话级服务开关管理器 |
+| `is_llm_enabled_for_session(session_id)` | ✅ | 检查会话是否启用 LLM |
+| `set_llm_status_for_session(session_id, enabled)` | ✅ | 设置会话 LLM 开关 |
+| `should_process_llm_request(session_id)` | ✅ | 判断是否处理默认 LLM 请求 |
+| `is_tts_enabled_for_session(session_id)` | ✅ | 检查会话是否启用 TTS |
+| `set_tts_status_for_session(session_id, enabled)` | ✅ | 设置会话 TTS 开关 |
+| `should_process_tts_request(session_id)` | ✅ | 判断是否处理 TTS 请求 |
 | `is_session_enabled(session_id)` | ❌ | 汇总判断会话服务是否可用 |
 
 ### 命令组系统 → P0.3 ✅

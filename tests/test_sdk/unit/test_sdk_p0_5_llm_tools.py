@@ -11,6 +11,7 @@ import pytest
 from astrbot.core.sdk_bridge import capability_bridge as capability_bridge_module
 from astrbot_sdk.context import CancelToken
 from astrbot_sdk.context import Context as RuntimeContext
+from astrbot_sdk.errors import AstrBotError
 from astrbot_sdk.events import MessageEvent
 from astrbot_sdk.llm.agents import AgentSpec
 from astrbot_sdk.llm.entities import LLMToolSpec, ProviderMeta, ProviderRequest
@@ -297,3 +298,182 @@ async def test_agent_tool_loop_run_accepts_dict_contexts_from_sdk_payload() -> N
 
     assert output["text"] == "done"
     assert captured["contexts"] == payload["contexts"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_platform_send_by_session_supports_proactive_send_without_dispatch_token() -> (
+    None
+):
+    sent: dict[str, object] = {}
+
+    async def fake_send_message(session: str, chain) -> None:
+        sent["session"] = session
+        sent["chain"] = chain
+
+    bridge = object.__new__(capability_bridge_module.CoreCapabilityBridge)
+    bridge._star_context = SimpleNamespace(send_message=fake_send_message)
+    bridge._plugin_bridge = SimpleNamespace(
+        resolve_request_session=lambda _request_id: None,
+        before_platform_send=lambda _dispatch_token: None,
+        mark_platform_send=lambda _dispatch_token: "should-not-be-used",
+        get_request_context_by_token=lambda _dispatch_token: None,
+    )
+
+    output = await bridge._platform_send_by_session(
+        "request-1",
+        {
+            "session": "demo:private:user-1",
+            "chain": [{"type": "text", "data": {"text": "hello proactive"}}],
+        },
+        None,
+    )
+
+    assert sent["session"] == "demo:private:user-1"
+    assert sent["chain"].get_plain_text() == "hello proactive"
+    assert output["message_id"].startswith("sdk_proactive_")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_platform_get_group_and_members_are_current_event_only() -> None:
+    class _FakeEvent:
+        unified_msg_origin = "demo:group:room-7"
+
+        async def get_group(self):
+            member = SimpleNamespace(user_id="user-1", nickname="Alice", role="admin")
+            return SimpleNamespace(
+                group_id="room-7",
+                group_name="Room 7",
+                group_avatar="",
+                group_owner="owner-1",
+                group_admins=["owner-1", "user-1"],
+                members=[member],
+            )
+
+    request_context = SimpleNamespace(
+        event=_FakeEvent(),
+        cancelled=False,
+        dispatch_token="dispatch-1",
+    )
+    bridge = object.__new__(capability_bridge_module.CoreCapabilityBridge)
+    bridge._plugin_bridge = SimpleNamespace(
+        resolve_request_session=lambda _request_id: request_context,
+        get_request_context_by_token=lambda _dispatch_token: request_context,
+    )
+
+    group = await bridge._platform_get_group(
+        "request-1",
+        {"session": "demo:group:room-7"},
+        None,
+    )
+    members = await bridge._platform_get_members(
+        "request-1",
+        {"session": "demo:group:room-7"},
+        None,
+    )
+
+    assert group["group"]["group_id"] == "room-7"
+    assert members["members"] == [
+        {"user_id": "user-1", "nickname": "Alice", "role": "admin"}
+    ]
+
+    with pytest.raises(AstrBotError, match="current event session"):
+        await bridge._platform_get_members(
+            "request-1",
+            {"session": "demo:group:another-room"},
+            None,
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_session_plugin_and_service_capabilities_reuse_existing_sp_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeSp:
+        def __init__(self) -> None:
+            self.store = {
+                ("umo", "demo:group:room-7", "session_plugin_config"): {
+                    "demo:group:room-7": {"disabled_plugins": ["sdk-disabled"]}
+                },
+                ("umo", "demo:group:room-7", "session_service_config"): {
+                    "llm_enabled": False,
+                    "tts_enabled": True,
+                },
+            }
+
+        async def get_async(self, scope, scope_id, key, default=None):
+            return self.store.get((scope, scope_id, key), default)
+
+        async def put_async(self, scope, scope_id, key, value):
+            self.store[(scope, scope_id, key)] = value
+
+    fake_sp = _FakeSp()
+    monkeypatch.setattr(capability_bridge_module, "_get_runtime_sp", lambda: fake_sp)
+
+    bridge = object.__new__(capability_bridge_module.CoreCapabilityBridge)
+    bridge._star_context = SimpleNamespace(
+        get_all_stars=lambda: [SimpleNamespace(name="sdk-reserved", reserved=True)]
+    )
+
+    enabled = await bridge._session_plugin_is_enabled(
+        "request-1",
+        {"session": "demo:group:room-7", "plugin_name": "sdk-disabled"},
+        None,
+    )
+    filtered = await bridge._session_plugin_filter_handlers(
+        "request-1",
+        {
+            "session": "demo:group:room-7",
+            "handlers": [
+                {
+                    "plugin_name": "sdk-disabled",
+                    "handler_full_name": "sdk-disabled:main.on_message",
+                    "trigger_type": "message",
+                    "event_types": [],
+                    "enabled": True,
+                    "group_path": [],
+                },
+                {
+                    "plugin_name": "sdk-reserved",
+                    "handler_full_name": "sdk-reserved:main.on_message",
+                    "trigger_type": "message",
+                    "event_types": [],
+                    "enabled": True,
+                    "group_path": [],
+                },
+            ],
+        },
+        None,
+    )
+    llm_enabled = await bridge._session_service_is_llm_enabled(
+        "request-1",
+        {"session": "demo:group:room-7"},
+        None,
+    )
+    tts_enabled = await bridge._session_service_is_tts_enabled(
+        "request-1",
+        {"session": "demo:group:room-7"},
+        None,
+    )
+
+    await bridge._session_service_set_llm_status(
+        "request-1",
+        {"session": "demo:group:room-7", "enabled": True},
+        None,
+    )
+    await bridge._session_service_set_tts_status(
+        "request-1",
+        {"session": "demo:group:room-7", "enabled": False},
+        None,
+    )
+
+    assert enabled == {"enabled": False}
+    assert [item["plugin_name"] for item in filtered["handlers"]] == ["sdk-reserved"]
+    assert llm_enabled == {"enabled": False}
+    assert tts_enabled == {"enabled": True}
+    assert fake_sp.store[("umo", "demo:group:room-7", "session_service_config")] == {
+        "llm_enabled": True,
+        "tts_enabled": False,
+    }

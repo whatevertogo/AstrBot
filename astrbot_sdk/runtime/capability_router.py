@@ -35,6 +35,8 @@
         platform.send: 发送消息
         platform.send_image: 发送图片
         platform.send_chain: 发送消息链
+        platform.send_by_session: 主动按会话发送消息链
+        platform.get_group: 获取当前群信息
         platform.get_members: 获取群成员
     HTTP:
         http.register_api: 注册 HTTP 路由到插件 capability
@@ -127,9 +129,7 @@ from ._streaming import StreamExecution
 
 CallHandler = Callable[[str, dict[str, Any], object], Awaitable[dict[str, Any]]]
 FinalizeHandler = Callable[[list[dict[str, Any]]], dict[str, Any]]
-CAPABILITY_NAME_PATTERN = re.compile(
-    r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$"
-)
+CAPABILITY_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
 
 
 StreamHandler = Callable[
@@ -213,6 +213,8 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
         self._db_watch_subscriptions: dict[
             str, tuple[str | None, asyncio.Queue[dict[str, Any]]]
         ] = {}
+        self._session_plugin_configs: dict[str, dict[str, Any]] = {}
+        self._session_service_configs: dict[str, dict[str, Any]] = {}
         self._register_builtin_capabilities()
 
     def upsert_plugin(
@@ -302,6 +304,34 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
         else:
             catalog = self._provider_catalog[kind]
             self._active_provider_ids[kind] = catalog[0]["id"] if catalog else None
+
+    def set_session_plugin_config(
+        self,
+        session_id: str,
+        *,
+        enabled_plugins: list[str] | None = None,
+        disabled_plugins: list[str] | None = None,
+    ) -> None:
+        config: dict[str, Any] = {}
+        if enabled_plugins is not None:
+            config["enabled_plugins"] = [str(item) for item in enabled_plugins]
+        if disabled_plugins is not None:
+            config["disabled_plugins"] = [str(item) for item in disabled_plugins]
+        self._session_plugin_configs[str(session_id)] = config
+
+    def set_session_service_config(
+        self,
+        session_id: str,
+        *,
+        llm_enabled: bool | None = None,
+        tts_enabled: bool | None = None,
+    ) -> None:
+        config: dict[str, Any] = {}
+        if llm_enabled is not None:
+            config["llm_enabled"] = bool(llm_enabled)
+        if tts_enabled is not None:
+            config["tts_enabled"] = bool(tts_enabled)
+        self._session_service_configs[str(session_id)] = config
 
     def remove_http_apis_for_plugin(self, plugin_id: str) -> None:
         self.http_api_store = [
@@ -408,7 +438,9 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
             )
 
         if registration.call_handler is None:
-            raise AstrBotError.invalid_input(f"{capability} 只能以 stream=true 调用")
+            raise AstrBotError.invalid_input(
+                f"{capability} 只能以 stream=true 调用，registration.call_handler 为 None"
+            )
         output = await registration.call_handler(request_id, payload, cancel_token)
         self._validate_schema_with_context(
             capability=capability,

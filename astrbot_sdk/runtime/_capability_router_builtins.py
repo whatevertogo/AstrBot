@@ -62,6 +62,8 @@ class _CapabilityRouterHost:
     _active_provider_ids: dict[str, str | None]
     _system_data_root: Path
     _session_waiters: dict[str, set[str]]
+    _session_plugin_configs: dict[str, dict[str, Any]]
+    _session_service_configs: dict[str, dict[str, Any]]
     _db_watch_subscriptions: dict[str, tuple[str | None, asyncio.Queue[dict[str, Any]]]]
 
     def register(
@@ -92,6 +94,7 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
         self._register_http_capabilities()
         self._register_metadata_capabilities()
         self._register_p0_5_capabilities()
+        self._register_p0_6_capabilities()
         self._register_system_capabilities()
 
     def _builtin_descriptor(
@@ -120,6 +123,44 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
             target = SessionRef.model_validate(target_payload)
             return target.session, target.to_payload()
         return str(payload.get("session", "")), None
+
+    @staticmethod
+    def _is_group_session(session: str) -> bool:
+        normalized = str(session).lower()
+        return ":group:" in normalized or ":groupmessage:" in normalized
+
+    @staticmethod
+    def _mock_group_payload(session: str) -> dict[str, Any] | None:
+        if not BuiltinCapabilityRouterMixin._is_group_session(session):
+            return None
+        members = [
+            {
+                "user_id": f"{session}:member-1",
+                "nickname": "Member 1",
+                "role": "member",
+            },
+            {
+                "user_id": f"{session}:member-2",
+                "nickname": "Member 2",
+                "role": "admin",
+            },
+        ]
+        return {
+            "group_id": session.rsplit(":", maxsplit=1)[-1],
+            "group_name": f"Mock Group {session.rsplit(':', maxsplit=1)[-1]}",
+            "group_avatar": "",
+            "group_owner": members[0]["user_id"],
+            "group_admins": [members[1]["user_id"]],
+            "members": members,
+        }
+
+    def _session_plugin_config(self, session: str) -> dict[str, Any]:
+        config = self._session_plugin_configs.get(str(session), {})
+        return dict(config) if isinstance(config, dict) else {}
+
+    def _session_service_config(self, session: str) -> dict[str, Any]:
+        config = self._session_service_configs.get(str(session), {})
+        return dict(config) if isinstance(config, dict) else {}
 
     async def _llm_chat(
         self, _request_id: str, payload: dict[str, Any], _token
@@ -481,16 +522,41 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
         self.sent_messages.append(sent)
         return {"message_id": message_id}
 
+    async def _platform_send_by_session(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        chain = payload.get("chain")
+        if not isinstance(chain, list) or not all(
+            isinstance(item, dict) for item in chain
+        ):
+            raise AstrBotError.invalid_input(
+                "platform.send_by_session 的 chain 必须是 object 数组"
+            )
+        session = str(payload.get("session", ""))
+        message_id = f"proactive_{len(self.sent_messages) + 1}"
+        self.sent_messages.append(
+            {
+                "message_id": message_id,
+                "session": session,
+                "chain": [dict(item) for item in chain],
+            }
+        )
+        return {"message_id": message_id}
+
+    async def _platform_get_group(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        session, _target = self._resolve_target(payload)
+        return {"group": self._mock_group_payload(session)}
+
     async def _platform_get_members(
         self, _request_id: str, payload: dict[str, Any], _token
     ) -> dict[str, Any]:
         session, _target = self._resolve_target(payload)
-        return {
-            "members": [
-                {"user_id": f"{session}:member-1", "nickname": "Member 1"},
-                {"user_id": f"{session}:member-2", "nickname": "Member 2"},
-            ]
-        }
+        group = self._mock_group_payload(session)
+        if group is None:
+            return {"members": []}
+        return {"members": list(group.get("members", []))}
 
     def _register_platform_capabilities(self) -> None:
         self.register(
@@ -504,6 +570,16 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
         self.register(
             self._builtin_descriptor("platform.send_chain", "发送消息链"),
             call_handler=self._platform_send_chain,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "platform.send_by_session", "按会话主动发送消息链"
+            ),
+            call_handler=self._platform_send_by_session,
+        )
+        self.register(
+            self._builtin_descriptor("platform.get_group", "获取当前群信息"),
+            call_handler=self._platform_get_group,
         )
         self.register(
             self._builtin_descriptor("platform.get_members", "获取群成员"),
@@ -649,7 +725,9 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
             call_handler=self._metadata_get_plugin_config,
         )
 
-    def _provider_payload(self, kind: str, provider_id: str | None) -> dict[str, Any] | None:
+    def _provider_payload(
+        self, kind: str, provider_id: str | None
+    ) -> dict[str, Any] | None:
         if not provider_id:
             return None
         for item in self._provider_catalog.get(kind, []):
@@ -893,6 +971,130 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
         self.register(
             self._builtin_descriptor("agent.registry.get", "获取 Agent 元数据"),
             call_handler=self._agent_registry_get,
+        )
+
+    async def _session_plugin_is_enabled(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        session = str(payload.get("session", ""))
+        plugin_name = str(payload.get("plugin_name", ""))
+        config = self._session_plugin_config(session)
+        enabled_plugins = {
+            str(item) for item in config.get("enabled_plugins", []) if str(item).strip()
+        }
+        disabled_plugins = {
+            str(item)
+            for item in config.get("disabled_plugins", [])
+            if str(item).strip()
+        }
+        if plugin_name in enabled_plugins:
+            return {"enabled": True}
+        return {"enabled": plugin_name not in disabled_plugins}
+
+    async def _session_plugin_filter_handlers(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        session = str(payload.get("session", ""))
+        handlers = payload.get("handlers")
+        if not isinstance(handlers, list):
+            raise AstrBotError.invalid_input(
+                "session.plugin.filter_handlers 的 handlers 必须是 object 数组"
+            )
+        disabled_plugins = {
+            str(item)
+            for item in self._session_plugin_config(session).get("disabled_plugins", [])
+            if str(item).strip()
+        }
+        reserved_plugins = {
+            str(plugin.metadata.get("name", ""))
+            for plugin in self._plugins.values()
+            if bool(plugin.metadata.get("reserved", False))
+        }
+        filtered = []
+        for item in handlers:
+            if not isinstance(item, dict):
+                continue
+            plugin_name = str(item.get("plugin_name", ""))
+            if (
+                plugin_name
+                and plugin_name in disabled_plugins
+                and plugin_name not in reserved_plugins
+            ):
+                continue
+            filtered.append(dict(item))
+        return {"handlers": filtered}
+
+    async def _session_service_is_llm_enabled(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        session = str(payload.get("session", ""))
+        config = self._session_service_config(session)
+        return {"enabled": bool(config.get("llm_enabled", True))}
+
+    async def _session_service_set_llm_status(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        session = str(payload.get("session", ""))
+        config = self._session_service_config(session)
+        config["llm_enabled"] = bool(payload.get("enabled", False))
+        self._session_service_configs[session] = config
+        return {}
+
+    async def _session_service_is_tts_enabled(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        session = str(payload.get("session", ""))
+        config = self._session_service_config(session)
+        return {"enabled": bool(config.get("tts_enabled", True))}
+
+    async def _session_service_set_tts_status(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        session = str(payload.get("session", ""))
+        config = self._session_service_config(session)
+        config["tts_enabled"] = bool(payload.get("enabled", False))
+        self._session_service_configs[session] = config
+        return {}
+
+    def _register_p0_6_capabilities(self) -> None:
+        self.register(
+            self._builtin_descriptor("session.plugin.is_enabled", "获取会话级插件开关"),
+            call_handler=self._session_plugin_is_enabled,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "session.plugin.filter_handlers",
+                "按会话过滤 handler 元数据",
+            ),
+            call_handler=self._session_plugin_filter_handlers,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "session.service.is_llm_enabled",
+                "获取会话级 LLM 开关",
+            ),
+            call_handler=self._session_service_is_llm_enabled,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "session.service.set_llm_status",
+                "写入会话级 LLM 开关",
+            ),
+            call_handler=self._session_service_set_llm_status,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "session.service.is_tts_enabled",
+                "获取会话级 TTS 开关",
+            ),
+            call_handler=self._session_service_is_tts_enabled,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "session.service.set_tts_status",
+                "写入会话级 TTS 开关",
+            ),
+            call_handler=self._session_service_set_tts_status,
         )
 
     def _register_system_capabilities(self) -> None:

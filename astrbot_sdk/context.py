@@ -36,6 +36,8 @@ from .clients import (
     MetadataClient,
     PlatformClient,
     RegistryClient,
+    SessionPluginManager,
+    SessionServiceManager,
 )
 from .clients._proxy import CapabilityProxy
 from .clients.llm import LLMResponse
@@ -131,6 +133,8 @@ class Context:
         self.http = HTTPClient(proxy)
         self.metadata = MetadataClient(proxy, plugin_id)
         self.registry = RegistryClient(proxy)
+        self.session_plugins = SessionPluginManager(proxy)
+        self.session_services = SessionServiceManager(proxy)
         self._llm_tool_manager = LLMToolManager(proxy)
         self.plugin_id = plugin_id
         self.logger = logger or base_logger.bind(plugin_id=plugin_id)

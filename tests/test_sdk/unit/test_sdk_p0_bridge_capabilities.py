@@ -37,6 +37,17 @@ def _install_optional_dependency_stubs() -> None:
         },
     )
     install("rank_bm25", {"BM25Okapi": type("BM25Okapi", (), {})})
+    install(
+        "aiocqhttp",
+        {
+            "CQHttp": type("CQHttp", (), {}),
+            "Event": type("Event", (), {}),
+        },
+    )
+    install(
+        "aiocqhttp.exceptions",
+        {"ActionFailed": type("ActionFailed", (Exception,), {})},
+    )
 
 
 _install_optional_dependency_stubs()
@@ -47,6 +58,7 @@ from astrbot.core.pipeline.respond.stage import RespondStage
 from astrbot.core.sdk_bridge.event_converter import EventConverter
 from astrbot.core.sdk_bridge.plugin_bridge import SdkPluginBridge
 from astrbot_sdk import MessageSession
+from astrbot_sdk.clients.registry import HandlerMetadata
 from astrbot_sdk.events import MessageEvent
 from astrbot_sdk.testing import MockContext
 
@@ -118,6 +130,93 @@ async def test_platform_client_accepts_message_session() -> None:
     assert len(ctx.sent_messages) == 1
     assert ctx.sent_messages[0].session_id == "test-platform:private:user-42"
     assert ctx.sent_messages[0].text == "hello session"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_mock_context_p0_6_platform_and_session_managers() -> None:
+    ctx = MockContext(plugin_id="sdk-demo")
+    session = "test-platform:group:room-7"
+    ctx.router.set_session_plugin_config(
+        session,
+        disabled_plugins=["sdk-disabled"],
+    )
+    ctx.router.set_session_service_config(
+        session,
+        llm_enabled=False,
+        tts_enabled=False,
+    )
+    ctx.router.upsert_plugin(
+        metadata={
+            "name": "sdk-disabled",
+            "display_name": "sdk-disabled",
+            "reserved": False,
+        },
+        config={},
+    )
+    ctx.router.upsert_plugin(
+        metadata={
+            "name": "sdk-reserved",
+            "display_name": "sdk-reserved",
+            "reserved": True,
+        },
+        config={},
+    )
+
+    await ctx.platform.send_by_session(session, "hello proactive")
+    group = await MessageEvent.from_payload(
+        {
+            "text": "hello",
+            "session_id": session,
+            "platform": "test-platform",
+            "platform_id": "test-platform",
+            "message_type": "group",
+        },
+        context=ctx,
+    ).get_group()
+    members = await ctx.platform.get_members(session)
+    handlers = await ctx.session_plugins.filter_handlers_by_session(
+        session,
+        [
+            HandlerMetadata(
+                plugin_name="sdk-disabled",
+                handler_full_name="sdk-disabled:main.on_message",
+                trigger_type="message",
+                event_types=[],
+                enabled=True,
+                group_path=[],
+            ),
+            HandlerMetadata(
+                plugin_name="sdk-reserved",
+                handler_full_name="sdk-reserved:main.on_message",
+                trigger_type="message",
+                event_types=[],
+                enabled=True,
+                group_path=[],
+            ),
+        ],
+    )
+
+    assert ctx.sent_messages[-1].session_id == session
+    assert ctx.sent_messages[-1].chain == [
+        {"type": "text", "data": {"text": "hello proactive"}}
+    ]
+    assert group is not None
+    assert group["group_id"] == "room-7"
+    assert len(members) == 2
+    assert (
+        await ctx.session_plugins.is_plugin_enabled_for_session(session, "sdk-disabled")
+        is False
+    )
+    assert [item.plugin_name for item in handlers] == ["sdk-reserved"]
+    assert await ctx.session_services.is_llm_enabled_for_session(session) is False
+    assert await ctx.session_services.should_process_llm_request(session) is False
+    await ctx.session_services.set_llm_status_for_session(session, True)
+    assert await ctx.session_services.is_llm_enabled_for_session(session) is True
+    assert await ctx.session_services.is_tts_enabled_for_session(session) is False
+    assert await ctx.session_services.should_process_tts_request(session) is False
+    await ctx.session_services.set_tts_status_for_session(session, True)
+    assert await ctx.session_services.is_tts_enabled_for_session(session) is True
 
 
 @pytest.mark.unit

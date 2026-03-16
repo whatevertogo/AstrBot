@@ -262,6 +262,25 @@ class MessageEvent:
         """Return the normalized message outline."""
         return self._message_outline
 
+    async def get_group(self) -> dict[str, Any] | None:
+        """Get current-group metadata for the bound message request."""
+        context = self._require_runtime_context("get_group")
+        output = await context._proxy.call(  # noqa: SLF001
+            "platform.get_group",
+            {
+                "session": self.session_id,
+                "target": (
+                    self.session_ref.to_payload()
+                    if self.session_ref is not None
+                    else None
+                ),
+            },
+        )
+        payload = output.get("group")
+        if not isinstance(payload, dict):
+            return None
+        return dict(payload)
+
     def set_extra(self, key: str, value: Any) -> None:
         """Store SDK-local transient event data."""
         self._extras[key] = value

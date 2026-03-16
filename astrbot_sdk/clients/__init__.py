@@ -23,6 +23,7 @@ from .memory import MemoryClient
 from .metadata import MetadataClient, PluginMetadata
 from .platform import PlatformClient
 from .registry import HandlerMetadata, RegistryClient
+from .session import SessionPluginManager, SessionServiceManager
 
 __all__ = [
     "ChatMessage",
@@ -36,4 +37,6 @@ __all__ = [
     "PluginMetadata",
     "HandlerMetadata",
     "RegistryClient",
+    "SessionPluginManager",
+    "SessionServiceManager",
 ]

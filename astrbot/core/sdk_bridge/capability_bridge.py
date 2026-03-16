@@ -657,6 +657,17 @@ class CoreCapabilityBridge(CapabilityRouter):
             call_handler=self._platform_send_chain,
         )
         self.register(
+            self._builtin_descriptor(
+                "platform.send_by_session",
+                "Send message chain to a specific session",
+            ),
+            call_handler=self._platform_send_by_session,
+        )
+        self.register(
+            self._builtin_descriptor("platform.get_group", "Get current group data"),
+            call_handler=self._platform_get_group,
+        )
+        self.register(
             self._builtin_descriptor("platform.get_members", "Get group members"),
             call_handler=self._platform_get_members,
         )
@@ -711,34 +722,68 @@ class CoreCapabilityBridge(CapabilityRouter):
         )
         return {"message_id": self._plugin_bridge.mark_platform_send(dispatch_token)}
 
+    async def _platform_send_by_session(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        chain_payload = payload.get("chain")
+        if not isinstance(chain_payload, list):
+            raise AstrBotError.invalid_input(
+                "platform.send_by_session requires a chain array"
+            )
+        session = str(payload.get("session", ""))
+        if not session:
+            raise AstrBotError.invalid_input(
+                "platform.send_by_session requires a session"
+            )
+        request_context = self._resolve_event_request_context(request_id, payload)
+        dispatch_token = None
+        if request_context is not None and not request_context.cancelled:
+            dispatch_token = request_context.dispatch_token
+            self._plugin_bridge.before_platform_send(dispatch_token)
+        await self._star_context.send_message(
+            session,
+            self._build_core_message_chain(chain_payload),
+        )
+        if dispatch_token is not None:
+            return {
+                "message_id": self._plugin_bridge.mark_platform_send(dispatch_token)
+            }
+        return {"message_id": f"sdk_proactive_{uuid.uuid4().hex}"}
+
+    async def _platform_get_group(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        request_context = self._resolve_current_group_request_context(
+            request_id, payload
+        )
+        if request_context is None:
+            return {"group": None}
+        group = await request_context.event.get_group()
+        return {"group": self._serialize_group(group)}
+
     async def _platform_get_members(
         self,
         request_id: str,
         payload: dict[str, Any],
         _token,
     ) -> dict[str, Any]:
-        _session, dispatch_token = self._resolve_dispatch_target(request_id, payload)
-        request_context = self._plugin_bridge.get_request_context_by_token(
-            dispatch_token
+        request_context = self._resolve_current_group_request_context(
+            request_id, payload
         )
         if request_context is None:
             return {"members": []}
         group = await request_context.event.get_group()
-        if group is None:
+        serialized_group = self._serialize_group(group)
+        if serialized_group is None:
             return {"members": []}
-        members = []
-        for member in getattr(group, "member_list", []) or []:
-            user_id = getattr(member, "user_id", None)
-            if user_id is None:
-                continue
-            members.append(
-                {
-                    "user_id": str(user_id),
-                    "nickname": str(getattr(member, "nickname", "")),
-                    "role": str(getattr(member, "role", "")),
-                }
-            )
-        return {"members": members}
+        members = serialized_group.get("members")
+        return {"members": list(members) if isinstance(members, list) else []}
 
     def _register_http_capabilities(self) -> None:
         self.register(
@@ -1521,6 +1566,282 @@ class CoreCapabilityBridge(CapabilityRouter):
             self._builtin_descriptor("agent.registry.get", "Get sdk agent"),
             call_handler=self._agent_registry_get,
         )
+
+    def _register_p0_6_capabilities(self) -> None:
+        self.register(
+            self._builtin_descriptor(
+                "session.plugin.is_enabled",
+                "Get session plugin enabled state",
+            ),
+            call_handler=self._session_plugin_is_enabled,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "session.plugin.filter_handlers",
+                "Filter handler metadata by session plugin config",
+            ),
+            call_handler=self._session_plugin_filter_handlers,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "session.service.is_llm_enabled",
+                "Get session LLM enabled state",
+            ),
+            call_handler=self._session_service_is_llm_enabled,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "session.service.set_llm_status",
+                "Set session LLM enabled state",
+            ),
+            call_handler=self._session_service_set_llm_status,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "session.service.is_tts_enabled",
+                "Get session TTS enabled state",
+            ),
+            call_handler=self._session_service_is_tts_enabled,
+        )
+        self.register(
+            self._builtin_descriptor(
+                "session.service.set_tts_status",
+                "Set session TTS enabled state",
+            ),
+            call_handler=self._session_service_set_tts_status,
+        )
+
+    @staticmethod
+    def _normalize_session_scoped_config(
+        raw_config: Any,
+        session_id: str,
+    ) -> dict[str, Any]:
+        if not isinstance(raw_config, dict):
+            return {}
+        nested = raw_config.get(session_id)
+        if isinstance(nested, dict):
+            return dict(nested)
+        return dict(raw_config)
+
+    @staticmethod
+    def _serialize_member(member: Any) -> dict[str, Any] | None:
+        if member is None:
+            return None
+        user_id = getattr(member, "user_id", None)
+        if user_id is None and isinstance(member, dict):
+            user_id = member.get("user_id")
+        if user_id is None:
+            return None
+        nickname = getattr(member, "nickname", None)
+        if nickname is None and isinstance(member, dict):
+            nickname = member.get("nickname")
+        role = getattr(member, "role", None)
+        if role is None and isinstance(member, dict):
+            role = member.get("role")
+        return {
+            "user_id": str(user_id),
+            "nickname": str(nickname or ""),
+            "role": str(role or ""),
+        }
+
+    @classmethod
+    def _serialize_group(cls, group: Any) -> dict[str, Any] | None:
+        if group is None:
+            return None
+        members_payload = []
+        raw_members = getattr(group, "members", None)
+        if raw_members is None:
+            raw_members = getattr(group, "member_list", None)
+        if raw_members is None and isinstance(group, dict):
+            raw_members = group.get("members") or group.get("member_list")
+        if isinstance(raw_members, list):
+            for member in raw_members:
+                serialized_member = cls._serialize_member(member)
+                if serialized_member is not None:
+                    members_payload.append(serialized_member)
+        group_id = getattr(group, "group_id", None)
+        if group_id is None and isinstance(group, dict):
+            group_id = group.get("group_id")
+        group_name = getattr(group, "group_name", None)
+        if group_name is None and isinstance(group, dict):
+            group_name = group.get("group_name")
+        group_avatar = getattr(group, "group_avatar", None)
+        if group_avatar is None and isinstance(group, dict):
+            group_avatar = group.get("group_avatar")
+        group_owner = getattr(group, "group_owner", None)
+        if group_owner is None and isinstance(group, dict):
+            group_owner = group.get("group_owner")
+        group_admins = getattr(group, "group_admins", None)
+        if group_admins is None and isinstance(group, dict):
+            group_admins = group.get("group_admins")
+        return {
+            "group_id": str(group_id or ""),
+            "group_name": str(group_name or ""),
+            "group_avatar": str(group_avatar or ""),
+            "group_owner": str(group_owner or ""),
+            "group_admins": (
+                [str(item) for item in group_admins]
+                if isinstance(group_admins, list)
+                else []
+            ),
+            "members": members_payload,
+        }
+
+    def _resolve_current_group_request_context(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+    ):
+        request_context = self._resolve_event_request_context(request_id, payload)
+        if request_context is None:
+            return None
+        payload_session = str(payload.get("session", "")).strip()
+        if payload_session and payload_session != str(
+            request_context.event.unified_msg_origin
+        ):
+            raise AstrBotError.invalid_input(
+                "platform.get_group/get_members only support the current event session"
+            )
+        return request_context
+
+    async def _load_session_plugin_config(self, session_id: str) -> dict[str, Any]:
+        raw_config = await _get_runtime_sp().get_async(
+            scope="umo",
+            scope_id=session_id,
+            key="session_plugin_config",
+            default={},
+        )
+        return self._normalize_session_scoped_config(raw_config, session_id)
+
+    async def _load_session_service_config(self, session_id: str) -> dict[str, Any]:
+        raw_config = await _get_runtime_sp().get_async(
+            scope="umo",
+            scope_id=session_id,
+            key="session_service_config",
+            default={},
+        )
+        return self._normalize_session_scoped_config(raw_config, session_id)
+
+    def _reserved_plugin_names(self) -> set[str]:
+        reserved: set[str] = set()
+        for star in self._star_context.get_all_stars():
+            name = getattr(star, "name", None)
+            if name and bool(getattr(star, "reserved", False)):
+                reserved.add(str(name))
+        return reserved
+
+    async def _session_plugin_is_enabled(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        session_id = str(payload.get("session", "")).strip()
+        plugin_name = str(payload.get("plugin_name", "")).strip()
+        config = await self._load_session_plugin_config(session_id)
+        enabled_plugins = {
+            str(item) for item in config.get("enabled_plugins", []) if str(item).strip()
+        }
+        disabled_plugins = {
+            str(item)
+            for item in config.get("disabled_plugins", [])
+            if str(item).strip()
+        }
+        if (
+            plugin_name in disabled_plugins
+            and plugin_name not in self._reserved_plugin_names()
+        ):
+            return {"enabled": False}
+        if plugin_name in enabled_plugins:
+            return {"enabled": True}
+        return {"enabled": True}
+
+    async def _session_plugin_filter_handlers(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        session_id = str(payload.get("session", "")).strip()
+        handlers = payload.get("handlers")
+        if not isinstance(handlers, list):
+            raise AstrBotError.invalid_input(
+                "session.plugin.filter_handlers requires a handlers array"
+            )
+        config = await self._load_session_plugin_config(session_id)
+        disabled_plugins = {
+            str(item)
+            for item in config.get("disabled_plugins", [])
+            if str(item).strip()
+        }
+        reserved_plugins = self._reserved_plugin_names()
+        filtered = []
+        for item in handlers:
+            if not isinstance(item, dict):
+                continue
+            plugin_name = str(item.get("plugin_name", "")).strip()
+            if (
+                plugin_name
+                and plugin_name in disabled_plugins
+                and plugin_name not in reserved_plugins
+            ):
+                continue
+            filtered.append(dict(item))
+        return {"handlers": filtered}
+
+    async def _session_service_is_llm_enabled(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        session_id = str(payload.get("session", "")).strip()
+        config = await self._load_session_service_config(session_id)
+        return {"enabled": bool(config.get("llm_enabled", True))}
+
+    async def _session_service_set_llm_status(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        session_id = str(payload.get("session", "")).strip()
+        config = await self._load_session_service_config(session_id)
+        config["llm_enabled"] = bool(payload.get("enabled", False))
+        await _get_runtime_sp().put_async(
+            scope="umo",
+            scope_id=session_id,
+            key="session_service_config",
+            value=config,
+        )
+        return {}
+
+    async def _session_service_is_tts_enabled(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        session_id = str(payload.get("session", "")).strip()
+        config = await self._load_session_service_config(session_id)
+        return {"enabled": bool(config.get("tts_enabled", True))}
+
+    async def _session_service_set_tts_status(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        session_id = str(payload.get("session", "")).strip()
+        config = await self._load_session_service_config(session_id)
+        config["tts_enabled"] = bool(payload.get("enabled", False))
+        await _get_runtime_sp().put_async(
+            scope="umo",
+            scope_id=session_id,
+            key="session_service_config",
+            value=config,
+        )
+        return {}
 
     async def _system_get_data_dir(
         self,

@@ -701,7 +701,7 @@ class LLMClient:
 |--------|---------|-----------------|
 | `MemoryClient` | `search()`, `save()`, `save_with_ttl()`, `get()`, `get_many()`, `delete()`, `delete_many()`, `stats()` | `memory.*` |
 | `DBClient` | `get()`, `set()`, `delete()`, `list()`, `get_many()`, `set_many()`, `watch()` | `db.*` |
-| `PlatformClient` | `send()`, `send_image()`, `send_chain()`, `get_members()` | `platform.*` |
+| `PlatformClient` | `send()`, `send_image()`, `send_chain()`, `send_by_session()`, `send_by_id()`, `get_members()` | `platform.*` |
 | `HTTPClient` | `register_api()`, `unregister_api()`, `list_apis()` | `http.*` |
 | `MetadataClient` | `get_plugin()`, `list_plugins()`, `get_current_plugin()`, `get_plugin_config()` | `metadata.*` |
 
