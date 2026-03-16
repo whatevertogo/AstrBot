@@ -61,8 +61,14 @@ class LLMToolSpec(_EntityModel):
     parameters_schema: dict[str, Any] = Field(
         default_factory=lambda: {"type": "object", "properties": {}}
     )
-    handler_ref: str | None = None
-    handler_capability: str | None = None
+    handler_ref: str | None = Field(
+        default=None,
+        description="Worker-side handler reference used to resolve the tool callable.",
+    )
+    handler_capability: str | None = Field(
+        default=None,
+        description="Optional capability name override for executing this tool handler.",
+    )
     active: bool = True
 
     @classmethod

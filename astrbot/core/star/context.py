@@ -153,7 +153,7 @@ class Context:
         image_urls: list[str] | None = None,
         tools: ToolSet | None = None,
         system_prompt: str | None = None,
-        contexts: list[Message] | None = None,
+        contexts: list[Message | dict[str, Any]] | None = None,
         max_steps: int = 30,
         tool_call_timeout: int = 60,
         **kwargs: Any,

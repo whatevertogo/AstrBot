@@ -785,11 +785,6 @@ class _DescriptorBase(BaseModel):
 class Permissions(_DescriptorBase):
     """权限配置，控制处理器的访问权限。
 
-    与旧版对比：
-        旧版: 通过 extras_configs 字典配置
-            {"require_admin": true, "level": 1}
-        新版: 使用 Permissions 模型，类型安全
-
     Attributes:
         require_admin: 是否需要管理员权限
         level: 权限等级，数值越高权限越大
@@ -824,10 +819,6 @@ class SessionRef(_DescriptorBase):
 class CommandTrigger(_DescriptorBase):
     """命令触发器，响应特定命令。
 
-    与旧版对比：
-        旧版: 使用 @command_handler("help") 装饰器注册
-        新版: 使用 CommandTrigger 声明式定义，支持别名
-
     Attributes:
         type: 触发器类型，固定为 "command"
         command: 命令名称（不含前缀，如 "help"）
@@ -848,10 +839,6 @@ class CommandTrigger(_DescriptorBase):
 class MessageTrigger(_DescriptorBase):
     """消息触发器，描述消息类处理器的订阅条件。
 
-    与旧版对比：
-        旧版: 使用 @regex_handler(r"pattern") 或 @message_handler 装饰器
-        新版: 使用 MessageTrigger 声明式定义，支持正则、关键词和平台过滤
-
     Attributes:
         type: 触发器类型，固定为 "message"
         regex: 正则表达式模式，匹配消息文本
@@ -860,7 +847,7 @@ class MessageTrigger(_DescriptorBase):
         message_types: 限定的消息类型列表，为空表示不限
 
     Note:
-        `regex` 和 `keywords` 可以同时为空，此时表示“任意消息均可触发”，
+        `regex` 和 `keywords` 可以同时为空，此时表示 "任意消息均可触发"，
         仅由平台过滤或上层运行时进一步筛选。
     """
 
@@ -874,10 +861,6 @@ class MessageTrigger(_DescriptorBase):
 class EventTrigger(_DescriptorBase):
     """事件触发器，响应特定类型的事件。
 
-    与旧版对比：
-        旧版: 使用整数 event_type，如 3 表示消息事件
-        新版: 使用字符串 event_type，如 "message" 或 "3"，更灵活
-
     Attributes:
         type: 触发器类型，固定为 "event"
         event_type: 事件类型，字符串形式（如 "message"、"notice"）
@@ -889,10 +872,6 @@ class EventTrigger(_DescriptorBase):
 
 class ScheduleTrigger(_DescriptorBase):
     """定时触发器，按 cron 表达式或固定间隔执行。
-
-    与旧版对比：
-        旧版: 使用 @scheduled("0 * * * *") 装饰器
-        新版: 使用 ScheduleTrigger 声明式定义
 
     Attributes:
         type: 触发器类型，固定为 "schedule"
@@ -979,25 +958,6 @@ Trigger = Annotated[
 class HandlerDescriptor(_DescriptorBase):
     """处理器描述符，描述一个事件处理函数的元信息。
 
-    与旧版对比：
-        旧版 handshake 响应中的处理器信息:
-            {
-                "event_type": 3,
-                "handler_full_name": "plugin.handler",
-                "handler_name": "handler",
-                "handler_module_path": "plugin",
-                "desc": "描述",
-                "extras_configs": {"priority": 0, "require_admin": false}
-            }
-
-        新版 HandlerDescriptor:
-            {
-                "id": "plugin.handler",
-                "trigger": {"type": "event", "event_type": "message"},
-                "priority": 0,
-                "permissions": {"require_admin": false, "level": 0}
-            }
-
     Attributes:
         id: 处理器唯一标识，通常是 "模块.函数名" 格式
         trigger: 触发器配置，决定何时执行该处理器
@@ -1029,10 +989,6 @@ class HandlerDescriptor(_DescriptorBase):
 
 class CapabilityDescriptor(_DescriptorBase):
     """能力描述符，描述一个可调用的远程能力。
-
-    与旧版对比：
-        旧版: 无独立的能力描述，通过 method 名称隐式定义
-        新版: 使用 CapabilityDescriptor 显式声明能力，支持 JSON Schema 验证
 
     能力命名规范：
         - 使用 "namespace.action" 格式，如 "llm.chat"、"db.set"

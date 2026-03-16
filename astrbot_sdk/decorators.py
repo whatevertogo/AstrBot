@@ -36,6 +36,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
+from ._typing_utils import unwrap_optional
 from .llm.agents import AgentSpec, BaseAgentRunner
 from .llm.entities import LLMToolSpec
 from .protocol.descriptors import (
@@ -443,17 +444,8 @@ def provide_capability(
     return decorator
 
 
-def _unwrap_optional(annotation: Any) -> tuple[Any, bool]:
-    origin = typing.get_origin(annotation)
-    if origin in {typing.Union, getattr(typing, "UnionType", object())}:
-        args = [item for item in typing.get_args(annotation) if item is not type(None)]
-        if len(args) == 1:
-            return args[0], True
-    return annotation, False
-
-
 def _annotation_to_schema(annotation: Any) -> dict[str, Any]:
-    normalized, _is_optional = _unwrap_optional(annotation)
+    normalized, _is_optional = unwrap_optional(annotation)
     origin = typing.get_origin(normalized)
     if normalized is str:
         return {"type": "string"}
@@ -491,7 +483,7 @@ def _callable_parameters_schema(func: HandlerCallable) -> dict[str, Any]:
         if parameter.name == "self":
             continue
         annotation = type_hints.get(parameter.name)
-        normalized, _is_optional = _unwrap_optional(annotation)
+        normalized, _is_optional = unwrap_optional(annotation)
         if parameter.name in {"event", "ctx", "context"}:
             continue
         properties[parameter.name] = _annotation_to_schema(normalized)

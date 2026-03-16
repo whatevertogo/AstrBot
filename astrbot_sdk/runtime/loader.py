@@ -67,6 +67,7 @@ from typing import Any, Literal, TypeAlias, cast
 
 import yaml
 
+from .._typing_utils import unwrap_optional
 from ..decorators import (
     get_agent_meta,
     get_capability_meta,
@@ -191,19 +192,10 @@ def _iter_discoverable_names(instance: Any) -> list[str]:
     return [*handler_names, *extra_names]
 
 
-def _unwrap_optional(annotation: Any) -> tuple[Any, bool]:
-    origin = typing.get_origin(annotation)
-    if origin is typing.Union:
-        args = [item for item in typing.get_args(annotation) if item is not type(None)]
-        if len(args) == 1:
-            return args[0], True
-    return annotation, False
-
-
 def _is_injected_parameter(annotation: Any, parameter_name: str) -> bool:
     if parameter_name in {"event", "ctx", "context", "sched", "schedule"}:
         return True
-    normalized, _is_optional = _unwrap_optional(annotation)
+    normalized, _is_optional = unwrap_optional(annotation)
     if normalized is None:
         return False
     if normalized in {ScheduleContext}:
@@ -217,7 +209,7 @@ def _is_injected_parameter(annotation: Any, parameter_name: str) -> bool:
 
 
 def _param_type_name(annotation: Any) -> tuple[ParamTypeName, OptionalInnerType, bool]:
-    normalized, is_optional = _unwrap_optional(annotation)
+    normalized, is_optional = unwrap_optional(annotation)
     if normalized is GreedyStr:
         return "greedy_str", None, False
     if normalized in {int, float, bool, str}:

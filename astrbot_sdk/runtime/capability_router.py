@@ -39,21 +39,6 @@
     metadata.list_plugins: 列出所有插件元数据
     metadata.get_plugin_config: 获取当前调用插件自己的配置
 
-与旧版对比：
-    旧版:
-        - 无显式的能力声明系统
-        - 通过 call_context_function 调用核心功能
-        - 上下文函数名硬编码
-        - 无输入输出 Schema 验证
-        - 不支持流式能力
-
-    新版 CapabilityRouter:
-        - 使用 CapabilityDescriptor 声明能力
-        - JSON Schema 验证输入输出
-        - 支持同步和流式两种调用模式
-        - 统一的错误处理
-        - 能力命名规范: namespace.action
-
 能力命名规范：
     - 格式: {namespace}.{action}
     - 内置能力命名空间: llm, memory, db, platform

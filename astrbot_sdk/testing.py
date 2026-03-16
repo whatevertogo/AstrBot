@@ -17,7 +17,6 @@ import asyncio
 import inspect
 import re
 import shlex
-import typing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, get_type_hints
@@ -34,6 +33,7 @@ from ._testing_support import (
     RecordedSend,
     StdoutPlatformSink,
 )
+from ._typing_utils import unwrap_optional
 from .context import CancelToken
 from .context import Context as RuntimeContext
 from .errors import AstrBotError
@@ -699,7 +699,7 @@ class PluginHarness:
     def _is_injected_parameter(self, name: str, annotation: Any) -> bool:
         if name in {"event", "ctx", "context"}:
             return True
-        normalized = self._unwrap_optional(annotation)
+        normalized, _is_optional = unwrap_optional(annotation)
         if normalized is None:
             return False
         if normalized is RuntimeContext:
@@ -711,19 +711,6 @@ class PluginHarness:
         ):
             return True
         return False
-
-    @staticmethod
-    def _unwrap_optional(annotation: Any) -> Any:
-        if annotation is None:
-            return None
-        origin = typing.get_origin(annotation)
-        if origin is typing.Union:
-            options = [
-                item for item in typing.get_args(annotation) if item is not type(None)
-            ]
-            if len(options) == 1:
-                return options[0]
-        return annotation
 
     def _next_request_id(self, prefix: str) -> str:
         self._request_counter += 1

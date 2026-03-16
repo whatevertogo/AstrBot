@@ -22,6 +22,7 @@ from collections.abc import AsyncIterator, Sequence
 from typing import Any, get_type_hints
 
 from .._invocation_context import caller_plugin_scope
+from .._typing_utils import unwrap_optional
 from ..context import CancelToken, Context
 from ..errors import AstrBotError
 from ..events import MessageEvent
@@ -104,7 +105,9 @@ class CapabilityDispatcher:
             peer=self._peer,
             plugin_id=plugin_id,
             cancel_token=cancel_token,
-            source_event_payload=event_payload if isinstance(event_payload, dict) else None,
+            source_event_payload=event_payload
+            if isinstance(event_payload, dict)
+            else None,
         )
         event = MessageEvent.from_payload(
             event_payload if isinstance(event_payload, dict) else {},
@@ -160,6 +163,8 @@ class CapabilityDispatcher:
         if inspect.isawaitable(result):
             result = await result
         if result is None:
+            # content=None means the tool completed successfully but produced no
+            # textual payload. The core bridge preserves this as a real None.
             return {"content": None, "success": True}
         if isinstance(result, dict):
             return {
@@ -216,12 +221,7 @@ class CapabilityDispatcher:
         event: MessageEvent,
         ctx: Context,
     ) -> Any:
-        origin = typing.get_origin(param_type)
-        if origin is typing.Union:
-            type_args = typing.get_args(param_type)
-            non_none_types = [item for item in type_args if item is not type(None)]
-            if len(non_none_types) == 1:
-                param_type = non_none_types[0]
+        param_type, _is_optional = unwrap_optional(param_type)
 
         if param_type is Context or (
             isinstance(param_type, type) and issubclass(param_type, Context)
@@ -349,13 +349,8 @@ class CapabilityDispatcher:
         ctx: Context,
         cancel_token: CancelToken,
     ) -> Any:
+        param_type, _is_optional = unwrap_optional(param_type)
         origin = typing.get_origin(param_type)
-        if origin is typing.Union:
-            type_args = typing.get_args(param_type)
-            non_none_types = [item for item in type_args if item is not type(None)]
-            if len(non_none_types) == 1:
-                param_type = non_none_types[0]
-                origin = typing.get_origin(param_type)
 
         if param_type is Context or (
             isinstance(param_type, type) and issubclass(param_type, Context)

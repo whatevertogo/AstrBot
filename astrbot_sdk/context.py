@@ -192,9 +192,7 @@ class Context:
         output = await self._proxy.call("provider.get_using", {"umo": umo})
         return ProviderMeta.from_payload(output.get("provider"))
 
-    async def get_current_chat_provider_id(
-        self, umo: str | None = None
-    ) -> str | None:
+    async def get_current_chat_provider_id(self, umo: str | None = None) -> str | None:
         output = await self._proxy.call(
             "provider.get_current_chat_provider_id",
             {"umo": umo},
@@ -255,6 +253,8 @@ class Context:
         payload = provider_request.to_payload()
         target_payload = self._source_event_payload.get("target")
         if isinstance(target_payload, dict):
+            # Preserve the original message target so core can recover the
+            # dispatch token for message-bound tool loop execution.
             payload["target"] = dict(target_payload)
         output = await self._proxy.call("agent.tool_loop.run", payload)
         return LLMResponse.model_validate(output)

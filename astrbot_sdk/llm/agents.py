@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .entities import ProviderRequest
+
+if TYPE_CHECKING:
+    from ..context import Context
 
 
 class AgentSpec(BaseModel):
@@ -32,5 +35,5 @@ class BaseAgentRunner(ABC):
     """
 
     @abstractmethod
-    async def run(self, ctx, request: ProviderRequest) -> Any:
+    async def run(self, ctx: Context, request: ProviderRequest) -> Any:
         raise NotImplementedError

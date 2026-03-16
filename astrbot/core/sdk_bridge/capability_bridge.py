@@ -14,7 +14,14 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from astrbot_sdk._invocation_context import current_caller_plugin_id
 from astrbot_sdk.errors import AstrBotError
-from astrbot_sdk.llm.entities import LLMToolSpec, ProviderMeta, ToolCallsResult
+from astrbot_sdk.llm.entities import (
+    LLMToolSpec,
+    ProviderMeta,
+    ToolCallsResult,
+)
+from astrbot_sdk.llm.entities import (
+    ProviderType as SDKProviderType,
+)
 from astrbot_sdk.runtime.capability_router import CapabilityRouter, StreamExecution
 
 from .event_converter import EventConverter
@@ -851,9 +858,23 @@ class CoreCapabilityBridge(CapabilityRouter):
         if provider is None:
             return None
         meta = provider.meta()
-        provider_type = getattr(meta, "provider_type", "")
-        if hasattr(provider_type, "value"):
-            provider_type = provider_type.value
+        raw_provider_type = getattr(
+            meta,
+            "provider_type",
+            SDKProviderType.CHAT_COMPLETION,
+        )
+        if isinstance(raw_provider_type, SDKProviderType):
+            provider_type = raw_provider_type
+        else:
+            provider_type_value = (
+                str(raw_provider_type.value)
+                if hasattr(raw_provider_type, "value")
+                else str(raw_provider_type)
+            )
+            try:
+                provider_type = SDKProviderType(provider_type_value)
+            except ValueError:
+                provider_type = SDKProviderType.CHAT_COMPLETION
         return ProviderMeta(
             id=str(getattr(meta, "id", "")),
             model=(
@@ -862,7 +883,7 @@ class CoreCapabilityBridge(CapabilityRouter):
                 else None
             ),
             type=str(getattr(meta, "type", "")),
-            provider_type=str(provider_type),
+            provider_type=provider_type,
         ).to_payload()
 
     def _resolve_current_chat_provider_id(
@@ -1055,7 +1076,8 @@ class CoreCapabilityBridge(CapabilityRouter):
         payload: dict[str, Any],
     ) -> list[LLMToolSpec]:
         active_specs = {
-            item.name: item for item in self._plugin_bridge.get_active_llm_tools(plugin_id)
+            item.name: item
+            for item in self._plugin_bridge.get_active_llm_tools(plugin_id)
         }
         requested = payload.get("tool_names")
         if not isinstance(requested, list) or not requested:
@@ -1082,7 +1104,9 @@ class CoreCapabilityBridge(CapabilityRouter):
                     ensure_ascii=False,
                 )
             request_id = f"sdk_tool_{plugin_id}_{uuid.uuid4().hex}"
-            dispatch_token = self._plugin_bridge._get_dispatch_token(event) or uuid.uuid4().hex
+            dispatch_token = (
+                self._plugin_bridge._get_dispatch_token(event) or uuid.uuid4().hex
+            )
             event_payload = EventConverter.core_to_sdk(
                 event,
                 dispatch_token=dispatch_token,
@@ -1141,6 +1165,8 @@ class CoreCapabilityBridge(CapabilityRouter):
                 return str(output)
             content = output.get("content")
             if output.get("success", True):
+                # Keep None distinct from an empty string so tools can signal
+                # "no content" without fabricating a textual result.
                 return None if content is None else str(content)
             return json.dumps(
                 ToolCallsResult(
@@ -1210,9 +1236,9 @@ class CoreCapabilityBridge(CapabilityRouter):
             raise AstrBotError.invalid_input(
                 "tool_loop_agent currently requires a message-bound SDK request"
             )
-        provider_id = str(payload.get("provider_id") or "").strip() or self._resolve_current_chat_provider_id(
-            request_context
-        )
+        provider_id = str(
+            payload.get("provider_id") or ""
+        ).strip() or self._resolve_current_chat_provider_id(request_context)
         if not provider_id:
             raise AstrBotError.invalid_input("No active chat provider is available")
         tool_call_timeout = int(payload.get("tool_call_timeout") or 60)

@@ -26,11 +26,11 @@ import asyncio
 import inspect
 import re
 import shlex
-import typing
 from collections.abc import Sequence
 from typing import Any, get_type_hints
 
 from .._invocation_context import caller_plugin_scope
+from .._typing_utils import unwrap_optional
 from ..context import CancelToken, Context
 from ..events import MessageEvent
 from ..filters import LocalFilterBinding
@@ -329,13 +329,7 @@ class HandlerDispatcher:
         schedule_context: ScheduleContext | None,
     ) -> Any:
         """根据类型注解注入参数。"""
-        # 处理 Optional[Type] 情况
-        origin = typing.get_origin(param_type)
-        if origin is typing.Union:
-            type_args = typing.get_args(param_type)
-            non_none_types = [a for a in type_args if a is not type(None)]
-            if len(non_none_types) == 1:
-                param_type = non_none_types[0]
+        param_type, _is_optional = unwrap_optional(param_type)
 
         # 注入 MessageEvent 及其子类
         if param_type is MessageEvent:
@@ -604,7 +598,7 @@ class HandlerDispatcher:
     def _is_injected_parameter(cls, name: str, annotation: Any) -> bool:
         if name in {"event", "ctx", "context"}:
             return True
-        normalized = cls._unwrap_optional(annotation)
+        normalized, _is_optional = unwrap_optional(annotation)
         if normalized is None:
             return False
         if normalized is Context or normalized is MessageEvent:
@@ -615,19 +609,6 @@ class HandlerDispatcher:
         ):
             return True
         return False
-
-    @staticmethod
-    def _unwrap_optional(annotation: Any) -> Any:
-        if annotation is None:
-            return None
-        origin = typing.get_origin(annotation)
-        if origin is typing.Union:
-            options = [
-                item for item in typing.get_args(annotation) if item is not type(None)
-            ]
-            if len(options) == 1:
-                return options[0]
-        return annotation
 
     async def _handle_error(
         self,
