@@ -10,38 +10,65 @@
     FinalizeHandler: 流式结果聚合器，签名 (chunks) -> dict
 
 内置能力：
-    llm.chat: 同步 LLM 聊天（内置 echo 实现）
-    llm.chat_raw: 同步 LLM 聊天（完整响应）
-    llm.stream_chat: 流式 LLM 聊天
-    memory.search: 搜索记忆
-    memory.save: 保存记忆
-    memory.save_with_ttl: 保存带过期时间的记忆
-    memory.get: 读取单条记忆
-    memory.get_many: 批量获取多条记忆
-    memory.delete: 删除记忆
-    memory.delete_many: 批量删除多条记忆
-    memory.stats: 获取记忆统计信息
-    db.get: 读取 KV 存储
-    db.set: 写入 KV 存储
-    db.delete: 删除 KV 存储
-    db.list: 列出 KV 键
-    db.get_many: 批量读取多个 KV 键
-    db.set_many: 批量写入多个 KV 键
-    db.watch: 订阅 KV 变更事件
-    platform.send: 发送消息
-    platform.send_image: 发送图片
-    platform.send_chain: 发送消息链
-    platform.get_members: 获取群成员
-    http.register_api: 注册 HTTP 路由到插件 capability
-    http.unregister_api: 注销 HTTP 路由
-    http.list_apis: 查询已注册的 HTTP 路由
-    metadata.get_plugin: 获取单个插件元数据
-    metadata.list_plugins: 列出所有插件元数据
-    metadata.get_plugin_config: 获取当前调用插件自己的配置
+    LLM:
+        llm.chat: 同步 LLM 聊天
+        llm.chat_raw: 同步 LLM 聊天（完整响应）
+        llm.stream_chat: 流式 LLM 聊天
+    Memory:
+        memory.search: 搜索记忆
+        memory.save: 保存记忆
+        memory.save_with_ttl: 保存带过期时间的记忆
+        memory.get: 读取单条记忆
+        memory.get_many: 批量获取多条记忆
+        memory.delete: 删除记忆
+        memory.delete_many: 批量删除多条记忆
+        memory.stats: 获取记忆统计信息
+    DB:
+        db.get: 读取 KV 存储
+        db.set: 写入 KV 存储
+        db.delete: 删除 KV 存储
+        db.list: 列出 KV 键
+        db.get_many: 批量读取多个 KV 键
+        db.set_many: 批量写入多个 KV 键
+        db.watch: 订阅 KV 变更事件
+    Platform:
+        platform.send: 发送消息
+        platform.send_image: 发送图片
+        platform.send_chain: 发送消息链
+        platform.get_members: 获取群成员
+    HTTP:
+        http.register_api: 注册 HTTP 路由到插件 capability
+        http.unregister_api: 注销 HTTP 路由
+        http.list_apis: 查询已注册的 HTTP 路由
+    Metadata:
+        metadata.get_plugin: 获取单个插件元数据
+        metadata.list_plugins: 列出所有插件元数据
+        metadata.get_plugin_config: 获取当前调用插件自己的配置
+    Provider:
+        provider.get_using: 获取当前聊天 Provider
+        provider.get_current_chat_provider_id: 获取当前聊天 Provider ID
+        provider.list_all: 列出聊天 Providers
+        provider.list_all_tts: 列出 TTS Providers
+        provider.list_all_stt: 列出 STT Providers
+        provider.list_all_embedding: 列出 Embedding Providers
+        provider.get_using_tts: 获取当前 TTS Provider
+        provider.get_using_stt: 获取当前 STT Provider
+    LLM Tool:
+        llm_tool.manager.get: 获取 LLM 工具状态
+        llm_tool.manager.activate: 激活 LLM 工具
+        llm_tool.manager.deactivate: 停用 LLM 工具
+        llm_tool.manager.add: 动态添加 LLM 工具
+    Agent:
+        agent.tool_loop.run: 运行 tool loop
+        agent.registry.list: 列出 Agent 元数据
+        agent.registry.get: 获取 Agent 元数据
+    Registry:
+        registry.get_handlers_by_event_type: 按事件类型列出 handler 元数据
+        registry.get_handler_by_full_name: 按 full name 查询 handler 元数据
 
 能力命名规范：
-    - 格式: {namespace}.{action}
-    - 内置能力命名空间: llm, memory, db, platform
+    - 格式: {namespace}.{action} 或 {namespace}.{sub_namespace}.{action}
+    - 内置能力命名空间: llm, memory, db, platform, http, metadata, provider, llm_tool, agent, registry
     - 保留命名空间前缀: handler., system., internal.
 
 使用示例：
