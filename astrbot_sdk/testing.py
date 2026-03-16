@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, get_type_hints
 
+from ._star_runtime import bind_star_runtime
 from ._testing_support import (
     InMemoryDB,
     InMemoryMemory,
@@ -77,6 +78,7 @@ def _plugin_metadata_from_spec(
     enabled: bool,
 ) -> dict[str, Any]:
     manifest = plugin.manifest_data
+    support_platforms = manifest.get("support_platforms")
     return {
         "name": plugin.name,
         "display_name": str(manifest.get("display_name") or plugin.name),
@@ -85,6 +87,16 @@ def _plugin_metadata_from_spec(
         "version": str(manifest.get("version") or "0.0.0"),
         "enabled": enabled,
         "reserved": bool(manifest.get("reserved", False)),
+        "support_platforms": [
+            str(item) for item in support_platforms if isinstance(item, str)
+        ]
+        if isinstance(support_platforms, list)
+        else [],
+        "astrbot_version": (
+            str(manifest.get("astrbot_version"))
+            if manifest.get("astrbot_version") is not None
+            else None
+        ),
     }
 
 
@@ -446,9 +458,13 @@ class PluginHarness:
                 ]
                 if positional_params:
                     args.append(self.lifecycle_context)
-            result = hook(*args)
-            if inspect.isawaitable(result):
-                await result
+            with bind_star_runtime(
+                instance if isinstance(instance, Star) else None,
+                self.lifecycle_context,
+            ):
+                result = hook(*args)
+                if inspect.isawaitable(result):
+                    await result
 
     def _match_handlers(
         self,

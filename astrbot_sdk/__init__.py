@@ -22,6 +22,7 @@ from .clients.managers import (
     PersonaRecord,
     PersonaUpdateParams,
 )
+from .clients.metadata import PluginMetadata, StarMetadata
 from .clients.platform import PlatformError, PlatformStats, PlatformStatus
 from .clients.provider import (
     ManagedProviderRecord,
@@ -64,9 +65,11 @@ from .message_components import (
 )
 from .message_result import EventResultType, MessageChain, MessageEventResult
 from .message_session import MessageSession
+from .plugin_kv import PluginKVStoreMixin
 from .schedule import ScheduleContext
 from .session_waiter import SessionController, session_waiter
 from .star import Star
+from .star_tools import StarTools
 from .types import GreedyStr
 
 __all__ = [
@@ -95,6 +98,8 @@ __all__ = [
     "MessageSession",
     "MessageTypeFilter",
     "Plain",
+    "PluginKVStoreMixin",
+    "PluginMetadata",
     "PlatformFilter",
     "PlatformError",
     "PlatformStats",
@@ -113,6 +118,8 @@ __all__ = [
     "SessionServiceManager",
     "SessionController",
     "Star",
+    "StarMetadata",
+    "StarTools",
     "UnknownComponent",
     "Video",
     "all_of",

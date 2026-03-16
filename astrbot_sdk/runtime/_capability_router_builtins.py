@@ -207,6 +207,21 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
             return []
         return [dict(item) for item in value if isinstance(item, dict)]
 
+    @staticmethod
+    def _normalize_persona_dialogs_payload(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item) for item in value if isinstance(item, str)]
+
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
     async def _llm_chat(
         self, _request_id: str, payload: dict[str, Any], _token
     ) -> dict[str, Any]:
@@ -1452,6 +1467,9 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
             stats = item.get("stats")
             if isinstance(stats, dict):
                 return {"stats": dict(stats)}
+            errors = item.get("errors")
+            last_error = item.get("last_error")
+            meta = item.get("meta")
             return {
                 "stats": {
                     "id": platform_id,
@@ -1459,18 +1477,12 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
                     "display_name": str(item.get("name", platform_id)),
                     "status": str(item.get("status", "pending")),
                     "started_at": item.get("started_at"),
-                    "error_count": len(item.get("errors", []))
-                    if isinstance(item.get("errors"), list)
-                    else 0,
-                    "last_error": (
-                        dict(item.get("last_error"))
-                        if isinstance(item.get("last_error"), dict)
-                        else None
-                    ),
+                    "error_count": len(errors) if isinstance(errors, list) else 0,
+                    "last_error": dict(last_error)
+                    if isinstance(last_error, dict)
+                    else None,
                     "unified_webhook": bool(item.get("unified_webhook", False)),
-                    "meta": dict(item.get("meta", {}))
-                    if isinstance(item.get("meta"), dict)
-                    else {},
+                    "meta": dict(meta) if isinstance(meta, dict) else {},
                 }
             }
         return {"stats": None}
@@ -1544,6 +1556,18 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
                 plugin.active_llm_tools.discard(name)
             names.append(name)
         return {"names": names}
+
+    async def _llm_tool_manager_remove(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        plugin_id = self._require_caller_plugin_id("llm_tool.manager.remove")
+        plugin = self._plugins.get(plugin_id)
+        if plugin is None:
+            return {"removed": False}
+        name = str(payload.get("name", "")).strip()
+        removed = plugin.llm_tools.pop(name, None) is not None
+        plugin.active_llm_tools.discard(name)
+        return {"removed": removed}
 
     async def _agent_registry_list(
         self, _request_id: str, _payload: dict[str, Any], _token
@@ -1711,6 +1735,10 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
         self.register(
             self._builtin_descriptor("llm_tool.manager.add", "动态添加 LLM 工具"),
             call_handler=self._llm_tool_manager_add,
+        )
+        self.register(
+            self._builtin_descriptor("llm_tool.manager.remove", "动态移除 LLM 工具"),
+            call_handler=self._llm_tool_manager_remove,
         )
         self.register(
             self._builtin_descriptor("agent.tool_loop.run", "运行 mock tool loop"),
@@ -1882,7 +1910,7 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
         record = {
             "persona_id": persona_id,
             "system_prompt": str(raw_persona.get("system_prompt", "")),
-            "begin_dialogs": self._normalize_history_payload(
+            "begin_dialogs": self._normalize_persona_dialogs_payload(
                 raw_persona.get("begin_dialogs")
             ),
             "tools": (
@@ -1930,7 +1958,7 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
         if "begin_dialogs" in raw_persona:
             begin_dialogs = raw_persona.get("begin_dialogs")
             record["begin_dialogs"] = (
-                self._normalize_history_payload(begin_dialogs)
+                self._normalize_persona_dialogs_payload(begin_dialogs)
                 if begin_dialogs is not None
                 else []
             )
@@ -2170,31 +2198,11 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
                 if raw_kb.get("rerank_provider_id") is not None
                 else None
             ),
-            "chunk_size": (
-                int(raw_kb.get("chunk_size"))
-                if raw_kb.get("chunk_size") is not None
-                else None
-            ),
-            "chunk_overlap": (
-                int(raw_kb.get("chunk_overlap"))
-                if raw_kb.get("chunk_overlap") is not None
-                else None
-            ),
-            "top_k_dense": (
-                int(raw_kb.get("top_k_dense"))
-                if raw_kb.get("top_k_dense") is not None
-                else None
-            ),
-            "top_k_sparse": (
-                int(raw_kb.get("top_k_sparse"))
-                if raw_kb.get("top_k_sparse") is not None
-                else None
-            ),
-            "top_m_final": (
-                int(raw_kb.get("top_m_final"))
-                if raw_kb.get("top_m_final") is not None
-                else None
-            ),
+            "chunk_size": self._optional_int(raw_kb.get("chunk_size")),
+            "chunk_overlap": self._optional_int(raw_kb.get("chunk_overlap")),
+            "top_k_dense": self._optional_int(raw_kb.get("top_k_dense")),
+            "top_k_sparse": self._optional_int(raw_kb.get("top_k_sparse")),
+            "top_m_final": self._optional_int(raw_kb.get("top_m_final")),
             "doc_count": 0,
             "chunk_count": 0,
             "created_at": now,

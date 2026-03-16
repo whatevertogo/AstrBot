@@ -288,6 +288,7 @@ class SdkPluginBridge:
         record = self._records.get(plugin_id)
         if record is not None:
             manifest = record.plugin.manifest_data
+            support_platforms = manifest.get("support_platforms")
             return {
                 "name": plugin_id,
                 "display_name": str(manifest.get("display_name") or plugin_id),
@@ -297,6 +298,16 @@ class SdkPluginBridge:
                 "author": str(manifest.get("author") or ""),
                 "version": str(manifest.get("version") or "0.0.0"),
                 "enabled": record.state not in {SDK_STATE_DISABLED, SDK_STATE_FAILED},
+                "support_platforms": [
+                    str(item) for item in support_platforms if isinstance(item, str)
+                ]
+                if isinstance(support_platforms, list)
+                else [],
+                "astrbot_version": (
+                    str(manifest.get("astrbot_version"))
+                    if manifest.get("astrbot_version") is not None
+                    else None
+                ),
                 "runtime_kind": "sdk",
             }
         for plugin in self.star_context.get_all_stars():
@@ -308,6 +319,8 @@ class SdkPluginBridge:
                     "author": plugin.author,
                     "version": plugin.version,
                     "enabled": plugin.activated,
+                    "support_platforms": list(plugin.support_platforms),
+                    "astrbot_version": plugin.astrbot_version,
                     "runtime_kind": "legacy",
                 }
         return None
@@ -323,6 +336,8 @@ class SdkPluginBridge:
                     "author": plugin.author,
                     "version": plugin.version,
                     "enabled": plugin.activated,
+                    "support_platforms": list(plugin.support_platforms),
+                    "astrbot_version": plugin.astrbot_version,
                     "runtime_kind": "legacy",
                 }
             )
@@ -376,6 +391,14 @@ class SdkPluginBridge:
                 record.active_llm_tools.discard(spec.name)
             names.append(spec.name)
         return names
+
+    def remove_llm_tool(self, plugin_id: str, name: str) -> bool:
+        record = self._records.get(plugin_id)
+        if record is None:
+            return False
+        removed = record.llm_tools.pop(name, None) is not None
+        record.active_llm_tools.discard(name)
+        return removed
 
     def activate_llm_tool(self, plugin_id: str, name: str) -> bool:
         record = self._records.get(plugin_id)
@@ -1667,6 +1690,7 @@ class SdkPluginBridge:
 
     def _record_to_dashboard_item(self, record: SdkPluginRecord) -> dict[str, Any]:
         manifest = record.plugin.manifest_data
+        support_platforms = manifest.get("support_platforms")
         installed_at = None
         try:
             installed_at = datetime.fromtimestamp(
@@ -1690,8 +1714,16 @@ class SdkPluginBridge:
             "handlers": handlers,
             "display_name": str(manifest.get("display_name") or record.plugin_id),
             "logo": None,
-            "support_platforms": [],
-            "astrbot_version": "",
+            "support_platforms": [
+                str(item) for item in support_platforms if isinstance(item, str)
+            ]
+            if isinstance(support_platforms, list)
+            else [],
+            "astrbot_version": (
+                str(manifest.get("astrbot_version"))
+                if manifest.get("astrbot_version") is not None
+                else ""
+            ),
             "installed_at": installed_at,
             "runtime_kind": "sdk",
             "source_kind": "local_dir",

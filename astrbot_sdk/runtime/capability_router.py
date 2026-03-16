@@ -70,6 +70,7 @@
         llm_tool.manager.activate: 激活 LLM 工具
         llm_tool.manager.deactivate: 停用 LLM 工具
         llm_tool.manager.add: 动态添加 LLM 工具
+        llm_tool.manager.remove: 动态移除 LLM 工具
     Agent:
         agent.tool_loop.run: 运行 tool loop
         agent.registry.list: 列出 Agent 元数据
@@ -278,6 +279,8 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
         normalized_metadata.setdefault("version", "0.0.0")
         normalized_metadata.setdefault("enabled", True)
         normalized_metadata.setdefault("reserved", False)
+        normalized_metadata.setdefault("support_platforms", [])
+        normalized_metadata.setdefault("astrbot_version", None)
         self._plugins[name] = _RegisteredPlugin(
             metadata=normalized_metadata,
             config=dict(config or {}),
@@ -373,6 +376,10 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
             platform_type = str(item.get("type", "")).strip()
             if not platform_id or not platform_type:
                 continue
+            errors = item.get("errors")
+            last_error = item.get("last_error")
+            stats = item.get("stats")
+            meta = item.get("meta")
             normalized.append(
                 {
                     "id": platform_id,
@@ -380,28 +387,16 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
                     "type": platform_type,
                     "status": str(item.get("status", "unknown")),
                     "errors": [
-                        dict(error)
-                        for error in item.get("errors", [])
-                        if isinstance(error, dict)
+                        dict(error) for error in errors if isinstance(error, dict)
                     ]
-                    if isinstance(item.get("errors"), list)
+                    if isinstance(errors, list)
                     else [],
                     "last_error": (
-                        dict(item.get("last_error"))
-                        if isinstance(item.get("last_error"), dict)
-                        else None
+                        dict(last_error) if isinstance(last_error, dict) else None
                     ),
                     "unified_webhook": bool(item.get("unified_webhook", False)),
-                    "stats": (
-                        dict(item.get("stats"))
-                        if isinstance(item.get("stats"), dict)
-                        else None
-                    ),
-                    "meta": (
-                        dict(item.get("meta"))
-                        if isinstance(item.get("meta"), dict)
-                        else {}
-                    ),
+                    "stats": dict(stats) if isinstance(stats, dict) else None,
+                    "meta": dict(meta) if isinstance(meta, dict) else {},
                     "started_at": item.get("started_at"),
                 }
             )

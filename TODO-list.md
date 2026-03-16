@@ -15,7 +15,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | LLM Client | 8 | 8 | 0 | 0 | 0 | 100% |
 | DB Client (KV) | 7 | 6 | 0 | 0 | 1 | 93% |
-| Platform Client | 6 | 3 | 1 | 2 | 0 | 58% |
+| Platform Client | 6 | 5 | 1 | 0 | 0 | 100% |
 | Metadata Client | 4 | 4 | 0 | 0 | 0 | 100% |
 | Memory Client | 8 | 8 | 0 | 0 | 0 | 100% |
 | HTTP Client | 3 | 3 | 0 | 0 | 0 | 100% |
@@ -34,20 +34,29 @@
 | Platform实体 | 12 | 2 | 0 | 10 | 0 | 17% |
 | Agent运行器 | 7 | 7 | 0 | 0 | 0 | 100% |
 | Handler注册表 | 5 | 5 | 0 | 0 | 0 | 100% |
-| SDK扩展能力 | 19 | 6 | 0 | 13 | 0 | 32% |
+| SDK扩展能力 | 19 | 8 | 0 | 11 | 0 | 47% |
 | 其他系统能力 | 52 | 7 | 0 | 44 | 1 | 14% |
-| **Star基类扩展** | **7** | **4** | **1** | **2** | **0** | **64%** |
+| **Star基类扩展** | **7** | **7** | **0** | **0** | **0** | **100%** |
 | **命令参数类型** | **8** | **8** | **0** | **0** | **0** | **100%** |
 | **过滤器组合** | **5** | **5** | **0** | **0** | **0** | **100%** |
-| **StarTools工具集** | **10** | **0** | **0** | **10** | **0** | **0%** |
+| **StarTools工具集** | **10** | **10** | **0** | **0** | **0** | **100%** |
 | **会话级管理** | **6** | **6** | **0** | **0** | **0** | **100%** |
 | **命令组系统** | **9** | **9** | **0** | **0** | **0** | **100%** |
 | **消息类型过滤** | **7** | **7** | **0** | **0** | **0** | **100%** |
-| **PluginKVStoreMixin** | **5** | **0** | **0** | **5** | **0** | **0%** |
-| **StarMetadata字段** | **2** | **0** | **0** | **2** | **0** | **0%** |
-| **总计** | **334** | **166** | **2** | **162** | **4** | **50%** |
+| **PluginKVStoreMixin** | **5** | **5** | **0** | **0** | **0** | **100%** |
+| **StarMetadata字段** | **2** | **2** | **0** | **0** | **0** | **100%** |
+| **总计** | **334** | **187** | **2** | **141** | **4** | **56%** |
 
 > 注：覆盖率 = `(已实现 + 部分实现 × 0.5) / 总计`，⚠️ 表示SDK已定义但Core端未实现
+>
+> **2026-03-16 更新说明**：
+> - **P1.4 已完成**：Star 兼容层与开发工具全部实现
+> - StarTools 工具集从 0% → 100%（10项全部完成）
+> - PluginKVStoreMixin 从 0% → 100%（5项全部完成）
+> - StarMetadata 字段从 0% → 100%（2项全部完成）
+> - Platform Client 从 58% → 100%（新增 send_message/send_message_by_id）
+> - SDK 扩展能力从 32% → 47%（新增动态 LLM Tool 注册/注销）
+> - 总覆盖率从 50% → 56%（+6%）
 >
 > **2026-03-15 更新说明**：
 > - 消息组件总数从 13 修正为 22（包含所有平台特定组件）
@@ -224,7 +233,7 @@
 - **P1.1**：多媒体与专用 Provider（已实现 ✅）- TTS/STT/Embedding/Rerank
 - **P1.2**：高级管理器 - Persona/Conversation/KnowledgeBase
 - **P1.3**：Provider 与 Platform 管理面 - Provider CRUD/Platform 状态与统计/Webhook
-- **P1.4**：Star 兼容层与开发工具 - StarTools/PluginKVStoreMixin/StarMetadata/Star.context
+- **P1.4**：Star 兼容层与开发工具（已实现 ✅）- StarTools/PluginKVStoreMixin/StarMetadata/Star.context
 - **P1.5**：其他系统能力 - 文件服务/MCP/事件总线/热重载/国际化/日志/依赖管理/消息撤回
 - **P2.1**：CancelToken 取消机制扩展
 - **P2.2**：provide_capability 能力导出扩展
@@ -778,11 +787,12 @@
 2. **Platform 实体** - ✅ `PlatformStatus` 枚举, `PlatformError`, `last_error`, `errors`, `clear_errors()`, `send_by_session()`, `get_stats()`, `unified_webhook()`
 3. **Webhook 处理** - 🔄 只补统一 webhook 状态观测；`webhook_callback()` 原始请求入口延期
 
-#### P1.4 - Star 兼容层与开发工具
-1. **Star 基类方法/属性** - `context` 属性及剩余兼容层
-2. **PluginKVStoreMixin** - `put_kv_data()`, `get_kv_data()`, `delete_kv_data()`, `plugin_id`
-3. **StarMetadata 字段** - `support_platforms`, `astrbot_version`
-4. **StarTools 补齐** - `send_message()`, `send_message_by_id()`, `_context`, 剩余 LLM Tool 工具方法
+#### P1.4 - Star 兼容层与开发工具 ✅ 已完成
+1. **Star 基类方法/属性** - `context` 属性及剩余兼容层 ✅
+2. **PluginKVStoreMixin** - `put_kv_data()`, `get_kv_data()`, `delete_kv_data()`, `plugin_id` ✅
+3. **StarMetadata 字段** - `support_platforms`, `astrbot_version` ✅
+4. **StarTools 补齐** - `send_message()`, `send_message_by_id()`, `_context`, 剩余 LLM Tool 工具方法 ✅
+5. **动态 LLM Tool 注册** - `register_llm_tool()`, `unregister_llm_tool()` ✅
 
 #### P1.5 - 其他系统能力
 1. **文件服务** - `FileTokenService`, `register_file()`, `handle_file()`, `register_to_file_service()`
@@ -865,7 +875,7 @@
   - **P1.1**：多媒体与专用 Provider（已实现 ✅）
   - **P1.2**：高级管理器
   - **P1.3**：Provider 与 Platform 管理面
-  - **P1.4**：Star 兼容层与开发工具
+  - **P1.4**：Star 兼容层与开发工具（已实现 ✅）
   - **P1.5**：其他系统能力
 
 - **P2**：新 SDK 的可扩展增强方向

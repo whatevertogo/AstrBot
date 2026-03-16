@@ -79,7 +79,7 @@ async def test_mock_context_p1_2_manager_clients_round_trip() -> None:
         PersonaCreateParams(
             persona_id="helper",
             system_prompt="Be helpful",
-            begin_dialogs=[{"role": "assistant", "content": "hello"}],
+            begin_dialogs=["user hello", "assistant hello"],
             tools=["tool-a"],
             custom_error_message="fallback",
             sort_order=3,
@@ -131,7 +131,9 @@ async def test_mock_context_p1_2_manager_clients_round_trip() -> None:
 
     assert await ctx.conversations.get_conversation(session, conversation_a) is None
     remaining_conversations = await ctx.conversations.get_conversations(session)
-    assert [item.conversation_id for item in remaining_conversations] == [conversation_b]
+    assert [item.conversation_id for item in remaining_conversations] == [
+        conversation_b
+    ]
 
     await ctx.conversations.update_conversation(
         session,
@@ -149,9 +151,7 @@ async def test_mock_context_p1_2_manager_clients_round_trip() -> None:
     assert isinstance(current_conversation, ConversationRecord)
     assert current_conversation.title == "second-updated"
     assert current_conversation.token_usage == 42
-    assert current_conversation.history == [
-        {"role": "assistant", "content": "updated"}
-    ]
+    assert current_conversation.history == [{"role": "assistant", "content": "updated"}]
 
     kb = await ctx.kbs.create_kb(
         KnowledgeBaseCreateParams(
@@ -214,7 +214,9 @@ class _FakeConversationManager:
     async def get_conversation(self, *args, **kwargs):  # pragma: no cover
         return None
 
-    async def get_conversations(self, *args, **kwargs) -> list[object]:  # pragma: no cover
+    async def get_conversations(
+        self, *args, **kwargs
+    ) -> list[object]:  # pragma: no cover
         return []
 
     async def update_conversation(self, *args, **kwargs) -> None:  # pragma: no cover
@@ -259,7 +261,9 @@ class _FakeKnowledgeBaseManager:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_p1_2_bridge_serializes_kb_record_and_preserves_delete_none_semantics() -> None:
+async def test_p1_2_bridge_serializes_kb_record_and_preserves_delete_none_semantics() -> (
+    None
+):
     fake_conversation_manager = _FakeConversationManager()
     fake_kb_manager = _FakeKnowledgeBaseManager()
     bridge = CoreCapabilityBridge(

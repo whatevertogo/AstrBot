@@ -29,7 +29,10 @@ import shlex
 from collections.abc import Sequence
 from typing import Any, get_type_hints
 
+from loguru import logger
+
 from .._invocation_context import caller_plugin_scope
+from .._star_runtime import bind_star_runtime
 from .._typing_utils import unwrap_optional
 from ..context import CancelToken, Context
 from ..events import MessageEvent
@@ -58,7 +61,13 @@ class HandlerDispatcher:
         self._handlers = {item.descriptor.id: item for item in handlers}
         self._active: dict[str, tuple[asyncio.Task[Any], CancelToken]] = {}
         self._session_waiters = SessionWaiterManager(plugin_id=plugin_id, peer=peer)
-        setattr(peer, "_session_waiter_manager", self._session_waiters)
+        try:
+            setattr(peer, "_session_waiter_manager", self._session_waiters)
+        except AttributeError:
+            logger.warning(
+                f"Failed to attach _session_waiter_manager to peer {peer}, "
+                "some features may not work as expected"
+            )
 
     async def invoke(self, message, cancel_token: CancelToken) -> dict[str, Any]:
         handler_id = str(message.input.get("handler_id", ""))
@@ -88,13 +97,13 @@ class HandlerDispatcher:
             peer=self._peer,
             plugin_id=plugin_id,
             cancel_token=cancel_token,
-            source_event_payload=event_payload if isinstance(event_payload, dict) else None,
+            source_event_payload=event_payload
+            if isinstance(event_payload, dict)
+            else None,
         )
         event = MessageEvent.from_payload(event_payload, context=ctx)
         event.bind_reply_handler(self._create_reply_handler(ctx, event))
-        schedule_context = self._build_schedule_context(
-            loaded, event_payload
-        )
+        schedule_context = self._build_schedule_context(loaded, event_payload)
 
         # 提取 args 用于兼容 handler 签名
         raw_args = message.input.get("args") or {}
@@ -170,32 +179,34 @@ class HandlerDispatcher:
                 if loaded.descriptor.param_specs
                 else dict(args or {})
             )
-            result = loaded.callable(
-                *self._build_args(
-                    loaded.callable,
-                    event,
-                    ctx,
-                    parsed_args,
-                    plugin_id=self._resolve_plugin_id(loaded),
-                    handler_ref=loaded.descriptor.id,
-                    schedule_context=schedule_context,
+            owner = loaded.owner if isinstance(loaded.owner, Star) else None
+            with bind_star_runtime(owner, ctx):
+                result = loaded.callable(
+                    *self._build_args(
+                        loaded.callable,
+                        event,
+                        ctx,
+                        parsed_args,
+                        plugin_id=self._resolve_plugin_id(loaded),
+                        handler_ref=loaded.descriptor.id,
+                        schedule_context=schedule_context,
+                    )
                 )
-            )
-            if inspect.isasyncgen(result):
-                async for item in result:
+                if inspect.isasyncgen(result):
+                    async for item in result:
+                        self._merge_handler_summary(
+                            summary,
+                            await self._handle_result_item(item, event, ctx),
+                        )
+                    summary["stop"] = bool(summary.get("stop")) or event.is_stopped()
+                    return summary
+                if inspect.isawaitable(result):
+                    result = await result
+                if result is not None:
                     self._merge_handler_summary(
                         summary,
-                        await self._handle_result_item(item, event, ctx),
+                        await self._handle_result_item(result, event, ctx),
                     )
-                summary["stop"] = bool(summary.get("stop")) or event.is_stopped()
-                return summary
-            if inspect.isawaitable(result):
-                result = await result
-            if result is not None:
-                self._merge_handler_summary(
-                    summary,
-                    await self._handle_result_item(result, event, ctx),
-                )
             summary["stop"] = bool(summary.get("stop")) or event.is_stopped()
             return summary
         except Exception as exc:
@@ -621,9 +632,11 @@ class HandlerDispatcher:
         plugin_id: str | None = None,
     ) -> None:
         if hasattr(owner, "on_error") and callable(owner.on_error):
-            result = owner.on_error(exc, event, ctx)
-            if inspect.isawaitable(result):
-                await result
+            bound_owner = owner if isinstance(owner, Star) else None
+            with bind_star_runtime(bound_owner, ctx):
+                result = owner.on_error(exc, event, ctx)
+                if inspect.isawaitable(result):
+                    await result
             return
         await Star().on_error(exc, event, ctx)
 

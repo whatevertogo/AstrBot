@@ -26,13 +26,14 @@ Attributes:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from loguru import logger as base_logger
 
+from ._star_runtime import current_star_instance
 from .clients import (
     DBClient,
     HTTPClient,
@@ -357,6 +358,76 @@ class Context:
         provider = await self.providers.get_using_stt(umo)
         return provider.meta() if provider is not None else None
 
+    async def send_message(
+        self,
+        session: str | MessageSession,
+        content: PlatformCompatContent,
+    ) -> dict[str, Any]:
+        return await self.platform.send_by_session(session, content)
+
+    async def send_message_by_id(
+        self,
+        type: str,
+        id: str,
+        content: PlatformCompatContent,
+        *,
+        platform: str,
+    ) -> dict[str, Any]:
+        platform_payload = await self._resolve_platform_target(platform)
+        return await self.platform.send_by_id(
+            str(platform_payload.get("id", "")),
+            str(id),
+            content,
+            message_type=self._normalize_compat_message_type(type),
+        )
+
+    @staticmethod
+    def _normalize_compat_message_type(value: str) -> str:
+        normalized = str(value).strip().lower()
+        if normalized in {"groupmessage", "group_message", "group"}:
+            return "group"
+        if normalized in {
+            "privatemessage",
+            "private_message",
+            "private",
+            "friendmessage",
+            "friend_message",
+            "friend",
+        }:
+            return "private"
+        if not normalized:
+            raise AstrBotError.invalid_input("send_message_by_id requires type")
+        return normalized
+
+    async def _resolve_platform_target(self, platform: str) -> dict[str, Any]:
+        target = str(platform).strip()
+        if not target:
+            raise AstrBotError.invalid_input(
+                "send_message_by_id requires explicit platform"
+            )
+        instances = await self._list_platform_instances()
+        id_matches = [
+            item for item in instances if str(item.get("id", "")).strip() == target
+        ]
+        if len(id_matches) == 1:
+            return id_matches[0]
+        normalized_target = target.lower()
+        alias_matches = [
+            item
+            for item in instances
+            if str(item.get("type", "")).strip().lower() == normalized_target
+            or str(item.get("name", "")).strip().lower() == normalized_target
+        ]
+        if len(alias_matches) == 1:
+            return alias_matches[0]
+        if len(alias_matches) > 1:
+            raise AstrBotError.invalid_input(
+                f"send_message_by_id platform '{target}' is ambiguous"
+            )
+        raise AstrBotError.invalid_input(
+            f"send_message_by_id cannot resolve platform '{target}'"
+        )
+
     def get_llm_tool_manager(self) -> LLMToolManager:
         return self._llm_tool_manager
 
@@ -368,6 +439,61 @@ class Context:
 
     async def add_llm_tools(self, *tools: LLMToolSpec) -> list[str]:
         return await self._llm_tool_manager.add(*tools)
+
+    async def register_llm_tool(
+        self,
+        name: str,
+        parameters_schema: dict[str, Any],
+        desc: str,
+        func_obj: Callable[..., Any] | Callable[..., Awaitable[Any]],
+        *,
+        active: bool = True,
+    ) -> list[str]:
+        if not callable(func_obj):
+            raise TypeError("register_llm_tool requires a callable func_obj")
+        tool_name = str(name).strip()
+        if not tool_name:
+            raise AstrBotError.invalid_input("register_llm_tool requires name")
+        if not isinstance(parameters_schema, dict):
+            raise TypeError("register_llm_tool requires parameters_schema dict")
+
+        handler_ref = f"__dynamic_llm_tool__:{tool_name}"
+        owner = getattr(func_obj, "__self__", None) or current_star_instance()
+        dispatcher = getattr(self.peer, "_sdk_capability_dispatcher", None)
+        if dispatcher is not None and hasattr(dispatcher, "add_dynamic_llm_tool"):
+            dispatcher.add_dynamic_llm_tool(
+                plugin_id=self.plugin_id,
+                spec=LLMToolSpec(
+                    name=tool_name,
+                    description=str(desc),
+                    parameters_schema=dict(parameters_schema),
+                    handler_ref=handler_ref,
+                    active=bool(active),
+                ),
+                callable_obj=func_obj,
+                owner=owner,
+            )
+        try:
+            return await self._llm_tool_manager.add(
+                LLMToolSpec(
+                    name=tool_name,
+                    description=str(desc),
+                    parameters_schema=dict(parameters_schema),
+                    handler_ref=handler_ref,
+                    active=bool(active),
+                )
+            )
+        except Exception:
+            if dispatcher is not None and hasattr(dispatcher, "remove_llm_tool"):
+                dispatcher.remove_llm_tool(self.plugin_id, tool_name)
+            raise
+
+    async def unregister_llm_tool(self, name: str) -> bool:
+        removed = await self._llm_tool_manager.remove(str(name))
+        dispatcher = getattr(self.peer, "_sdk_capability_dispatcher", None)
+        if dispatcher is not None and hasattr(dispatcher, "remove_llm_tool"):
+            dispatcher.remove_llm_tool(self.plugin_id, str(name))
+        return removed
 
     async def tool_loop_agent(
         self,

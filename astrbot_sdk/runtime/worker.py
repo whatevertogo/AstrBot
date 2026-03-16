@@ -34,9 +34,11 @@ from typing import Any
 from loguru import logger
 
 from .._invocation_context import caller_plugin_scope
+from .._star_runtime import bind_star_runtime
 from ..context import Context as RuntimeContext
 from ..errors import AstrBotError
 from ..protocol.messages import PeerInfo
+from ..star import Star
 from .handler_dispatcher import CapabilityDispatcher, HandlerDispatcher
 from .loader import (
     LoadedPlugin,
@@ -108,9 +110,11 @@ async def run_plugin_lifecycle(
         if method is None:
             continue
         with caller_plugin_scope(context.plugin_id):
-            result = method(context)
-            if inspect.isawaitable(result):
-                await result
+            owner = instance if isinstance(instance, Star) else None
+            with bind_star_runtime(owner, context):
+                result = method(context)
+                if inspect.isawaitable(result):
+                    await result
 
 
 class GroupWorkerRuntime:

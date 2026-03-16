@@ -29,7 +29,7 @@ def _normalize_session(session: str | MessageSession) -> str:
 class PersonaRecord(_ManagerModel):
     persona_id: str
     system_prompt: str
-    begin_dialogs: list[dict[str, Any]] = Field(default_factory=list)
+    begin_dialogs: list[str] = Field(default_factory=list)
     tools: list[str] | None = None
     skills: list[str] | None = None
     custom_error_message: str | None = None
@@ -48,7 +48,7 @@ class PersonaRecord(_ManagerModel):
 class PersonaCreateParams(_ManagerModel):
     persona_id: str
     system_prompt: str
-    begin_dialogs: list[dict[str, Any]] = Field(default_factory=list)
+    begin_dialogs: list[str] = Field(default_factory=list)
     tools: list[str] | None = None
     skills: list[str] | None = None
     custom_error_message: str | None = None
@@ -58,7 +58,7 @@ class PersonaCreateParams(_ManagerModel):
 
 class PersonaUpdateParams(_ManagerModel):
     system_prompt: str | None = None
-    begin_dialogs: list[dict[str, Any]] | None = None
+    begin_dialogs: list[str] | None = None
     tools: list[str] | None = None
     skills: list[str] | None = None
     custom_error_message: str | None = None
@@ -76,9 +76,7 @@ class ConversationRecord(_ManagerModel):
     token_usage: int | None = None
 
     @classmethod
-    def from_payload(
-        cls, payload: dict[str, Any] | None
-    ) -> ConversationRecord | None:
+    def from_payload(cls, payload: dict[str, Any] | None) -> ConversationRecord | None:
         if not isinstance(payload, dict):
             return None
         return cls.model_validate(payload)
@@ -116,9 +114,7 @@ class KnowledgeBaseRecord(_ManagerModel):
     updated_at: str | None = None
 
     @classmethod
-    def from_payload(
-        cls, payload: dict[str, Any] | None
-    ) -> KnowledgeBaseRecord | None:
+    def from_payload(cls, payload: dict[str, Any] | None) -> KnowledgeBaseRecord | None:
         if not isinstance(payload, dict):
             return None
         return cls.model_validate(payload)
@@ -200,9 +196,7 @@ class ConversationManagerClient:
             "conversation.new",
             {
                 "session": _normalize_session(session),
-                "conversation": (
-                    params.to_payload() if params is not None else {}
-                ),
+                "conversation": (params.to_payload() if params is not None else {}),
             },
         )
         return str(output.get("conversation_id", ""))
@@ -267,9 +261,7 @@ class ConversationManagerClient:
             "conversation.list",
             {
                 "session": (
-                    _normalize_session(session)
-                    if session is not None
-                    else None
+                    _normalize_session(session) if session is not None else None
                 ),
                 "platform_id": platform_id,
             },

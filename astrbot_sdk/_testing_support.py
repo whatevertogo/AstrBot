@@ -409,6 +409,18 @@ def _normalize_plugin_metadata(
         "version": str(plugin_metadata.get("version") or "0.0.0"),
         "enabled": bool(plugin_metadata.get("enabled", True)),
         "reserved": bool(plugin_metadata.get("reserved", False)),
+        "support_platforms": [
+            str(item)
+            for item in plugin_metadata.get("support_platforms", [])
+            if isinstance(item, str)
+        ]
+        if isinstance(plugin_metadata.get("support_platforms"), list)
+        else [],
+        "astrbot_version": (
+            str(plugin_metadata.get("astrbot_version"))
+            if plugin_metadata.get("astrbot_version") is not None
+            else None
+        ),
     }
 
 

@@ -5,7 +5,7 @@ import base64
 import contextlib
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -290,13 +290,33 @@ class CoreCapabilityBridge(CapabilityRouter):
                     return [dict(item) for item in decoded if isinstance(item, dict)]
         return []
 
+    @staticmethod
+    def _normalize_persona_dialogs(value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [str(item) for item in value if isinstance(item, str)]
+        if isinstance(value, str):
+            with contextlib.suppress(json.JSONDecodeError, TypeError, ValueError):
+                decoded = json.loads(value)
+                if isinstance(decoded, list):
+                    return [str(item) for item in decoded if isinstance(item, str)]
+        return []
+
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
     def _serialize_persona(self, persona: Any) -> dict[str, Any] | None:
         if persona is None:
             return None
         return {
             "persona_id": str(getattr(persona, "persona_id", "") or ""),
             "system_prompt": str(getattr(persona, "system_prompt", "") or ""),
-            "begin_dialogs": self._normalize_history_items(
+            "begin_dialogs": self._normalize_persona_dialogs(
                 getattr(persona, "begin_dialogs", None)
             ),
             "tools": (
@@ -976,9 +996,7 @@ class CoreCapabilityBridge(CapabilityRouter):
             if not platform_id or not platform_type:
                 continue
             status = getattr(platform, "status", None)
-            status_value = (
-                status.value if hasattr(status, "value") else str(status or "unknown")
-            )
+            status_value = getattr(status, "value", status)
             display_name = str(
                 getattr(meta, "adapter_display_name", None) or platform_type
             )
@@ -987,7 +1005,7 @@ class CoreCapabilityBridge(CapabilityRouter):
                     "id": platform_id,
                     "name": display_name,
                     "type": platform_type,
-                    "status": str(status_value),
+                    "status": str(status_value or "unknown"),
                 }
             )
         return {"platforms": platforms_payload}
@@ -1325,15 +1343,12 @@ class CoreCapabilityBridge(CapabilityRouter):
             return None
         status = getattr(platform, "status", None)
         errors = getattr(platform, "errors", [])
+        status_value = getattr(status, "value", status)
         return {
             "id": platform_id,
             "name": str(getattr(meta, "adapter_display_name", None) or platform_type),
             "type": platform_type,
-            "status": (
-                str(status.value)
-                if hasattr(status, "value")
-                else str(status or "pending")
-            ),
+            "status": str(status_value or "pending"),
             "errors": [
                 payload
                 for payload in (
@@ -2034,6 +2049,20 @@ class CoreCapabilityBridge(CapabilityRouter):
         ]
         return {"names": self._plugin_bridge.add_llm_tools(plugin_id, tools)}
 
+    async def _llm_tool_manager_remove(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        plugin_id = self._resolve_plugin_id(request_id)
+        return {
+            "removed": self._plugin_bridge.remove_llm_tool(
+                plugin_id,
+                str(payload.get("name", "")),
+            )
+        }
+
     async def _agent_registry_list(
         self,
         request_id: str,
@@ -2576,6 +2605,13 @@ class CoreCapabilityBridge(CapabilityRouter):
             call_handler=self._llm_tool_manager_add,
         )
         self.register(
+            self._builtin_descriptor(
+                "llm_tool.manager.remove",
+                "Unregister sdk llm tool metadata",
+            ),
+            call_handler=self._llm_tool_manager_remove,
+        )
+        self.register(
             self._builtin_descriptor("agent.tool_loop.run", "Run sdk tool loop agent"),
             call_handler=self._agent_tool_loop_run,
         )
@@ -2891,7 +2927,10 @@ class CoreCapabilityBridge(CapabilityRouter):
         get_all_stars = getattr(self._star_context, "get_all_stars", None)
         if not callable(get_all_stars):
             return reserved
-        for star in get_all_stars():
+        stars = get_all_stars()
+        if not isinstance(stars, Iterable):
+            return reserved
+        for star in stars:
             name = getattr(star, "name", None)
             if name and bool(getattr(star, "reserved", False)):
                 reserved.add(str(name))
@@ -3067,7 +3106,7 @@ class CoreCapabilityBridge(CapabilityRouter):
             persona = await self._star_context.persona_manager.create_persona(
                 persona_id=str(raw_persona.get("persona_id", "")),
                 system_prompt=str(raw_persona.get("system_prompt", "")),
-                begin_dialogs=self._normalize_history_items(
+                begin_dialogs=self._normalize_persona_dialogs(
                     raw_persona.get("begin_dialogs")
                 ),
                 tools=(
@@ -3109,7 +3148,7 @@ class CoreCapabilityBridge(CapabilityRouter):
             persona_id=str(payload.get("persona_id", "")),
             system_prompt=raw_persona.get("system_prompt"),
             begin_dialogs=(
-                self._normalize_history_items(raw_persona.get("begin_dialogs"))
+                self._normalize_persona_dialogs(raw_persona.get("begin_dialogs"))
                 if "begin_dialogs" in raw_persona
                 else None
             ),
@@ -3292,11 +3331,7 @@ class CoreCapabilityBridge(CapabilityRouter):
                 if raw_conversation.get("persona_id") is not None
                 else None
             ),
-            token_usage=(
-                int(raw_conversation.get("token_usage"))
-                if raw_conversation.get("token_usage") is not None
-                else None
-            ),
+            token_usage=(self._optional_int(raw_conversation.get("token_usage"))),
         )
         return {}
 
@@ -3341,31 +3376,11 @@ class CoreCapabilityBridge(CapabilityRouter):
                     if raw_kb.get("rerank_provider_id") is not None
                     else None
                 ),
-                chunk_size=(
-                    int(raw_kb.get("chunk_size"))
-                    if raw_kb.get("chunk_size") is not None
-                    else None
-                ),
-                chunk_overlap=(
-                    int(raw_kb.get("chunk_overlap"))
-                    if raw_kb.get("chunk_overlap") is not None
-                    else None
-                ),
-                top_k_dense=(
-                    int(raw_kb.get("top_k_dense"))
-                    if raw_kb.get("top_k_dense") is not None
-                    else None
-                ),
-                top_k_sparse=(
-                    int(raw_kb.get("top_k_sparse"))
-                    if raw_kb.get("top_k_sparse") is not None
-                    else None
-                ),
-                top_m_final=(
-                    int(raw_kb.get("top_m_final"))
-                    if raw_kb.get("top_m_final") is not None
-                    else None
-                ),
+                chunk_size=self._optional_int(raw_kb.get("chunk_size")),
+                chunk_overlap=self._optional_int(raw_kb.get("chunk_overlap")),
+                top_k_dense=self._optional_int(raw_kb.get("top_k_dense")),
+                top_k_sparse=self._optional_int(raw_kb.get("top_k_sparse")),
+                top_m_final=self._optional_int(raw_kb.get("top_m_final")),
             )
         except ValueError as exc:
             raise AstrBotError.invalid_input(str(exc)) from exc

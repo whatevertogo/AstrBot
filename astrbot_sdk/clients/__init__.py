@@ -37,7 +37,7 @@ from .managers import (
     PersonaUpdateParams,
 )
 from .memory import MemoryClient
-from .metadata import MetadataClient, PluginMetadata
+from .metadata import MetadataClient, PluginMetadata, StarMetadata
 from .platform import PlatformClient, PlatformError, PlatformStats, PlatformStatus
 from .provider import (
     ManagedProviderRecord,
@@ -76,6 +76,7 @@ __all__ = [
     "ProviderClient",
     "ProviderManagerClient",
     "PluginMetadata",
+    "StarMetadata",
     "HandlerMetadata",
     "RegistryClient",
     "SessionPluginManager",

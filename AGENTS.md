@@ -64,6 +64,7 @@ Runs on `http://localhost:3000` by default.
 - `astrbot_sdk/protocol/descriptors.py` once contained full-width smart quotes in a triple-quoted docstring (`“””` / `”`), which caused a module-level `SyntaxError` during pytest collection and any import path reaching `astrbot_sdk.protocol`. Keep docstrings ASCII-quoted even in Chinese prose.
 - `CoreCapabilityBridge.__init__()` currently inherits built-in capability registration from `CapabilityRouter.__init__()` and then manually calls some registration helpers again. The duplicate registration is harmless because later entries overwrite earlier ones, but it is easy to misread when adding new capability groups. Check the constructor flow before assuming a registration hook only runs once.
 - `ProviderManager.register_provider_change_hook()` originally had no matching unregister API. Any SDK/provider change watch stream built on top of it would leak callbacks across repeated subscriptions unless the core manager grows an explicit `unregister_provider_change_hook()`.
+- `Context.add_llm_tools()` only updates bridge-side tool metadata. It does not register a worker-local callable by itself, so dynamically executable SDK LLM tools must keep the bridge metadata and the worker callable registry in sync (for example via `Context.register_llm_tool()` / `StarTools.register_llm_tool()`).
 
 
 旧插件走旧逻辑，新插件走sdk，保证旧逻辑依旧能使用的情况下写新sdk桥接或者astrbot适配

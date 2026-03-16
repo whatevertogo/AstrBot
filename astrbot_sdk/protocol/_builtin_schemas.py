@@ -487,7 +487,7 @@ PERSONA_RECORD_SCHEMA = _object_schema(
     required=("persona_id", "system_prompt", "begin_dialogs", "sort_order"),
     persona_id={"type": "string"},
     system_prompt={"type": "string"},
-    begin_dialogs={"type": "array", "items": {"type": "object"}},
+    begin_dialogs={"type": "array", "items": {"type": "string"}},
     tools=_nullable({"type": "array", "items": {"type": "string"}}),
     skills=_nullable({"type": "array", "items": {"type": "string"}}),
     custom_error_message=_nullable({"type": "string"}),
@@ -500,7 +500,7 @@ PERSONA_CREATE_SCHEMA = _object_schema(
     required=("persona_id", "system_prompt"),
     persona_id={"type": "string"},
     system_prompt={"type": "string"},
-    begin_dialogs={"type": "array", "items": {"type": "object"}},
+    begin_dialogs={"type": "array", "items": {"type": "string"}},
     tools=_nullable({"type": "array", "items": {"type": "string"}}),
     skills=_nullable({"type": "array", "items": {"type": "string"}}),
     custom_error_message=_nullable({"type": "string"}),
@@ -509,7 +509,7 @@ PERSONA_CREATE_SCHEMA = _object_schema(
 )
 PERSONA_UPDATE_SCHEMA = _object_schema(
     system_prompt=_nullable({"type": "string"}),
-    begin_dialogs=_nullable({"type": "array", "items": {"type": "object"}}),
+    begin_dialogs=_nullable({"type": "array", "items": {"type": "string"}}),
     tools=_nullable({"type": "array", "items": {"type": "string"}}),
     skills=_nullable({"type": "array", "items": {"type": "string"}}),
     custom_error_message=_nullable({"type": "string"}),
@@ -981,6 +981,14 @@ LLM_TOOL_MANAGER_ADD_OUTPUT_SCHEMA = _object_schema(
     required=("names",),
     names={"type": "array", "items": {"type": "string"}},
 )
+LLM_TOOL_MANAGER_REMOVE_INPUT_SCHEMA = _object_schema(
+    required=("name",),
+    name={"type": "string"},
+)
+LLM_TOOL_MANAGER_REMOVE_OUTPUT_SCHEMA = _object_schema(
+    required=("removed",),
+    removed={"type": "boolean"},
+)
 AGENT_TOOL_LOOP_RUN_INPUT_SCHEMA = _object_schema(
     prompt=_nullable({"type": "string"}),
     system_prompt=_nullable({"type": "string"}),
@@ -1342,6 +1350,10 @@ BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
         "input": LLM_TOOL_MANAGER_ADD_INPUT_SCHEMA,
         "output": LLM_TOOL_MANAGER_ADD_OUTPUT_SCHEMA,
     },
+    "llm_tool.manager.remove": {
+        "input": LLM_TOOL_MANAGER_REMOVE_INPUT_SCHEMA,
+        "output": LLM_TOOL_MANAGER_REMOVE_OUTPUT_SCHEMA,
+    },
     "agent.tool_loop.run": {
         "input": AGENT_TOOL_LOOP_RUN_INPUT_SCHEMA,
         "output": AGENT_TOOL_LOOP_RUN_OUTPUT_SCHEMA,
@@ -1526,6 +1538,8 @@ __all__ = [
     "LLM_TOOL_MANAGER_ACTIVATE_OUTPUT_SCHEMA",
     "LLM_TOOL_MANAGER_ADD_INPUT_SCHEMA",
     "LLM_TOOL_MANAGER_ADD_OUTPUT_SCHEMA",
+    "LLM_TOOL_MANAGER_REMOVE_INPUT_SCHEMA",
+    "LLM_TOOL_MANAGER_REMOVE_OUTPUT_SCHEMA",
     "LLM_TOOL_MANAGER_DEACTIVATE_INPUT_SCHEMA",
     "LLM_TOOL_MANAGER_DEACTIVATE_OUTPUT_SCHEMA",
     "LLM_TOOL_MANAGER_GET_INPUT_SCHEMA",
