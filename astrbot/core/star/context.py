@@ -47,6 +47,7 @@ logger = logging.getLogger("astrbot")
 
 if TYPE_CHECKING:
     from astrbot.core.cron.manager import CronJobManager
+    from astrbot.core.sdk_bridge.plugin_bridge import SdkPluginBridge
 
 
 class PlatformManagerProtocol(Protocol):
@@ -100,7 +101,7 @@ class Context:
         self.cron_manager = cron_manager
         """Cron job manager, initialized by core lifecycle."""
         self.subagent_orchestrator = subagent_orchestrator
-        self.sdk_plugin_bridge = None
+        self.sdk_plugin_bridge: SdkPluginBridge | None = None
         """SDK plugin bridge, initialized by core lifecycle when available."""
 
     async def llm_generate(
