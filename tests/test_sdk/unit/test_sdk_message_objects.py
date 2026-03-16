@@ -1,6 +1,7 @@
 # ruff: noqa: E402
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 from pathlib import Path
@@ -45,6 +46,7 @@ from astrbot.core.message.components import File as CoreFile
 from astrbot_sdk import MessageEvent
 from astrbot_sdk import message_components as sdk_message_components
 from astrbot_sdk.context import Context
+from astrbot_sdk.errors import AstrBotError
 from astrbot_sdk.message_components import (
     File,
     Image,
@@ -65,6 +67,8 @@ class _DummyPeer:
             "platform.send_chain": SimpleNamespace(supports_stream=False),
             "platform.send_by_session": SimpleNamespace(supports_stream=False),
             "platform.get_group": SimpleNamespace(supports_stream=False),
+            "platform.list_instances": SimpleNamespace(supports_stream=False),
+            "registry.command.register": SimpleNamespace(supports_stream=False),
             "system.event.react": SimpleNamespace(supports_stream=False),
             "system.event.send_typing": SimpleNamespace(supports_stream=False),
             "system.event.send_streaming": SimpleNamespace(supports_stream=False),
@@ -73,6 +77,15 @@ class _DummyPeer:
         }
         self.sent_messages: list[dict] = []
         self.event_actions: list[dict] = []
+        self.command_registrations: list[dict] = []
+        self.platform_instances = [
+            {
+                "id": "demo",
+                "name": "Demo Platform",
+                "type": "demo",
+                "status": "running",
+            }
+        ]
         self._open_streams: dict[str, dict] = {}
 
     async def invoke(self, capability: str, payload: dict, *, stream: bool = False):
@@ -125,6 +138,11 @@ class _DummyPeer:
                     ],
                 }
             }
+        if capability == "platform.list_instances":
+            return {"platforms": list(self.platform_instances)}
+        if capability == "registry.command.register":
+            self.command_registrations.append(dict(payload))
+            return {}
         if capability == "system.event.react":
             self.event_actions.append(
                 {"action": "react", "emoji": payload.get("emoji")}
@@ -351,6 +369,100 @@ async def test_platform_send_by_session_accepts_existing_payload_shapes() -> Non
         "session": "demo:private:user-5",
         "chain": [{"type": "text", "data": {"text": "plain-text"}}],
     }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_context_p0_7_register_commands_and_platform_facade() -> None:
+    peer = _DummyPeer()
+    ctx = Context(
+        peer=peer,
+        plugin_id="sdk-demo",
+        source_event_payload={"event_type": "astrbot_loaded"},
+    )
+
+    await ctx.register_commands(
+        "hello",
+        "sdk-demo:demo.handler",
+        desc="demo command",
+        priority=7,
+        use_regex=False,
+    )
+    platform = await ctx.get_platform("demo")
+    assert platform is not None
+    assert platform.id == "demo"
+    assert platform.status == "running"
+    assert await ctx.get_platform_inst("missing") is None
+
+    await platform.send_by_id("user-99", "hello from facade")
+
+    assert peer.command_registrations == [
+        {
+            "command_name": "hello",
+            "handler_full_name": "sdk-demo:demo.handler",
+            "source_event_type": "astrbot_loaded",
+            "desc": "demo command",
+            "priority": 7,
+            "use_regex": False,
+            "ignore_prefix": False,
+        }
+    ]
+    assert peer.sent_messages[-1]["session"] == "demo:private:user-99"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_context_p0_7_register_commands_requires_startup_event() -> None:
+    peer = _DummyPeer()
+    ctx = Context(peer=peer, plugin_id="sdk-demo")
+
+    with pytest.raises(AstrBotError, match="astrbot_loaded/platform_loaded"):
+        await ctx.register_commands("hello", "sdk-demo:demo.handler")
+
+    with pytest.raises(AstrBotError, match="ignore_prefix=True"):
+        startup_ctx = Context(
+            peer=peer,
+            plugin_id="sdk-demo",
+            source_event_payload={"type": "platform_loaded"},
+        )
+        await startup_ctx.register_commands(
+            "hello",
+            "sdk-demo:demo.handler",
+            ignore_prefix=True,
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_context_register_task_logs_background_exceptions() -> None:
+    class _ProbeLogger:
+        def __init__(self) -> None:
+            self.exception_calls: list[
+                tuple[tuple[object, ...], dict[str, object]]
+            ] = []
+            self.debug_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        def exception(self, *args, **kwargs) -> None:
+            self.exception_calls.append((args, kwargs))
+
+        def debug(self, *args, **kwargs) -> None:
+            self.debug_calls.append((args, kwargs))
+
+    async def _boom() -> None:
+        raise RuntimeError("boom")
+
+    logger = _ProbeLogger()
+    ctx = Context(peer=_DummyPeer(), plugin_id="sdk-demo", logger=logger)
+    task = await ctx.register_task(_boom(), "probe-task")
+
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert task.done() is True
+    assert len(logger.exception_calls) == 1
+    msg, plugin_id, desc = logger.exception_calls[0][0]
+    assert "background task failed" in str(msg).lower()
+    assert plugin_id == "sdk-demo"
+    assert desc == "probe-task"
 
 
 @pytest.mark.unit

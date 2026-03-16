@@ -11,19 +11,10 @@ from astrbot.core.agent.hooks import BaseAgentRunHooks
 from astrbot.core.agent.message import Message
 from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
 from astrbot.core.agent.tool import ToolSet
-from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
-from astrbot.core.config.astrbot_config import AstrBotConfig
-from astrbot.core.conversation_mgr import ConversationManager
-from astrbot.core.db import BaseDatabase
-from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
 from astrbot.core.message.message_event_result import MessageChain
-from astrbot.core.persona_mgr import PersonaManager
-from astrbot.core.platform import Platform
-from astrbot.core.platform.astr_message_event import AstrMessageEvent, MessageSesion
-from astrbot.core.platform_message_history_mgr import PlatformMessageHistoryManager
+from astrbot.core.platform.astr_message_event import MessageSesion
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest, ProviderType
 from astrbot.core.provider.func_tool_manager import FunctionTool, FunctionToolManager
-from astrbot.core.provider.manager import ProviderManager
 from astrbot.core.provider.provider import (
     EmbeddingProvider,
     Provider,
@@ -35,7 +26,6 @@ from astrbot.core.star.filter.platform_adapter_type import (
     ADAPTER_NAME_2_TYPE,
     PlatformAdapterType,
 )
-from astrbot.core.subagent_orchestrator import SubAgentOrchestrator
 
 from ..exceptions import ProviderNotFoundError
 from .filter.command import CommandFilter
@@ -46,8 +36,19 @@ from .star_handler import EventType, StarHandlerMetadata, star_handlers_registry
 logger = logging.getLogger("astrbot")
 
 if TYPE_CHECKING:
+    from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
+    from astrbot.core.config.astrbot_config import AstrBotConfig
+    from astrbot.core.conversation_mgr import ConversationManager
     from astrbot.core.cron.manager import CronJobManager
+    from astrbot.core.db import BaseDatabase
+    from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
+    from astrbot.core.persona_mgr import PersonaManager
+    from astrbot.core.platform import Platform
+    from astrbot.core.platform.astr_message_event import AstrMessageEvent
+    from astrbot.core.platform_message_history_mgr import PlatformMessageHistoryManager
+    from astrbot.core.provider.manager import ProviderManager
     from astrbot.core.sdk_bridge.plugin_bridge import SdkPluginBridge
+    from astrbot.core.subagent_orchestrator import SubAgentOrchestrator
 
 
 class PlatformManagerProtocol(Protocol):

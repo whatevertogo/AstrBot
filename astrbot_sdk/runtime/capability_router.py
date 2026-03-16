@@ -215,6 +215,15 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
         ] = {}
         self._session_plugin_configs: dict[str, dict[str, Any]] = {}
         self._session_service_configs: dict[str, dict[str, Any]] = {}
+        self._dynamic_command_routes: dict[str, list[dict[str, Any]]] = {}
+        self._platform_instances: list[dict[str, Any]] = [
+            {
+                "id": "mock-platform",
+                "name": "Mock Platform",
+                "type": "mock",
+                "status": "running",
+            }
+        ]
         self._register_builtin_capabilities()
 
     def upsert_plugin(
@@ -247,12 +256,112 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
         if plugin is None:
             return
         plugin.handlers = [dict(item) for item in handlers]
+        valid_handlers = {
+            str(item.get("handler_full_name", "")).strip()
+            for item in plugin.handlers
+            if isinstance(item, dict)
+        }
+        if not valid_handlers:
+            self._dynamic_command_routes.pop(name, None)
+            return
+        routes = self._dynamic_command_routes.get(name)
+        if routes is None:
+            return
+        self._dynamic_command_routes[name] = [
+            dict(item)
+            for item in routes
+            if str(item.get("handler_full_name", "")).strip() in valid_handlers
+        ]
+        if not self._dynamic_command_routes[name]:
+            self._dynamic_command_routes.pop(name, None)
 
     def set_plugin_enabled(self, name: str, enabled: bool) -> None:
         plugin = self._plugins.get(name)
         if plugin is None:
             return
         plugin.metadata["enabled"] = enabled
+
+    def register_dynamic_command_route(
+        self,
+        *,
+        plugin_id: str,
+        command_name: str,
+        handler_full_name: str,
+        desc: str = "",
+        priority: int = 0,
+        use_regex: bool = False,
+    ) -> None:
+        command_text = str(command_name).strip()
+        if not command_text:
+            raise AstrBotError.invalid_input("command_name must not be empty")
+        handler_text = str(handler_full_name).strip()
+        if not handler_text:
+            raise AstrBotError.invalid_input("handler_full_name must not be empty")
+        plugin = self._plugins.get(plugin_id)
+        if plugin is None:
+            raise AstrBotError.invalid_input(f"Unknown plugin: {plugin_id}")
+        if not self._plugin_has_handler(plugin_id, handler_text):
+            raise AstrBotError.invalid_input(
+                "handler_full_name must belong to the caller plugin and exist"
+            )
+        route = {
+            "plugin_name": plugin_id,
+            "command_name": command_text,
+            "handler_full_name": handler_text,
+            "desc": str(desc),
+            "priority": int(priority),
+            "use_regex": bool(use_regex),
+        }
+        routes = [
+            item
+            for item in self._dynamic_command_routes.get(plugin_id, [])
+            if str(item.get("command_name", "")).strip() != command_text
+            or bool(item.get("use_regex", False)) != bool(use_regex)
+        ]
+        routes.append(route)
+        self._dynamic_command_routes[plugin_id] = routes
+
+    def list_dynamic_command_routes(self, plugin_id: str) -> list[dict[str, Any]]:
+        return [dict(item) for item in self._dynamic_command_routes.get(plugin_id, [])]
+
+    def remove_dynamic_command_routes_for_plugin(self, plugin_id: str) -> None:
+        self._dynamic_command_routes.pop(plugin_id, None)
+
+    def set_platform_instances(self, instances: list[dict[str, Any]]) -> None:
+        normalized: list[dict[str, Any]] = []
+        for item in instances:
+            if not isinstance(item, dict):
+                continue
+            platform_id = str(item.get("id", "")).strip()
+            platform_type = str(item.get("type", "")).strip()
+            if not platform_id or not platform_type:
+                continue
+            normalized.append(
+                {
+                    "id": platform_id,
+                    "name": str(item.get("name", platform_id)),
+                    "type": platform_type,
+                    "status": str(item.get("status", "unknown")),
+                }
+            )
+        self._platform_instances = normalized
+
+    def get_platform_instances(self) -> list[dict[str, Any]]:
+        return [dict(item) for item in self._platform_instances]
+
+    def _plugin_has_handler(self, plugin_id: str, handler_full_name: str) -> bool:
+        plugin = self._plugins.get(plugin_id)
+        if plugin is None:
+            return False
+        handler_name = str(handler_full_name).strip()
+        if not handler_name:
+            return False
+        for handler in plugin.handlers:
+            if not isinstance(handler, dict):
+                continue
+            if str(handler.get("handler_full_name", "")).strip() == handler_name:
+                return True
+        return False
 
     def set_plugin_llm_tools(
         self,

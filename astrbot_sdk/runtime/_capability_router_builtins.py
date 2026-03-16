@@ -65,6 +65,8 @@ class _CapabilityRouterHost:
     _session_plugin_configs: dict[str, dict[str, Any]]
     _session_service_configs: dict[str, dict[str, Any]]
     _db_watch_subscriptions: dict[str, tuple[str | None, asyncio.Queue[dict[str, Any]]]]
+    _dynamic_command_routes: dict[str, list[dict[str, Any]]]
+    _platform_instances: list[dict[str, Any]]
 
     def register(
         self,
@@ -82,6 +84,21 @@ class _CapabilityRouterHost:
 
     @staticmethod
     def _require_caller_plugin_id(capability_name: str) -> str:
+        raise NotImplementedError
+
+    def register_dynamic_command_route(
+        self,
+        *,
+        plugin_id: str,
+        command_name: str,
+        handler_full_name: str,
+        desc: str = "",
+        priority: int = 0,
+        use_regex: bool = False,
+    ) -> None:
+        raise NotImplementedError
+
+    def get_platform_instances(self) -> list[dict[str, Any]]:
         raise NotImplementedError
 
 
@@ -558,6 +575,22 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
             return {"members": []}
         return {"members": list(group.get("members", []))}
 
+    async def _platform_list_instances(
+        self, _request_id: str, _payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        return {
+            "platforms": [
+                {
+                    "id": str(item.get("id", "")),
+                    "name": str(item.get("name", "")),
+                    "type": str(item.get("type", "")),
+                    "status": str(item.get("status", "unknown")),
+                }
+                for item in self.get_platform_instances()
+                if isinstance(item, dict)
+            ]
+        }
+
     def _register_platform_capabilities(self) -> None:
         self.register(
             self._builtin_descriptor("platform.send", "发送消息"),
@@ -584,6 +617,10 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
         self.register(
             self._builtin_descriptor("platform.get_members", "获取群成员"),
             call_handler=self._platform_get_members,
+        )
+        self.register(
+            self._builtin_descriptor("platform.list_instances", "列出平台实例元信息"),
+            call_handler=self._platform_list_instances,
         )
 
     async def _http_register_api(
@@ -1224,6 +1261,13 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
             ),
             call_handler=self._registry_get_handler_by_full_name,
         )
+        self.register(
+            self._builtin_descriptor(
+                "registry.command.register",
+                "注册动态命令路由",
+            ),
+            call_handler=self._registry_command_register,
+        )
 
     def _ensure_request_overlay(self, request_id: str) -> dict[str, Any]:
         overlay = self._request_overlays.get(request_id)
@@ -1346,6 +1390,27 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
                     if event_type in handler.get("event_types", [])
                 ]
             )
+        if event_type == "message":
+            for plugin_name, routes in self._dynamic_command_routes.items():
+                for route in routes:
+                    if not isinstance(route, dict):
+                        continue
+                    handlers.append(
+                        {
+                            "plugin_name": str(route.get("plugin_name", plugin_name)),
+                            "handler_full_name": str(
+                                route.get("handler_full_name", "")
+                            ),
+                            "trigger_type": (
+                                "message"
+                                if bool(route.get("use_regex", False))
+                                else "command"
+                            ),
+                            "event_types": ["message"],
+                            "enabled": True,
+                            "group_path": [],
+                        }
+                    )
         return {"handlers": handlers}
 
     async def _registry_get_handler_by_full_name(
@@ -1357,6 +1422,34 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
                 if handler.get("handler_full_name") == full_name:
                     return {"handler": dict(handler)}
         return {"handler": None}
+
+    async def _registry_command_register(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        source_event_type = str(payload.get("source_event_type", "")).strip()
+        if source_event_type not in {"astrbot_loaded", "platform_loaded"}:
+            raise AstrBotError.invalid_input(
+                "register_commands is only available in astrbot_loaded/platform_loaded events"
+            )
+        if bool(payload.get("ignore_prefix", False)):
+            raise AstrBotError.invalid_input(
+                "register_commands(ignore_prefix=True) is unsupported in SDK runtime"
+            )
+        priority_value = payload.get("priority", 0)
+        if isinstance(priority_value, bool) or not isinstance(priority_value, int):
+            raise AstrBotError.invalid_input(
+                "registry.command.register 的 priority 必须是 integer"
+            )
+        plugin_id = self._require_caller_plugin_id("registry.command.register")
+        self.register_dynamic_command_route(
+            plugin_id=plugin_id,
+            command_name=str(payload.get("command_name", "")),
+            handler_full_name=str(payload.get("handler_full_name", "")),
+            desc=str(payload.get("desc", "")),
+            priority=priority_value,
+            use_regex=bool(payload.get("use_regex", False)),
+        )
+        return {}
 
     async def _system_session_waiter_register(
         self, _request_id: str, payload: dict[str, Any], _token

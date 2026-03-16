@@ -142,6 +142,7 @@ class SdkPluginRecord:
     llm_tools: dict[str, LLMToolSpec] = field(default_factory=dict)
     active_llm_tools: set[str] = field(default_factory=set)
     agents: dict[str, AgentSpec] = field(default_factory=dict)
+    dynamic_command_routes: list[SdkDynamicCommandRoute] = field(default_factory=list)
     session: WorkerSession | None = None
     restart_attempted: bool = False
     failure_reason: str = ""
@@ -158,6 +159,16 @@ class SdkHttpRoute:
     methods: tuple[str, ...]
     handler_capability: str
     description: str
+
+
+@dataclass(slots=True)
+class SdkDynamicCommandRoute:
+    command_name: str
+    handler_full_name: str
+    desc: str
+    priority: int
+    use_regex: bool
+    declaration_order: int
 
 
 class SdkPluginBridge:
@@ -402,6 +413,65 @@ class SdkPluginBridge:
         if spec is None:
             return None
         return spec.model_copy(deep=True)
+
+    def register_dynamic_command_route(
+        self,
+        *,
+        plugin_id: str,
+        command_name: str,
+        handler_full_name: str,
+        desc: str = "",
+        priority: int = 0,
+        use_regex: bool = False,
+    ) -> None:
+        record = self._records.get(plugin_id)
+        if record is None:
+            raise AstrBotError.invalid_input(f"Unknown SDK plugin: {plugin_id}")
+        if isinstance(priority, bool) or not isinstance(priority, int):
+            raise AstrBotError.invalid_input("priority must be an integer")
+        command_text = str(command_name).strip()
+        if not command_text:
+            raise AstrBotError.invalid_input("command_name must not be empty")
+        handler_text = str(handler_full_name).strip()
+        if not handler_text:
+            raise AstrBotError.invalid_input("handler_full_name must not be empty")
+        if not handler_text.startswith(f"{plugin_id}:"):
+            raise AstrBotError.invalid_input(
+                "handler_full_name must belong to the caller plugin"
+            )
+        if self._find_handler_ref(record, handler_text) is None:
+            raise AstrBotError.invalid_input(
+                f"Unknown handler_full_name for plugin '{plugin_id}': {handler_text}"
+            )
+        existing_order = next(
+            (
+                route.declaration_order
+                for route in record.dynamic_command_routes
+                if route.command_name == command_text
+                and route.use_regex is bool(use_regex)
+            ),
+            len(record.dynamic_command_routes),
+        )
+        updated = [
+            route
+            for route in record.dynamic_command_routes
+            if not (
+                route.command_name == command_text
+                and route.use_regex is bool(use_regex)
+            )
+        ]
+        updated.append(
+            SdkDynamicCommandRoute(
+                command_name=command_text,
+                handler_full_name=handler_text,
+                desc=str(desc),
+                priority=priority,
+                use_regex=bool(use_regex),
+                declaration_order=existing_order,
+            )
+        )
+        updated.sort(key=lambda item: item.declaration_order)
+        record.dynamic_command_routes = updated
 
     def register_http_api(
         self,
@@ -1030,8 +1100,56 @@ class SdkPluginBridge:
                 )
                 if match is not None:
                     matches.append(match)
+            dynamic_base_order = len(record.handlers)
+            for route in getattr(record, "dynamic_command_routes", []):
+                match = self._match_dynamic_command_route(
+                    record=record,
+                    route=route,
+                    event=event,
+                    declaration_order=dynamic_base_order + route.declaration_order,
+                )
+                if match is not None:
+                    matches.append(match)
         matches.sort(key=TriggerConverter.sort_key)
         return matches
+
+    def _match_dynamic_command_route(
+        self,
+        *,
+        record: SdkPluginRecord,
+        route: SdkDynamicCommandRoute,
+        event: AstrMessageEvent,
+        declaration_order: int,
+    ) -> TriggerMatch | None:
+        handler_ref = self._find_handler_ref(record, route.handler_full_name)
+        if handler_ref is None:
+            return None
+        descriptor = handler_ref.descriptor.model_copy(deep=True)
+        descriptor.priority = route.priority
+        if route.use_regex:
+            descriptor.trigger = MessageTrigger(regex=route.command_name)
+        else:
+            descriptor.trigger = CommandTrigger(
+                command=route.command_name,
+                description=route.desc or None,
+            )
+        return TriggerConverter.match_handler(
+            plugin_id=record.plugin_id,
+            descriptor=descriptor,
+            event=event,
+            load_order=record.load_order,
+            declaration_order=declaration_order,
+        )
+
+    @staticmethod
+    def _find_handler_ref(
+        record: SdkPluginRecord,
+        handler_full_name: str,
+    ) -> SdkHandlerRef | None:
+        for handler in record.handlers:
+            if handler.descriptor.id == handler_full_name:
+                return handler
+        return None
 
     async def dispatch_system_event(
         self,
@@ -1221,6 +1339,17 @@ class SdkPluginBridge:
                             descriptor=handler.descriptor,
                         )
                     )
+            if event_type == "message":
+                for route in getattr(record, "dynamic_command_routes", []):
+                    descriptor = self._build_dynamic_route_descriptor(record, route)
+                    if descriptor is None:
+                        continue
+                    entries.append(
+                        self._descriptor_metadata(
+                            plugin_id=record.plugin_id,
+                            descriptor=descriptor,
+                        )
+                    )
         return entries
 
     def get_handler_by_full_name(self, full_name: str) -> dict[str, Any] | None:
@@ -1232,6 +1361,25 @@ class SdkPluginBridge:
                         descriptor=handler.descriptor,
                     )
         return None
+
+    def _build_dynamic_route_descriptor(
+        self,
+        record: SdkPluginRecord,
+        route: SdkDynamicCommandRoute,
+    ) -> HandlerDescriptor | None:
+        handler_ref = self._find_handler_ref(record, route.handler_full_name)
+        if handler_ref is None:
+            return None
+        descriptor = handler_ref.descriptor.model_copy(deep=True)
+        descriptor.priority = route.priority
+        if route.use_regex:
+            descriptor.trigger = MessageTrigger(regex=route.command_name)
+        else:
+            descriptor.trigger = CommandTrigger(
+                command=route.command_name,
+                description=route.desc or None,
+            )
+        return descriptor
 
     async def _load_or_reload_plugin(
         self,
@@ -1269,6 +1417,7 @@ class SdkPluginBridge:
             return
 
         try:
+
             def _schedule_closed(plugin_id: str = plugin.name) -> None:
                 asyncio.create_task(self._handle_worker_closed(plugin_id))
 

@@ -671,6 +671,13 @@ class CoreCapabilityBridge(CapabilityRouter):
             self._builtin_descriptor("platform.get_members", "Get group members"),
             call_handler=self._platform_get_members,
         )
+        self.register(
+            self._builtin_descriptor(
+                "platform.list_instances",
+                "List available platform instances",
+            ),
+            call_handler=self._platform_list_instances,
+        )
 
     async def _platform_send(
         self,
@@ -784,6 +791,43 @@ class CoreCapabilityBridge(CapabilityRouter):
             return {"members": []}
         members = serialized_group.get("members")
         return {"members": list(members) if isinstance(members, list) else []}
+
+    async def _platform_list_instances(
+        self,
+        _request_id: str,
+        _payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        platform_manager = getattr(self._star_context, "platform_manager", None)
+        if platform_manager is None or not hasattr(platform_manager, "get_insts"):
+            return {"platforms": []}
+        platforms_payload: list[dict[str, Any]] = []
+        for platform in list(platform_manager.get_insts()):
+            meta = None
+            try:
+                meta = platform.meta()
+            except Exception:
+                continue
+            platform_id = str(getattr(meta, "id", "")).strip()
+            platform_type = str(getattr(meta, "name", "")).strip()
+            if not platform_id or not platform_type:
+                continue
+            status = getattr(platform, "status", None)
+            status_value = (
+                status.value if hasattr(status, "value") else str(status or "unknown")
+            )
+            display_name = str(
+                getattr(meta, "adapter_display_name", None) or platform_type
+            )
+            platforms_payload.append(
+                {
+                    "id": platform_id,
+                    "name": display_name,
+                    "type": platform_type,
+                    "status": str(status_value),
+                }
+            )
+        return {"platforms": platforms_payload}
 
     def _register_http_capabilities(self) -> None:
         self.register(
@@ -1480,6 +1524,13 @@ class CoreCapabilityBridge(CapabilityRouter):
             ),
             call_handler=self._registry_get_handler_by_full_name,
         )
+        self.register(
+            self._builtin_descriptor(
+                "registry.command.register",
+                "Register dynamic command route",
+            ),
+            call_handler=self._registry_command_register,
+        )
 
     def _register_p0_5_capabilities(self) -> None:
         self.register(
@@ -2148,6 +2199,37 @@ class CoreCapabilityBridge(CapabilityRouter):
     ) -> dict[str, Any]:
         full_name = str(payload.get("full_name", "")).strip()
         return {"handler": self._plugin_bridge.get_handler_by_full_name(full_name)}
+
+    async def _registry_command_register(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        source_event_type = str(payload.get("source_event_type", "")).strip()
+        if source_event_type not in {"astrbot_loaded", "platform_loaded"}:
+            raise AstrBotError.invalid_input(
+                "register_commands is only available in astrbot_loaded/platform_loaded events"
+            )
+        if bool(payload.get("ignore_prefix", False)):
+            raise AstrBotError.invalid_input(
+                "register_commands(ignore_prefix=True) is unsupported in SDK runtime"
+            )
+        priority_value = payload.get("priority", 0)
+        if isinstance(priority_value, bool) or not isinstance(priority_value, int):
+            raise AstrBotError.invalid_input(
+                "registry.command.register priority must be an integer"
+            )
+        plugin_id = self._resolve_plugin_id(request_id)
+        self._plugin_bridge.register_dynamic_command_route(
+            plugin_id=plugin_id,
+            command_name=str(payload.get("command_name", "")),
+            handler_full_name=str(payload.get("handler_full_name", "")),
+            desc=str(payload.get("desc", "")),
+            priority=priority_value,
+            use_regex=bool(payload.get("use_regex", False)),
+        )
+        return {}
 
     def _resolve_dispatch_target(
         self,

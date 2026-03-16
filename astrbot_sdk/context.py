@@ -21,7 +21,7 @@ Attributes:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
+from collections.abc import Awaitable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -36,13 +36,70 @@ from .clients import (
     MetadataClient,
     PlatformClient,
     RegistryClient,
-    SessionPluginManager,
-    SessionServiceManager,
 )
 from .clients._proxy import CapabilityProxy
 from .clients.llm import LLMResponse
+from .clients.session import SessionPluginManager, SessionServiceManager
+from .errors import AstrBotError
 from .llm.entities import LLMToolSpec, ProviderMeta, ProviderRequest
 from .llm.tools import LLMToolManager
+from .message_components import BaseMessageComponent
+from .message_result import MessageChain
+from .message_session import MessageSession
+
+PlatformCompatContent = (
+    str | MessageChain | Sequence[BaseMessageComponent] | Sequence[dict[str, Any]]
+)
+
+
+@dataclass(slots=True, frozen=True)
+class PlatformCompatFacade:
+    """兼容层平台入口，仅暴露元信息和主动发送能力。"""
+
+    _ctx: Context
+    id: str
+    name: str
+    type: str
+    status: str
+
+    async def send_by_session(
+        self,
+        session: str | MessageSession,
+        content: PlatformCompatContent,
+    ) -> dict[str, Any]:
+        return await self._ctx.platform.send_by_session(session, content)
+
+    async def send_by_id(
+        self,
+        session_id: str,
+        content: PlatformCompatContent,
+        *,
+        message_type: str = "private",
+    ) -> dict[str, Any]:
+        return await self._ctx.platform.send_by_id(
+            self.id,
+            session_id,
+            content,
+            message_type=message_type,
+        )
+
+    async def send(
+        self,
+        session: str | MessageSession,
+        content: PlatformCompatContent,
+        *,
+        message_type: str = "private",
+    ) -> dict[str, Any]:
+        if isinstance(session, MessageSession):
+            return await self.send_by_session(session, content)
+        session_text = str(session).strip()
+        if ":" in session_text:
+            return await self.send_by_session(session_text, content)
+        return await self.send_by_id(
+            session_text,
+            content,
+            message_type=message_type,
+        )
 
 
 @dataclass(slots=True)
@@ -262,3 +319,153 @@ class Context:
             payload["target"] = dict(target_payload)
         output = await self._proxy.call("agent.tool_loop.run", payload)
         return LLMResponse.model_validate(output)
+
+    def _source_event_type(self) -> str:
+        event_type = self._source_event_payload.get("event_type")
+        if isinstance(event_type, str) and event_type.strip():
+            return event_type.strip()
+        fallback_type = self._source_event_payload.get("type")
+        if isinstance(fallback_type, str) and fallback_type.strip():
+            return fallback_type.strip()
+        raw_payload = self._source_event_payload.get("raw")
+        if isinstance(raw_payload, dict):
+            raw_event_type = raw_payload.get("event_type")
+            if isinstance(raw_event_type, str) and raw_event_type.strip():
+                return raw_event_type.strip()
+        return ""
+
+    async def register_commands(
+        self,
+        command_name: str,
+        handler_full_name: str,
+        *,
+        desc: str = "",
+        priority: int = 0,
+        use_regex: bool = False,
+        ignore_prefix: bool = False,
+    ) -> None:
+        source_event_type = self._source_event_type()
+        if source_event_type not in {"astrbot_loaded", "platform_loaded"}:
+            raise AstrBotError.invalid_input(
+                "register_commands is only available in astrbot_loaded/platform_loaded events"
+            )
+        if ignore_prefix:
+            raise AstrBotError.invalid_input(
+                "register_commands(ignore_prefix=True) is unsupported in SDK runtime"
+            )
+        await self._proxy.call(
+            "registry.command.register",
+            {
+                "command_name": str(command_name),
+                "handler_full_name": str(handler_full_name),
+                "source_event_type": source_event_type,
+                "desc": str(desc),
+                "priority": int(priority),
+                "use_regex": bool(use_regex),
+                "ignore_prefix": False,
+            },
+        )
+
+    async def register_task(
+        self,
+        task: Awaitable[Any],
+        desc: str,
+    ) -> asyncio.Task[Any]:
+        task_desc = str(desc)
+
+        async def _await_future(future: asyncio.Future[Any]) -> Any:
+            return await future
+
+        if isinstance(task, asyncio.Task):
+            background_task = task
+        elif asyncio.isfuture(task):
+            background_task = asyncio.create_task(_await_future(task))
+        elif asyncio.iscoroutine(task):
+            background_task = asyncio.create_task(task)
+        else:
+            raise TypeError("register_task requires an awaitable task object")
+
+        def _on_done(done_task: asyncio.Task[Any]) -> None:
+            if done_task.cancelled():
+                debug_logger = getattr(self.logger, "debug", None)
+                if callable(debug_logger):
+                    debug_logger(
+                        "SDK background task cancelled: plugin_id={} desc={}",
+                        self.plugin_id,
+                        task_desc,
+                    )
+                return
+            try:
+                done_task.result()
+            except asyncio.CancelledError:
+                debug_logger = getattr(self.logger, "debug", None)
+                if callable(debug_logger):
+                    debug_logger(
+                        "SDK background task cancelled: plugin_id={} desc={}",
+                        self.plugin_id,
+                        task_desc,
+                    )
+            except Exception:
+                exception_logger = getattr(self.logger, "exception", None)
+                if callable(exception_logger):
+                    exception_logger(
+                        "SDK background task failed: plugin_id={} desc={}",
+                        self.plugin_id,
+                        task_desc,
+                    )
+
+        background_task.add_done_callback(_on_done)
+        return background_task
+
+    async def _list_platform_instances(self) -> list[dict[str, Any]]:
+        output = await self._proxy.call("platform.list_instances", {})
+        items = output.get("platforms")
+        if not isinstance(items, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            platform_id = str(item.get("id", "")).strip()
+            platform_type = str(item.get("type", "")).strip()
+            if not platform_id or not platform_type:
+                continue
+            normalized.append(
+                {
+                    "id": platform_id,
+                    "name": str(item.get("name", platform_id)),
+                    "type": platform_type,
+                    "status": str(item.get("status", "unknown")),
+                }
+            )
+        return normalized
+
+    def _build_platform_facade(
+        self,
+        platform_payload: dict[str, Any],
+    ) -> PlatformCompatFacade:
+        return PlatformCompatFacade(
+            _ctx=self,
+            id=str(platform_payload.get("id", "")),
+            name=str(platform_payload.get("name", "")),
+            type=str(platform_payload.get("type", "")),
+            status=str(platform_payload.get("status", "unknown")),
+        )
+
+    async def get_platform(self, platform_type: str) -> PlatformCompatFacade | None:
+        target_type = str(platform_type).strip().lower()
+        if not target_type:
+            return None
+        for item in await self._list_platform_instances():
+            if str(item.get("type", "")).strip().lower() == target_type:
+                return self._build_platform_facade(item)
+        return None
+
+    async def get_platform_inst(self, platform_id: str) -> PlatformCompatFacade | None:
+        target_id = str(platform_id).strip()
+        if not target_id:
+            return None
+        for item in await self._list_platform_instances():
+            if str(item.get("id", "")).strip() == target_id:
+                return self._build_platform_facade(item)
+        return None

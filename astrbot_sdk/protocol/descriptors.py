@@ -11,867 +11,26 @@ from typing import Annotated, Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
-JSONSchema = dict[str, Any]
+from . import _builtin_schemas
+from ._builtin_schemas import *  # noqa: F403
+
+JSONSchema = _builtin_schemas.JSONSchema
 RESERVED_CAPABILITY_NAMESPACES = ("handler", "system", "internal")
 RESERVED_CAPABILITY_PREFIXES = tuple(
     f"{namespace}." for namespace in RESERVED_CAPABILITY_NAMESPACES
 )
+BUILTIN_CAPABILITY_SCHEMAS = _builtin_schemas.BUILTIN_CAPABILITY_SCHEMAS
+_BUILTIN_SCHEMA_EXPORTS = frozenset(_builtin_schemas.__all__)
 
 
-def _object_schema(
-    *,
-    required: tuple[str, ...] = (),
-    **properties: Any,
-) -> JSONSchema:
-    return {
-        "type": "object",
-        "properties": properties,
-        "required": list(required),
-    }
+def __getattr__(name: str) -> Any:
+    if name in _BUILTIN_SCHEMA_EXPORTS:
+        return getattr(_builtin_schemas, name)
+    raise AttributeError(name)
 
 
-def _nullable(schema: JSONSchema) -> JSONSchema:
-    return {"anyOf": [schema, {"type": "null"}]}
-
-
-_OPTIONAL_CHAT_PROPERTIES: dict[str, Any] = {
-    "system": {"type": "string"},
-    "history": {"type": "array", "items": {"type": "object"}},
-    "contexts": {"type": "array", "items": {"type": "object"}},
-    "provider_id": {"type": "string"},
-    "tool_calls_result": {"type": "array", "items": {"type": "object"}},
-    "model": {"type": "string"},
-    "temperature": {"type": "number"},
-    "image_urls": {"type": "array", "items": {"type": "string"}},
-    "tools": {"type": "array"},
-    "max_steps": {"type": "integer"},
-}
-
-LLM_CHAT_INPUT_SCHEMA = _object_schema(
-    required=("prompt",),
-    prompt={"type": "string"},
-    **_OPTIONAL_CHAT_PROPERTIES,
-)
-LLM_CHAT_OUTPUT_SCHEMA = _object_schema(
-    required=("text",),
-    text={"type": "string"},
-)
-LLM_CHAT_RAW_INPUT_SCHEMA = _object_schema(
-    required=("prompt",),
-    prompt={"type": "string"},
-    **_OPTIONAL_CHAT_PROPERTIES,
-)
-LLM_CHAT_RAW_OUTPUT_SCHEMA = _object_schema(
-    required=("text",),
-    text={"type": "string"},
-    usage=_nullable({"type": "object"}),
-    finish_reason=_nullable({"type": "string"}),
-    tool_calls={"type": "array", "items": {"type": "object"}},
-    role=_nullable({"type": "string"}),
-    reasoning_content=_nullable({"type": "string"}),
-    reasoning_signature=_nullable({"type": "string"}),
-)
-LLM_STREAM_CHAT_INPUT_SCHEMA = _object_schema(
-    required=("prompt",),
-    prompt={"type": "string"},
-    **_OPTIONAL_CHAT_PROPERTIES,
-)
-LLM_STREAM_CHAT_OUTPUT_SCHEMA = _object_schema(
-    required=("text",),
-    text={"type": "string"},
-)
-MEMORY_SEARCH_INPUT_SCHEMA = _object_schema(
-    required=("query",),
-    query={"type": "string"},
-)
-MEMORY_SEARCH_OUTPUT_SCHEMA = _object_schema(
-    required=("items",),
-    items={"type": "array", "items": {"type": "object"}},
-)
-MEMORY_SAVE_INPUT_SCHEMA = _object_schema(
-    required=("key", "value"),
-    key={"type": "string"},
-    value={"type": "object"},
-)
-MEMORY_SAVE_OUTPUT_SCHEMA = _object_schema()
-MEMORY_GET_INPUT_SCHEMA = _object_schema(
-    required=("key",),
-    key={"type": "string"},
-)
-MEMORY_GET_OUTPUT_SCHEMA = _object_schema(
-    required=("value",),
-    value=_nullable({"type": "object"}),
-)
-MEMORY_DELETE_INPUT_SCHEMA = _object_schema(
-    required=("key",),
-    key={"type": "string"},
-)
-MEMORY_DELETE_OUTPUT_SCHEMA = _object_schema()
-MEMORY_SAVE_WITH_TTL_INPUT_SCHEMA = _object_schema(
-    required=("key", "value", "ttl_seconds"),
-    key={"type": "string"},
-    value={"type": "object"},
-    ttl_seconds={"type": "integer", "minimum": 1},
-)
-MEMORY_SAVE_WITH_TTL_OUTPUT_SCHEMA = _object_schema()
-MEMORY_GET_MANY_INPUT_SCHEMA = _object_schema(
-    required=("keys",),
-    keys={"type": "array", "items": {"type": "string"}},
-)
-MEMORY_GET_MANY_OUTPUT_SCHEMA = _object_schema(
-    required=("items",),
-    items={
-        "type": "array",
-        "items": _object_schema(
-            required=("key", "value"),
-            key={"type": "string"},
-            value=_nullable({"type": "object"}),
-        ),
-    },
-)
-MEMORY_DELETE_MANY_INPUT_SCHEMA = _object_schema(
-    required=("keys",),
-    keys={"type": "array", "items": {"type": "string"}},
-)
-MEMORY_DELETE_MANY_OUTPUT_SCHEMA = _object_schema(
-    required=("deleted_count",),
-    deleted_count={"type": "integer"},
-)
-MEMORY_STATS_INPUT_SCHEMA = _object_schema()
-MEMORY_STATS_OUTPUT_SCHEMA = _object_schema(
-    total_items={"type": "integer"},
-    total_bytes=_nullable({"type": "integer"}),
-    plugin_id=_nullable({"type": "string"}),
-    ttl_entries=_nullable({"type": "integer"}),
-)
-SYSTEM_GET_DATA_DIR_INPUT_SCHEMA = _object_schema()
-SYSTEM_GET_DATA_DIR_OUTPUT_SCHEMA = _object_schema(
-    required=("path",),
-    path={"type": "string"},
-)
-SYSTEM_TEXT_TO_IMAGE_INPUT_SCHEMA = _object_schema(
-    required=("text",),
-    text={"type": "string"},
-    return_url={"type": "boolean"},
-)
-SYSTEM_TEXT_TO_IMAGE_OUTPUT_SCHEMA = _object_schema(
-    required=("result",),
-    result={"type": "string"},
-)
-SYSTEM_HTML_RENDER_INPUT_SCHEMA = _object_schema(
-    required=("tmpl", "data"),
-    tmpl={"type": "string"},
-    data={"type": "object"},
-    return_url={"type": "boolean"},
-    options=_nullable({"type": "object"}),
-)
-SYSTEM_HTML_RENDER_OUTPUT_SCHEMA = _object_schema(
-    required=("result",),
-    result={"type": "string"},
-)
-SYSTEM_SESSION_WAITER_REGISTER_INPUT_SCHEMA = _object_schema(
-    required=("session_key",),
-    session_key={"type": "string"},
-)
-SYSTEM_SESSION_WAITER_REGISTER_OUTPUT_SCHEMA = _object_schema()
-SYSTEM_SESSION_WAITER_UNREGISTER_INPUT_SCHEMA = _object_schema(
-    required=("session_key",),
-    session_key={"type": "string"},
-)
-SYSTEM_SESSION_WAITER_UNREGISTER_OUTPUT_SCHEMA = _object_schema()
-DB_GET_INPUT_SCHEMA = _object_schema(
-    required=("key",),
-    key={"type": "string"},
-)
-DB_GET_OUTPUT_SCHEMA = _object_schema(
-    required=("value",),
-    value=_nullable({}),
-)
-DB_SET_INPUT_SCHEMA = _object_schema(
-    required=("key", "value"),
-    key={"type": "string"},
-    value={},
-)
-DB_SET_OUTPUT_SCHEMA = _object_schema()
-DB_DELETE_INPUT_SCHEMA = _object_schema(
-    required=("key",),
-    key={"type": "string"},
-)
-DB_DELETE_OUTPUT_SCHEMA = _object_schema()
-DB_LIST_INPUT_SCHEMA = _object_schema(
-    prefix=_nullable({"type": "string"}),
-)
-DB_LIST_OUTPUT_SCHEMA = _object_schema(
-    required=("keys",),
-    keys={"type": "array", "items": {"type": "string"}},
-)
-DB_GET_MANY_INPUT_SCHEMA = _object_schema(
-    required=("keys",),
-    keys={"type": "array", "items": {"type": "string"}},
-)
-DB_GET_MANY_OUTPUT_SCHEMA = _object_schema(
-    required=("items",),
-    items={
-        "type": "array",
-        "items": _object_schema(
-            required=("key", "value"),
-            key={"type": "string"},
-            value=_nullable({}),
-        ),
-    },
-)
-DB_SET_MANY_INPUT_SCHEMA = _object_schema(
-    required=("items",),
-    items={
-        "type": "array",
-        "items": _object_schema(
-            required=("key", "value"),
-            key={"type": "string"},
-            value={},
-        ),
-    },
-)
-DB_SET_MANY_OUTPUT_SCHEMA = _object_schema()
-DB_WATCH_INPUT_SCHEMA = _object_schema(
-    prefix=_nullable({"type": "string"}),
-)
-DB_WATCH_OUTPUT_SCHEMA = _object_schema()
-SESSION_REF_SCHEMA = _object_schema(
-    required=("conversation_id",),
-    conversation_id={"type": "string"},
-    platform=_nullable({"type": "string"}),
-    raw=_nullable({"type": "object"}),
-)
-SYSTEM_EVENT_REACT_INPUT_SCHEMA = _object_schema(
-    required=("emoji",),
-    target=_nullable(SESSION_REF_SCHEMA),
-    emoji={"type": "string"},
-)
-SYSTEM_EVENT_REACT_OUTPUT_SCHEMA = _object_schema(
-    required=("supported",),
-    supported={"type": "boolean"},
-)
-SYSTEM_EVENT_SEND_TYPING_INPUT_SCHEMA = _object_schema(
-    target=_nullable(SESSION_REF_SCHEMA),
-)
-SYSTEM_EVENT_SEND_TYPING_OUTPUT_SCHEMA = _object_schema(
-    required=("supported",),
-    supported={"type": "boolean"},
-)
-SYSTEM_EVENT_SEND_STREAMING_INPUT_SCHEMA = _object_schema(
-    target=_nullable(SESSION_REF_SCHEMA),
-    use_fallback={"type": "boolean"},
-)
-SYSTEM_EVENT_SEND_STREAMING_OUTPUT_SCHEMA = _object_schema(
-    required=("supported",),
-    supported={"type": "boolean"},
-    stream_id=_nullable({"type": "string"}),
-)
-SYSTEM_EVENT_SEND_STREAMING_CHUNK_INPUT_SCHEMA = _object_schema(
-    required=("stream_id", "chain"),
-    stream_id={"type": "string"},
-    chain={"type": "array", "items": {"type": "object"}},
-)
-SYSTEM_EVENT_SEND_STREAMING_CHUNK_OUTPUT_SCHEMA = _object_schema()
-SYSTEM_EVENT_SEND_STREAMING_CLOSE_INPUT_SCHEMA = _object_schema(
-    required=("stream_id",),
-    stream_id={"type": "string"},
-)
-SYSTEM_EVENT_SEND_STREAMING_CLOSE_OUTPUT_SCHEMA = _object_schema(
-    required=("supported",),
-    supported={"type": "boolean"},
-)
-SYSTEM_EVENT_LLM_GET_STATE_INPUT_SCHEMA = _object_schema(
-    target=_nullable(SESSION_REF_SCHEMA),
-)
-SYSTEM_EVENT_LLM_GET_STATE_OUTPUT_SCHEMA = _object_schema(
-    required=("should_call_llm", "requested_llm"),
-    should_call_llm={"type": "boolean"},
-    requested_llm={"type": "boolean"},
-)
-SYSTEM_EVENT_LLM_REQUEST_INPUT_SCHEMA = _object_schema(
-    target=_nullable(SESSION_REF_SCHEMA),
-)
-SYSTEM_EVENT_LLM_REQUEST_OUTPUT_SCHEMA = _object_schema(
-    required=("should_call_llm", "requested_llm"),
-    should_call_llm={"type": "boolean"},
-    requested_llm={"type": "boolean"},
-)
-SYSTEM_EVENT_RESULT_GET_INPUT_SCHEMA = _object_schema(
-    target=_nullable(SESSION_REF_SCHEMA),
-)
-SYSTEM_EVENT_RESULT_GET_OUTPUT_SCHEMA = _object_schema(
-    required=("result",),
-    result=_nullable({"type": "object"}),
-)
-SYSTEM_EVENT_RESULT_SET_INPUT_SCHEMA = _object_schema(
-    required=("result",),
-    target=_nullable(SESSION_REF_SCHEMA),
-    result={"type": "object"},
-)
-SYSTEM_EVENT_RESULT_SET_OUTPUT_SCHEMA = _object_schema(
-    required=("result",),
-    result={"type": "object"},
-)
-SYSTEM_EVENT_RESULT_CLEAR_INPUT_SCHEMA = _object_schema(
-    target=_nullable(SESSION_REF_SCHEMA),
-)
-SYSTEM_EVENT_RESULT_CLEAR_OUTPUT_SCHEMA = _object_schema()
-SYSTEM_EVENT_HANDLER_WHITELIST_GET_INPUT_SCHEMA = _object_schema(
-    target=_nullable(SESSION_REF_SCHEMA),
-)
-SYSTEM_EVENT_HANDLER_WHITELIST_GET_OUTPUT_SCHEMA = _object_schema(
-    required=("plugin_names",),
-    plugin_names=_nullable({"type": "array", "items": {"type": "string"}}),
-)
-SYSTEM_EVENT_HANDLER_WHITELIST_SET_INPUT_SCHEMA = _object_schema(
-    target=_nullable(SESSION_REF_SCHEMA),
-    plugin_names=_nullable({"type": "array", "items": {"type": "string"}}),
-)
-SYSTEM_EVENT_HANDLER_WHITELIST_SET_OUTPUT_SCHEMA = _object_schema(
-    required=("plugin_names",),
-    plugin_names=_nullable({"type": "array", "items": {"type": "string"}}),
-)
-PLATFORM_SEND_INPUT_SCHEMA = _object_schema(
-    required=("session", "text"),
-    session={"type": "string"},
-    target=_nullable(SESSION_REF_SCHEMA),
-    text={"type": "string"},
-)
-PLATFORM_SEND_OUTPUT_SCHEMA = _object_schema(
-    required=("message_id",),
-    message_id={"type": "string"},
-)
-PLATFORM_SEND_IMAGE_INPUT_SCHEMA = _object_schema(
-    required=("session", "image_url"),
-    session={"type": "string"},
-    target=_nullable(SESSION_REF_SCHEMA),
-    image_url={"type": "string"},
-)
-PLATFORM_SEND_IMAGE_OUTPUT_SCHEMA = _object_schema(
-    required=("message_id",),
-    message_id={"type": "string"},
-)
-PLATFORM_SEND_CHAIN_INPUT_SCHEMA = _object_schema(
-    required=("session", "chain"),
-    session={"type": "string"},
-    target=_nullable(SESSION_REF_SCHEMA),
-    chain={"type": "array", "items": {"type": "object"}},
-)
-PLATFORM_SEND_CHAIN_OUTPUT_SCHEMA = _object_schema(
-    required=("message_id",),
-    message_id={"type": "string"},
-)
-PLATFORM_SEND_BY_SESSION_INPUT_SCHEMA = _object_schema(
-    required=("session", "chain"),
-    session={"type": "string"},
-    chain={"type": "array", "items": {"type": "object"}},
-)
-PLATFORM_SEND_BY_SESSION_OUTPUT_SCHEMA = _object_schema(
-    required=("message_id",),
-    message_id={"type": "string"},
-)
-PLATFORM_GET_GROUP_INPUT_SCHEMA = _object_schema(
-    required=("session",),
-    session={"type": "string"},
-    target=_nullable(SESSION_REF_SCHEMA),
-)
-PLATFORM_GET_GROUP_OUTPUT_SCHEMA = _object_schema(
-    required=("group",),
-    group=_nullable({"type": "object"}),
-)
-PLATFORM_GET_MEMBERS_INPUT_SCHEMA = _object_schema(
-    required=("session",),
-    session={"type": "string"},
-    target=_nullable(SESSION_REF_SCHEMA),
-)
-PLATFORM_GET_MEMBERS_OUTPUT_SCHEMA = _object_schema(
-    required=("members",),
-    members={"type": "array", "items": {"type": "object"}},
-)
-SESSION_PLUGIN_IS_ENABLED_INPUT_SCHEMA = _object_schema(
-    required=("session", "plugin_name"),
-    session={"type": "string"},
-    plugin_name={"type": "string"},
-)
-SESSION_PLUGIN_IS_ENABLED_OUTPUT_SCHEMA = _object_schema(
-    required=("enabled",),
-    enabled={"type": "boolean"},
-)
-SESSION_PLUGIN_FILTER_HANDLERS_INPUT_SCHEMA = _object_schema(
-    required=("session", "handlers"),
-    session={"type": "string"},
-    handlers={"type": "array", "items": {"type": "object"}},
-)
-SESSION_PLUGIN_FILTER_HANDLERS_OUTPUT_SCHEMA = _object_schema(
-    required=("handlers",),
-    handlers={"type": "array", "items": {"type": "object"}},
-)
-SESSION_SERVICE_IS_LLM_ENABLED_INPUT_SCHEMA = _object_schema(
-    required=("session",),
-    session={"type": "string"},
-)
-SESSION_SERVICE_IS_LLM_ENABLED_OUTPUT_SCHEMA = _object_schema(
-    required=("enabled",),
-    enabled={"type": "boolean"},
-)
-SESSION_SERVICE_SET_LLM_STATUS_INPUT_SCHEMA = _object_schema(
-    required=("session", "enabled"),
-    session={"type": "string"},
-    enabled={"type": "boolean"},
-)
-SESSION_SERVICE_SET_LLM_STATUS_OUTPUT_SCHEMA = _object_schema()
-SESSION_SERVICE_IS_TTS_ENABLED_INPUT_SCHEMA = _object_schema(
-    required=("session",),
-    session={"type": "string"},
-)
-SESSION_SERVICE_IS_TTS_ENABLED_OUTPUT_SCHEMA = _object_schema(
-    required=("enabled",),
-    enabled={"type": "boolean"},
-)
-SESSION_SERVICE_SET_TTS_STATUS_INPUT_SCHEMA = _object_schema(
-    required=("session", "enabled"),
-    session={"type": "string"},
-    enabled={"type": "boolean"},
-)
-SESSION_SERVICE_SET_TTS_STATUS_OUTPUT_SCHEMA = _object_schema()
-HTTP_REGISTER_API_INPUT_SCHEMA = _object_schema(
-    required=("route", "methods", "handler_capability"),
-    route={"type": "string"},
-    methods={"type": "array", "items": {"type": "string"}},
-    handler_capability={"type": "string"},
-    description={"type": "string"},
-)
-HTTP_REGISTER_API_OUTPUT_SCHEMA = _object_schema()
-HTTP_UNREGISTER_API_INPUT_SCHEMA = _object_schema(
-    required=("route", "methods"),
-    route={"type": "string"},
-    methods={"type": "array", "items": {"type": "string"}},
-)
-HTTP_UNREGISTER_API_OUTPUT_SCHEMA = _object_schema()
-HTTP_LIST_APIS_INPUT_SCHEMA = _object_schema()
-HTTP_LIST_APIS_OUTPUT_SCHEMA = _object_schema(
-    required=("apis",),
-    apis={"type": "array", "items": {"type": "object"}},
-)
-METADATA_GET_PLUGIN_INPUT_SCHEMA = _object_schema(
-    required=("name",),
-    name={"type": "string"},
-)
-METADATA_GET_PLUGIN_OUTPUT_SCHEMA = _object_schema(
-    required=("plugin",),
-    plugin=_nullable({"type": "object"}),
-)
-METADATA_LIST_PLUGINS_INPUT_SCHEMA = _object_schema()
-METADATA_LIST_PLUGINS_OUTPUT_SCHEMA = _object_schema(
-    required=("plugins",),
-    plugins={"type": "array", "items": {"type": "object"}},
-)
-METADATA_GET_PLUGIN_CONFIG_INPUT_SCHEMA = _object_schema(
-    required=("name",),
-    name={"type": "string"},
-)
-METADATA_GET_PLUGIN_CONFIG_OUTPUT_SCHEMA = _object_schema(
-    required=("config",),
-    config=_nullable({"type": "object"}),
-)
-REGISTRY_GET_HANDLERS_BY_EVENT_TYPE_INPUT_SCHEMA = _object_schema(
-    required=("event_type",),
-    event_type={"type": "string"},
-)
-REGISTRY_GET_HANDLERS_BY_EVENT_TYPE_OUTPUT_SCHEMA = _object_schema(
-    required=("handlers",),
-    handlers={"type": "array", "items": {"type": "object"}},
-)
-REGISTRY_GET_HANDLER_BY_FULL_NAME_INPUT_SCHEMA = _object_schema(
-    required=("full_name",),
-    full_name={"type": "string"},
-)
-REGISTRY_GET_HANDLER_BY_FULL_NAME_OUTPUT_SCHEMA = _object_schema(
-    required=("handler",),
-    handler=_nullable({"type": "object"}),
-)
-PROVIDER_META_SCHEMA = _object_schema(
-    required=("id", "type", "provider_type"),
-    id={"type": "string"},
-    model=_nullable({"type": "string"}),
-    type={"type": "string"},
-    provider_type={"type": "string"},
-)
-LLM_TOOL_SPEC_SCHEMA = _object_schema(
-    required=("name", "description", "parameters_schema", "active"),
-    name={"type": "string"},
-    description={"type": "string"},
-    parameters_schema={"type": "object"},
-    handler_ref=_nullable({"type": "string"}),
-    handler_capability=_nullable({"type": "string"}),
-    active={"type": "boolean"},
-)
-AGENT_SPEC_SCHEMA = _object_schema(
-    required=("name", "description", "tool_names", "runner_class"),
-    name={"type": "string"},
-    description={"type": "string"},
-    tool_names={"type": "array", "items": {"type": "string"}},
-    runner_class={"type": "string"},
-)
-PROVIDER_GET_USING_INPUT_SCHEMA = _object_schema(umo=_nullable({"type": "string"}))
-PROVIDER_GET_USING_OUTPUT_SCHEMA = _object_schema(
-    required=("provider",),
-    provider=_nullable(PROVIDER_META_SCHEMA),
-)
-PROVIDER_GET_CURRENT_CHAT_PROVIDER_ID_INPUT_SCHEMA = _object_schema(
-    umo=_nullable({"type": "string"}),
-)
-PROVIDER_GET_CURRENT_CHAT_PROVIDER_ID_OUTPUT_SCHEMA = _object_schema(
-    required=("provider_id",),
-    provider_id=_nullable({"type": "string"}),
-)
-PROVIDER_LIST_ALL_INPUT_SCHEMA = _object_schema()
-PROVIDER_LIST_ALL_OUTPUT_SCHEMA = _object_schema(
-    required=("providers",),
-    providers={"type": "array", "items": PROVIDER_META_SCHEMA},
-)
-LLM_TOOL_MANAGER_GET_INPUT_SCHEMA = _object_schema()
-LLM_TOOL_MANAGER_GET_OUTPUT_SCHEMA = _object_schema(
-    required=("registered", "active"),
-    registered={"type": "array", "items": LLM_TOOL_SPEC_SCHEMA},
-    active={"type": "array", "items": LLM_TOOL_SPEC_SCHEMA},
-)
-LLM_TOOL_MANAGER_ACTIVATE_INPUT_SCHEMA = _object_schema(
-    required=("name",),
-    name={"type": "string"},
-)
-LLM_TOOL_MANAGER_ACTIVATE_OUTPUT_SCHEMA = _object_schema(
-    required=("activated",),
-    activated={"type": "boolean"},
-)
-LLM_TOOL_MANAGER_DEACTIVATE_INPUT_SCHEMA = _object_schema(
-    required=("name",),
-    name={"type": "string"},
-)
-LLM_TOOL_MANAGER_DEACTIVATE_OUTPUT_SCHEMA = _object_schema(
-    required=("deactivated",),
-    deactivated={"type": "boolean"},
-)
-LLM_TOOL_MANAGER_ADD_INPUT_SCHEMA = _object_schema(
-    required=("tools",),
-    tools={"type": "array", "items": LLM_TOOL_SPEC_SCHEMA},
-)
-LLM_TOOL_MANAGER_ADD_OUTPUT_SCHEMA = _object_schema(
-    required=("names",),
-    names={"type": "array", "items": {"type": "string"}},
-)
-AGENT_TOOL_LOOP_RUN_INPUT_SCHEMA = _object_schema(
-    prompt=_nullable({"type": "string"}),
-    system_prompt=_nullable({"type": "string"}),
-    session_id=_nullable({"type": "string"}),
-    contexts={"type": "array", "items": {"type": "object"}},
-    image_urls={"type": "array", "items": {"type": "string"}},
-    tool_names=_nullable({"type": "array", "items": {"type": "string"}}),
-    tool_calls_result={"type": "array", "items": {"type": "object"}},
-    provider_id=_nullable({"type": "string"}),
-    model=_nullable({"type": "string"}),
-    temperature={"type": "number"},
-    max_steps={"type": "integer"},
-    tool_call_timeout={"type": "integer"},
-)
-AGENT_TOOL_LOOP_RUN_OUTPUT_SCHEMA = LLM_CHAT_RAW_OUTPUT_SCHEMA
-AGENT_REGISTRY_LIST_INPUT_SCHEMA = _object_schema()
-AGENT_REGISTRY_LIST_OUTPUT_SCHEMA = _object_schema(
-    required=("agents",),
-    agents={"type": "array", "items": AGENT_SPEC_SCHEMA},
-)
-AGENT_REGISTRY_GET_INPUT_SCHEMA = _object_schema(
-    required=("name",),
-    name={"type": "string"},
-)
-AGENT_REGISTRY_GET_OUTPUT_SCHEMA = _object_schema(
-    required=("agent",),
-    agent=_nullable(AGENT_SPEC_SCHEMA),
-)
-
-BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
-    "llm.chat": {
-        "input": LLM_CHAT_INPUT_SCHEMA,
-        "output": LLM_CHAT_OUTPUT_SCHEMA,
-    },
-    "llm.chat_raw": {
-        "input": LLM_CHAT_RAW_INPUT_SCHEMA,
-        "output": LLM_CHAT_RAW_OUTPUT_SCHEMA,
-    },
-    "llm.stream_chat": {
-        "input": LLM_STREAM_CHAT_INPUT_SCHEMA,
-        "output": LLM_STREAM_CHAT_OUTPUT_SCHEMA,
-    },
-    "memory.search": {
-        "input": MEMORY_SEARCH_INPUT_SCHEMA,
-        "output": MEMORY_SEARCH_OUTPUT_SCHEMA,
-    },
-    "memory.save": {
-        "input": MEMORY_SAVE_INPUT_SCHEMA,
-        "output": MEMORY_SAVE_OUTPUT_SCHEMA,
-    },
-    "memory.get": {
-        "input": MEMORY_GET_INPUT_SCHEMA,
-        "output": MEMORY_GET_OUTPUT_SCHEMA,
-    },
-    "memory.delete": {
-        "input": MEMORY_DELETE_INPUT_SCHEMA,
-        "output": MEMORY_DELETE_OUTPUT_SCHEMA,
-    },
-    "memory.save_with_ttl": {
-        "input": MEMORY_SAVE_WITH_TTL_INPUT_SCHEMA,
-        "output": MEMORY_SAVE_WITH_TTL_OUTPUT_SCHEMA,
-    },
-    "memory.get_many": {
-        "input": MEMORY_GET_MANY_INPUT_SCHEMA,
-        "output": MEMORY_GET_MANY_OUTPUT_SCHEMA,
-    },
-    "memory.delete_many": {
-        "input": MEMORY_DELETE_MANY_INPUT_SCHEMA,
-        "output": MEMORY_DELETE_MANY_OUTPUT_SCHEMA,
-    },
-    "memory.stats": {
-        "input": MEMORY_STATS_INPUT_SCHEMA,
-        "output": MEMORY_STATS_OUTPUT_SCHEMA,
-    },
-    "db.get": {
-        "input": DB_GET_INPUT_SCHEMA,
-        "output": DB_GET_OUTPUT_SCHEMA,
-    },
-    "db.set": {
-        "input": DB_SET_INPUT_SCHEMA,
-        "output": DB_SET_OUTPUT_SCHEMA,
-    },
-    "db.delete": {
-        "input": DB_DELETE_INPUT_SCHEMA,
-        "output": DB_DELETE_OUTPUT_SCHEMA,
-    },
-    "db.list": {
-        "input": DB_LIST_INPUT_SCHEMA,
-        "output": DB_LIST_OUTPUT_SCHEMA,
-    },
-    "db.get_many": {
-        "input": DB_GET_MANY_INPUT_SCHEMA,
-        "output": DB_GET_MANY_OUTPUT_SCHEMA,
-    },
-    "db.set_many": {
-        "input": DB_SET_MANY_INPUT_SCHEMA,
-        "output": DB_SET_MANY_OUTPUT_SCHEMA,
-    },
-    "db.watch": {
-        "input": DB_WATCH_INPUT_SCHEMA,
-        "output": DB_WATCH_OUTPUT_SCHEMA,
-    },
-    "platform.send": {
-        "input": PLATFORM_SEND_INPUT_SCHEMA,
-        "output": PLATFORM_SEND_OUTPUT_SCHEMA,
-    },
-    "platform.send_image": {
-        "input": PLATFORM_SEND_IMAGE_INPUT_SCHEMA,
-        "output": PLATFORM_SEND_IMAGE_OUTPUT_SCHEMA,
-    },
-    "platform.send_chain": {
-        "input": PLATFORM_SEND_CHAIN_INPUT_SCHEMA,
-        "output": PLATFORM_SEND_CHAIN_OUTPUT_SCHEMA,
-    },
-    "platform.send_by_session": {
-        "input": PLATFORM_SEND_BY_SESSION_INPUT_SCHEMA,
-        "output": PLATFORM_SEND_BY_SESSION_OUTPUT_SCHEMA,
-    },
-    "platform.get_group": {
-        "input": PLATFORM_GET_GROUP_INPUT_SCHEMA,
-        "output": PLATFORM_GET_GROUP_OUTPUT_SCHEMA,
-    },
-    "platform.get_members": {
-        "input": PLATFORM_GET_MEMBERS_INPUT_SCHEMA,
-        "output": PLATFORM_GET_MEMBERS_OUTPUT_SCHEMA,
-    },
-    "session.plugin.is_enabled": {
-        "input": SESSION_PLUGIN_IS_ENABLED_INPUT_SCHEMA,
-        "output": SESSION_PLUGIN_IS_ENABLED_OUTPUT_SCHEMA,
-    },
-    "session.plugin.filter_handlers": {
-        "input": SESSION_PLUGIN_FILTER_HANDLERS_INPUT_SCHEMA,
-        "output": SESSION_PLUGIN_FILTER_HANDLERS_OUTPUT_SCHEMA,
-    },
-    "session.service.is_llm_enabled": {
-        "input": SESSION_SERVICE_IS_LLM_ENABLED_INPUT_SCHEMA,
-        "output": SESSION_SERVICE_IS_LLM_ENABLED_OUTPUT_SCHEMA,
-    },
-    "session.service.set_llm_status": {
-        "input": SESSION_SERVICE_SET_LLM_STATUS_INPUT_SCHEMA,
-        "output": SESSION_SERVICE_SET_LLM_STATUS_OUTPUT_SCHEMA,
-    },
-    "session.service.is_tts_enabled": {
-        "input": SESSION_SERVICE_IS_TTS_ENABLED_INPUT_SCHEMA,
-        "output": SESSION_SERVICE_IS_TTS_ENABLED_OUTPUT_SCHEMA,
-    },
-    "session.service.set_tts_status": {
-        "input": SESSION_SERVICE_SET_TTS_STATUS_INPUT_SCHEMA,
-        "output": SESSION_SERVICE_SET_TTS_STATUS_OUTPUT_SCHEMA,
-    },
-    "http.register_api": {
-        "input": HTTP_REGISTER_API_INPUT_SCHEMA,
-        "output": HTTP_REGISTER_API_OUTPUT_SCHEMA,
-    },
-    "http.unregister_api": {
-        "input": HTTP_UNREGISTER_API_INPUT_SCHEMA,
-        "output": HTTP_UNREGISTER_API_OUTPUT_SCHEMA,
-    },
-    "http.list_apis": {
-        "input": HTTP_LIST_APIS_INPUT_SCHEMA,
-        "output": HTTP_LIST_APIS_OUTPUT_SCHEMA,
-    },
-    "metadata.get_plugin": {
-        "input": METADATA_GET_PLUGIN_INPUT_SCHEMA,
-        "output": METADATA_GET_PLUGIN_OUTPUT_SCHEMA,
-    },
-    "metadata.list_plugins": {
-        "input": METADATA_LIST_PLUGINS_INPUT_SCHEMA,
-        "output": METADATA_LIST_PLUGINS_OUTPUT_SCHEMA,
-    },
-    "metadata.get_plugin_config": {
-        "input": METADATA_GET_PLUGIN_CONFIG_INPUT_SCHEMA,
-        "output": METADATA_GET_PLUGIN_CONFIG_OUTPUT_SCHEMA,
-    },
-    "registry.get_handlers_by_event_type": {
-        "input": REGISTRY_GET_HANDLERS_BY_EVENT_TYPE_INPUT_SCHEMA,
-        "output": REGISTRY_GET_HANDLERS_BY_EVENT_TYPE_OUTPUT_SCHEMA,
-    },
-    "registry.get_handler_by_full_name": {
-        "input": REGISTRY_GET_HANDLER_BY_FULL_NAME_INPUT_SCHEMA,
-        "output": REGISTRY_GET_HANDLER_BY_FULL_NAME_OUTPUT_SCHEMA,
-    },
-    "provider.get_using": {
-        "input": PROVIDER_GET_USING_INPUT_SCHEMA,
-        "output": PROVIDER_GET_USING_OUTPUT_SCHEMA,
-    },
-    "provider.get_current_chat_provider_id": {
-        "input": PROVIDER_GET_CURRENT_CHAT_PROVIDER_ID_INPUT_SCHEMA,
-        "output": PROVIDER_GET_CURRENT_CHAT_PROVIDER_ID_OUTPUT_SCHEMA,
-    },
-    "provider.list_all": {
-        "input": PROVIDER_LIST_ALL_INPUT_SCHEMA,
-        "output": PROVIDER_LIST_ALL_OUTPUT_SCHEMA,
-    },
-    "provider.list_all_tts": {
-        "input": PROVIDER_LIST_ALL_INPUT_SCHEMA,
-        "output": PROVIDER_LIST_ALL_OUTPUT_SCHEMA,
-    },
-    "provider.list_all_stt": {
-        "input": PROVIDER_LIST_ALL_INPUT_SCHEMA,
-        "output": PROVIDER_LIST_ALL_OUTPUT_SCHEMA,
-    },
-    "provider.list_all_embedding": {
-        "input": PROVIDER_LIST_ALL_INPUT_SCHEMA,
-        "output": PROVIDER_LIST_ALL_OUTPUT_SCHEMA,
-    },
-    "provider.get_using_tts": {
-        "input": PROVIDER_GET_USING_INPUT_SCHEMA,
-        "output": PROVIDER_GET_USING_OUTPUT_SCHEMA,
-    },
-    "provider.get_using_stt": {
-        "input": PROVIDER_GET_USING_INPUT_SCHEMA,
-        "output": PROVIDER_GET_USING_OUTPUT_SCHEMA,
-    },
-    "llm_tool.manager.get": {
-        "input": LLM_TOOL_MANAGER_GET_INPUT_SCHEMA,
-        "output": LLM_TOOL_MANAGER_GET_OUTPUT_SCHEMA,
-    },
-    "llm_tool.manager.activate": {
-        "input": LLM_TOOL_MANAGER_ACTIVATE_INPUT_SCHEMA,
-        "output": LLM_TOOL_MANAGER_ACTIVATE_OUTPUT_SCHEMA,
-    },
-    "llm_tool.manager.deactivate": {
-        "input": LLM_TOOL_MANAGER_DEACTIVATE_INPUT_SCHEMA,
-        "output": LLM_TOOL_MANAGER_DEACTIVATE_OUTPUT_SCHEMA,
-    },
-    "llm_tool.manager.add": {
-        "input": LLM_TOOL_MANAGER_ADD_INPUT_SCHEMA,
-        "output": LLM_TOOL_MANAGER_ADD_OUTPUT_SCHEMA,
-    },
-    "agent.tool_loop.run": {
-        "input": AGENT_TOOL_LOOP_RUN_INPUT_SCHEMA,
-        "output": AGENT_TOOL_LOOP_RUN_OUTPUT_SCHEMA,
-    },
-    "agent.registry.list": {
-        "input": AGENT_REGISTRY_LIST_INPUT_SCHEMA,
-        "output": AGENT_REGISTRY_LIST_OUTPUT_SCHEMA,
-    },
-    "agent.registry.get": {
-        "input": AGENT_REGISTRY_GET_INPUT_SCHEMA,
-        "output": AGENT_REGISTRY_GET_OUTPUT_SCHEMA,
-    },
-    "system.get_data_dir": {
-        "input": SYSTEM_GET_DATA_DIR_INPUT_SCHEMA,
-        "output": SYSTEM_GET_DATA_DIR_OUTPUT_SCHEMA,
-    },
-    "system.text_to_image": {
-        "input": SYSTEM_TEXT_TO_IMAGE_INPUT_SCHEMA,
-        "output": SYSTEM_TEXT_TO_IMAGE_OUTPUT_SCHEMA,
-    },
-    "system.html_render": {
-        "input": SYSTEM_HTML_RENDER_INPUT_SCHEMA,
-        "output": SYSTEM_HTML_RENDER_OUTPUT_SCHEMA,
-    },
-    "system.session_waiter.register": {
-        "input": SYSTEM_SESSION_WAITER_REGISTER_INPUT_SCHEMA,
-        "output": SYSTEM_SESSION_WAITER_REGISTER_OUTPUT_SCHEMA,
-    },
-    "system.session_waiter.unregister": {
-        "input": SYSTEM_SESSION_WAITER_UNREGISTER_INPUT_SCHEMA,
-        "output": SYSTEM_SESSION_WAITER_UNREGISTER_OUTPUT_SCHEMA,
-    },
-    "system.event.react": {
-        "input": SYSTEM_EVENT_REACT_INPUT_SCHEMA,
-        "output": SYSTEM_EVENT_REACT_OUTPUT_SCHEMA,
-    },
-    "system.event.send_typing": {
-        "input": SYSTEM_EVENT_SEND_TYPING_INPUT_SCHEMA,
-        "output": SYSTEM_EVENT_SEND_TYPING_OUTPUT_SCHEMA,
-    },
-    "system.event.send_streaming": {
-        "input": SYSTEM_EVENT_SEND_STREAMING_INPUT_SCHEMA,
-        "output": SYSTEM_EVENT_SEND_STREAMING_OUTPUT_SCHEMA,
-    },
-    "system.event.send_streaming_chunk": {
-        "input": SYSTEM_EVENT_SEND_STREAMING_CHUNK_INPUT_SCHEMA,
-        "output": SYSTEM_EVENT_SEND_STREAMING_CHUNK_OUTPUT_SCHEMA,
-    },
-    "system.event.send_streaming_close": {
-        "input": SYSTEM_EVENT_SEND_STREAMING_CLOSE_INPUT_SCHEMA,
-        "output": SYSTEM_EVENT_SEND_STREAMING_CLOSE_OUTPUT_SCHEMA,
-    },
-    "system.event.llm.get_state": {
-        "input": SYSTEM_EVENT_LLM_GET_STATE_INPUT_SCHEMA,
-        "output": SYSTEM_EVENT_LLM_GET_STATE_OUTPUT_SCHEMA,
-    },
-    "system.event.llm.request": {
-        "input": SYSTEM_EVENT_LLM_REQUEST_INPUT_SCHEMA,
-        "output": SYSTEM_EVENT_LLM_REQUEST_OUTPUT_SCHEMA,
-    },
-    "system.event.result.get": {
-        "input": SYSTEM_EVENT_RESULT_GET_INPUT_SCHEMA,
-        "output": SYSTEM_EVENT_RESULT_GET_OUTPUT_SCHEMA,
-    },
-    "system.event.result.set": {
-        "input": SYSTEM_EVENT_RESULT_SET_INPUT_SCHEMA,
-        "output": SYSTEM_EVENT_RESULT_SET_OUTPUT_SCHEMA,
-    },
-    "system.event.result.clear": {
-        "input": SYSTEM_EVENT_RESULT_CLEAR_INPUT_SCHEMA,
-        "output": SYSTEM_EVENT_RESULT_CLEAR_OUTPUT_SCHEMA,
-    },
-    "system.event.handler_whitelist.get": {
-        "input": SYSTEM_EVENT_HANDLER_WHITELIST_GET_INPUT_SCHEMA,
-        "output": SYSTEM_EVENT_HANDLER_WHITELIST_GET_OUTPUT_SCHEMA,
-    },
-    "system.event.handler_whitelist.set": {
-        "input": SYSTEM_EVENT_HANDLER_WHITELIST_SET_INPUT_SCHEMA,
-        "output": SYSTEM_EVENT_HANDLER_WHITELIST_SET_OUTPUT_SCHEMA,
-    },
-}
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | _BUILTIN_SCHEMA_EXPORTS)
 
 
 class _DescriptorBase(BaseModel):
@@ -1126,6 +285,13 @@ class CapabilityDescriptor(_DescriptorBase):
 
 
 __all__ = [
+    "AGENT_REGISTRY_GET_INPUT_SCHEMA",
+    "AGENT_REGISTRY_GET_OUTPUT_SCHEMA",
+    "AGENT_REGISTRY_LIST_INPUT_SCHEMA",
+    "AGENT_REGISTRY_LIST_OUTPUT_SCHEMA",
+    "AGENT_SPEC_SCHEMA",
+    "AGENT_TOOL_LOOP_RUN_INPUT_SCHEMA",
+    "AGENT_TOOL_LOOP_RUN_OUTPUT_SCHEMA",
     "BUILTIN_CAPABILITY_SCHEMAS",
     "CapabilityDescriptor",
     "CommandRouteSpec",
@@ -1134,26 +300,26 @@ __all__ = [
     "DB_DELETE_INPUT_SCHEMA",
     "DB_DELETE_OUTPUT_SCHEMA",
     "DB_GET_INPUT_SCHEMA",
-    "DB_GET_OUTPUT_SCHEMA",
     "DB_GET_MANY_INPUT_SCHEMA",
     "DB_GET_MANY_OUTPUT_SCHEMA",
+    "DB_GET_OUTPUT_SCHEMA",
     "DB_LIST_INPUT_SCHEMA",
     "DB_LIST_OUTPUT_SCHEMA",
     "DB_SET_INPUT_SCHEMA",
-    "DB_SET_OUTPUT_SCHEMA",
     "DB_SET_MANY_INPUT_SCHEMA",
     "DB_SET_MANY_OUTPUT_SCHEMA",
+    "DB_SET_OUTPUT_SCHEMA",
     "DB_WATCH_INPUT_SCHEMA",
     "DB_WATCH_OUTPUT_SCHEMA",
     "EventTrigger",
     "FilterSpec",
-    "HandlerDescriptor",
     "HTTP_LIST_APIS_INPUT_SCHEMA",
     "HTTP_LIST_APIS_OUTPUT_SCHEMA",
     "HTTP_REGISTER_API_INPUT_SCHEMA",
     "HTTP_REGISTER_API_OUTPUT_SCHEMA",
     "HTTP_UNREGISTER_API_INPUT_SCHEMA",
     "HTTP_UNREGISTER_API_OUTPUT_SCHEMA",
+    "HandlerDescriptor",
     "JSONSchema",
     "LLM_CHAT_INPUT_SCHEMA",
     "LLM_CHAT_OUTPUT_SCHEMA",
@@ -1161,14 +327,24 @@ __all__ = [
     "LLM_CHAT_RAW_OUTPUT_SCHEMA",
     "LLM_STREAM_CHAT_INPUT_SCHEMA",
     "LLM_STREAM_CHAT_OUTPUT_SCHEMA",
+    "LLM_TOOL_MANAGER_ACTIVATE_INPUT_SCHEMA",
+    "LLM_TOOL_MANAGER_ACTIVATE_OUTPUT_SCHEMA",
+    "LLM_TOOL_MANAGER_ADD_INPUT_SCHEMA",
+    "LLM_TOOL_MANAGER_ADD_OUTPUT_SCHEMA",
+    "LLM_TOOL_MANAGER_DEACTIVATE_INPUT_SCHEMA",
+    "LLM_TOOL_MANAGER_DEACTIVATE_OUTPUT_SCHEMA",
+    "LLM_TOOL_MANAGER_GET_INPUT_SCHEMA",
+    "LLM_TOOL_MANAGER_GET_OUTPUT_SCHEMA",
+    "LLM_TOOL_SPEC_SCHEMA",
+    "LocalFilterRefSpec",
     "MEMORY_DELETE_INPUT_SCHEMA",
-    "MEMORY_DELETE_OUTPUT_SCHEMA",
     "MEMORY_DELETE_MANY_INPUT_SCHEMA",
     "MEMORY_DELETE_MANY_OUTPUT_SCHEMA",
+    "MEMORY_DELETE_OUTPUT_SCHEMA",
     "MEMORY_GET_INPUT_SCHEMA",
-    "MEMORY_GET_OUTPUT_SCHEMA",
     "MEMORY_GET_MANY_INPUT_SCHEMA",
     "MEMORY_GET_MANY_OUTPUT_SCHEMA",
+    "MEMORY_GET_OUTPUT_SCHEMA",
     "MEMORY_SAVE_INPUT_SCHEMA",
     "MEMORY_SAVE_OUTPUT_SCHEMA",
     "MEMORY_SAVE_WITH_TTL_INPUT_SCHEMA",
@@ -1185,29 +361,44 @@ __all__ = [
     "METADATA_LIST_PLUGINS_OUTPUT_SCHEMA",
     "MessageTrigger",
     "MessageTypeFilterSpec",
-    "ParamSpec",
-    "PLATFORM_GET_MEMBERS_INPUT_SCHEMA",
-    "PLATFORM_GET_MEMBERS_OUTPUT_SCHEMA",
+    "PROVIDER_GET_CURRENT_CHAT_PROVIDER_ID_INPUT_SCHEMA",
+    "PROVIDER_GET_CURRENT_CHAT_PROVIDER_ID_OUTPUT_SCHEMA",
+    "PROVIDER_GET_USING_INPUT_SCHEMA",
+    "PROVIDER_GET_USING_OUTPUT_SCHEMA",
+    "PROVIDER_LIST_ALL_INPUT_SCHEMA",
+    "PROVIDER_LIST_ALL_OUTPUT_SCHEMA",
+    "PROVIDER_META_SCHEMA",
     "PLATFORM_GET_GROUP_INPUT_SCHEMA",
     "PLATFORM_GET_GROUP_OUTPUT_SCHEMA",
-    "PLATFORM_SEND_CHAIN_INPUT_SCHEMA",
-    "PLATFORM_SEND_CHAIN_OUTPUT_SCHEMA",
+    "PLATFORM_GET_MEMBERS_INPUT_SCHEMA",
+    "PLATFORM_GET_MEMBERS_OUTPUT_SCHEMA",
+    "PLATFORM_INSTANCE_SCHEMA",
+    "PLATFORM_LIST_INSTANCES_INPUT_SCHEMA",
+    "PLATFORM_LIST_INSTANCES_OUTPUT_SCHEMA",
     "PLATFORM_SEND_BY_SESSION_INPUT_SCHEMA",
     "PLATFORM_SEND_BY_SESSION_OUTPUT_SCHEMA",
+    "PLATFORM_SEND_CHAIN_INPUT_SCHEMA",
+    "PLATFORM_SEND_CHAIN_OUTPUT_SCHEMA",
     "PLATFORM_SEND_IMAGE_INPUT_SCHEMA",
     "PLATFORM_SEND_IMAGE_OUTPUT_SCHEMA",
     "PLATFORM_SEND_INPUT_SCHEMA",
     "PLATFORM_SEND_OUTPUT_SCHEMA",
+    "ParamSpec",
     "Permissions",
+    "PlatformFilterSpec",
+    "REGISTRY_COMMAND_REGISTER_INPUT_SCHEMA",
+    "REGISTRY_COMMAND_REGISTER_OUTPUT_SCHEMA",
+    "REGISTRY_GET_HANDLER_BY_FULL_NAME_INPUT_SCHEMA",
+    "REGISTRY_GET_HANDLER_BY_FULL_NAME_OUTPUT_SCHEMA",
+    "REGISTRY_GET_HANDLERS_BY_EVENT_TYPE_INPUT_SCHEMA",
+    "REGISTRY_GET_HANDLERS_BY_EVENT_TYPE_OUTPUT_SCHEMA",
     "RESERVED_CAPABILITY_NAMESPACES",
     "RESERVED_CAPABILITY_PREFIXES",
-    "ScheduleTrigger",
     "SESSION_PLUGIN_FILTER_HANDLERS_INPUT_SCHEMA",
     "SESSION_PLUGIN_FILTER_HANDLERS_OUTPUT_SCHEMA",
     "SESSION_PLUGIN_IS_ENABLED_INPUT_SCHEMA",
     "SESSION_PLUGIN_IS_ENABLED_OUTPUT_SCHEMA",
     "SESSION_REF_SCHEMA",
-    "SessionRef",
     "SESSION_SERVICE_IS_LLM_ENABLED_INPUT_SCHEMA",
     "SESSION_SERVICE_IS_LLM_ENABLED_OUTPUT_SCHEMA",
     "SESSION_SERVICE_IS_TTS_ENABLED_INPUT_SCHEMA",
@@ -1216,8 +407,24 @@ __all__ = [
     "SESSION_SERVICE_SET_LLM_STATUS_OUTPUT_SCHEMA",
     "SESSION_SERVICE_SET_TTS_STATUS_INPUT_SCHEMA",
     "SESSION_SERVICE_SET_TTS_STATUS_OUTPUT_SCHEMA",
+    "ScheduleTrigger",
+    "SessionRef",
+    "SYSTEM_EVENT_HANDLER_WHITELIST_GET_INPUT_SCHEMA",
+    "SYSTEM_EVENT_HANDLER_WHITELIST_GET_OUTPUT_SCHEMA",
+    "SYSTEM_EVENT_HANDLER_WHITELIST_SET_INPUT_SCHEMA",
+    "SYSTEM_EVENT_HANDLER_WHITELIST_SET_OUTPUT_SCHEMA",
+    "SYSTEM_EVENT_LLM_GET_STATE_INPUT_SCHEMA",
+    "SYSTEM_EVENT_LLM_GET_STATE_OUTPUT_SCHEMA",
+    "SYSTEM_EVENT_LLM_REQUEST_INPUT_SCHEMA",
+    "SYSTEM_EVENT_LLM_REQUEST_OUTPUT_SCHEMA",
     "SYSTEM_EVENT_REACT_INPUT_SCHEMA",
     "SYSTEM_EVENT_REACT_OUTPUT_SCHEMA",
+    "SYSTEM_EVENT_RESULT_CLEAR_INPUT_SCHEMA",
+    "SYSTEM_EVENT_RESULT_CLEAR_OUTPUT_SCHEMA",
+    "SYSTEM_EVENT_RESULT_GET_INPUT_SCHEMA",
+    "SYSTEM_EVENT_RESULT_GET_OUTPUT_SCHEMA",
+    "SYSTEM_EVENT_RESULT_SET_INPUT_SCHEMA",
+    "SYSTEM_EVENT_RESULT_SET_OUTPUT_SCHEMA",
     "SYSTEM_EVENT_SEND_STREAMING_CHUNK_INPUT_SCHEMA",
     "SYSTEM_EVENT_SEND_STREAMING_CHUNK_OUTPUT_SCHEMA",
     "SYSTEM_EVENT_SEND_STREAMING_CLOSE_INPUT_SCHEMA",
@@ -1227,6 +434,4 @@ __all__ = [
     "SYSTEM_EVENT_SEND_TYPING_INPUT_SCHEMA",
     "SYSTEM_EVENT_SEND_TYPING_OUTPUT_SCHEMA",
     "Trigger",
-    "LocalFilterRefSpec",
-    "PlatformFilterSpec",
 ]

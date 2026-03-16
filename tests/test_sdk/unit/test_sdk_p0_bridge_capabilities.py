@@ -59,7 +59,13 @@ from astrbot.core.sdk_bridge.event_converter import EventConverter
 from astrbot.core.sdk_bridge.plugin_bridge import SdkPluginBridge
 from astrbot_sdk import MessageSession
 from astrbot_sdk.clients.registry import HandlerMetadata
+from astrbot_sdk.errors import AstrBotError
 from astrbot_sdk.events import MessageEvent
+from astrbot_sdk.protocol.descriptors import (
+    CommandTrigger,
+    HandlerDescriptor,
+    ParamSpec,
+)
 from astrbot_sdk.testing import MockContext
 
 
@@ -362,6 +368,69 @@ def test_sdk_request_overlay_controls_llm_result_and_whitelist() -> None:
 
     assert bridge.clear_result_for_request(request_id) is True
     assert bridge.get_effective_result(event) is None
+
+
+@pytest.mark.unit
+def test_sdk_bridge_dynamic_command_routes_register_and_match() -> None:
+    class _RouteFakeEvent:
+        def __init__(self, text: str) -> None:
+            self._text = text
+
+        def get_message_type(self):
+            return types.SimpleNamespace(value="private")
+
+        def get_group_id(self) -> str:
+            return ""
+
+        def get_sender_id(self) -> str:
+            return "user-1"
+
+        def get_platform_name(self) -> str:
+            return "test-platform"
+
+        def get_message_str(self) -> str:
+            return self._text
+
+        def is_admin(self) -> bool:
+            return False
+
+    bridge = SdkPluginBridge(_OverlayFakeStarContext())
+    descriptor = HandlerDescriptor(
+        id="sdk-demo:demo.echo",
+        trigger=CommandTrigger(command="noop"),
+        param_specs=[ParamSpec(name="phrase", type="greedy_str")],
+    )
+    handler_ref = types.SimpleNamespace(descriptor=descriptor, declaration_order=0)
+    bridge._records = {
+        "sdk-demo": types.SimpleNamespace(
+            state="enabled",
+            plugin_id="sdk-demo",
+            load_order=0,
+            handlers=[handler_ref],
+            dynamic_command_routes=[],
+            session=object(),
+        )
+    }
+
+    bridge.register_dynamic_command_route(
+        plugin_id="sdk-demo",
+        command_name="hello",
+        handler_full_name="sdk-demo:demo.echo",
+        desc="dynamic hello",
+        priority=6,
+    )
+    matches = bridge._match_handlers(_RouteFakeEvent("hello world"))
+
+    assert len(matches) == 1
+    assert matches[0].handler_id == "sdk-demo:demo.echo"
+    assert matches[0].args == {"phrase": "world"}
+
+    with pytest.raises(AstrBotError, match="must belong to the caller plugin"):
+        bridge.register_dynamic_command_route(
+            plugin_id="sdk-demo",
+            command_name="hello",
+            handler_full_name="other:demo.echo",
+        )
 
 
 @pytest.mark.unit

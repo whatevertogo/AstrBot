@@ -251,6 +251,7 @@ class PluginHarness:
             if self.plugin is not None:
                 self.router.set_plugin_enabled(self.plugin.name, False)
                 self.router.set_plugin_handlers(self.plugin.name, [])
+                self.router.remove_dynamic_command_routes_for_plugin(self.plugin.name)
                 self.router.remove_http_apis_for_plugin(self.plugin.name)
             self._started = False
 
@@ -459,8 +460,60 @@ class PluginHarness:
             if args is None:
                 continue
             ranked.append((loaded.descriptor.priority, index, loaded, args))
+        for dynamic in self._match_dynamic_handlers(event_payload):
+            ranked.append(dynamic)
         ranked.sort(key=lambda item: (-item[0], item[1]))
         return [(loaded, args) for _priority, _index, loaded, args in ranked]
+
+    def _match_dynamic_handlers(
+        self,
+        event_payload: dict[str, Any],
+    ) -> list[tuple[int, int, LoadedHandler, dict[str, Any]]]:
+        assert self.loaded_plugin is not None
+        assert self.plugin is not None
+        ranked: list[tuple[int, int, LoadedHandler, dict[str, Any]]] = []
+        routes = self.router.list_dynamic_command_routes(self.plugin.name)
+        handler_map = {
+            loaded.descriptor.id: loaded for loaded in self.loaded_plugin.handlers
+        }
+        base_order = len(self.loaded_plugin.handlers)
+        for index, route in enumerate(routes):
+            if not isinstance(route, dict):
+                continue
+            handler_full_name = str(route.get("handler_full_name", "")).strip()
+            loaded = handler_map.get(handler_full_name)
+            if loaded is None:
+                continue
+            args = self._match_dynamic_route(loaded, route, event_payload)
+            if args is None:
+                continue
+            priority = route.get("priority", loaded.descriptor.priority)
+            if not isinstance(priority, int) or isinstance(priority, bool):
+                priority = loaded.descriptor.priority
+            ranked.append((priority, base_order + index, loaded, args))
+        return ranked
+
+    def _match_dynamic_route(
+        self,
+        loaded: LoadedHandler,
+        route: dict[str, Any],
+        event_payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        if not self._passes_filters(loaded, event_payload):
+            return None
+        command_name = str(route.get("command_name", "")).strip()
+        if not command_name:
+            return None
+        text = str(event_payload.get("text", ""))
+        if bool(route.get("use_regex", False)):
+            match = re.search(command_name, text)
+            if match is None:
+                return None
+            return self._build_regex_args(loaded.descriptor.param_specs, match)
+        remainder = self._match_command_name(text.strip(), command_name)
+        if remainder is None:
+            return None
+        return self._build_command_args(loaded.descriptor.param_specs, remainder)
 
     def _match_handler(
         self,

@@ -202,6 +202,12 @@ class MockCapabilityRouter(CapabilityRouter):
         self.db = InMemoryDB(self.db_store)
         self.memory = InMemoryMemory(self.memory_store)
 
+    def list_dynamic_command_routes(self, plugin_id: str) -> list[dict[str, Any]]:
+        return super().list_dynamic_command_routes(plugin_id)
+
+    def remove_dynamic_command_routes_for_plugin(self, plugin_id: str) -> None:
+        super().remove_dynamic_command_routes_for_plugin(plugin_id)
+
     def enqueue_llm_response(self, text: str) -> None:
         self._llm_responses.append(text)
 

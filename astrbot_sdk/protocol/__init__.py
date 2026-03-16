@@ -7,7 +7,13 @@
 `InitializeOutput`。
 """
 
-from .descriptors import (
+from __future__ import annotations
+
+from typing import Any
+
+from . import _builtin_schemas as builtin_schemas
+from .descriptors import (  # noqa: F401
+    BUILTIN_CAPABILITY_SCHEMAS,
     CapabilityDescriptor,
     CommandRouteSpec,
     CommandTrigger,
@@ -25,7 +31,7 @@ from .descriptors import (
     SessionRef,
     Trigger,
 )
-from .messages import (
+from .messages import (  # noqa: F401
     CancelMessage,
     ErrorPayload,
     EventMessage,
@@ -38,11 +44,13 @@ from .messages import (
     parse_message,
 )
 
-__all__ = [
+_DIRECT_EXPORTS = [
+    "BUILTIN_CAPABILITY_SCHEMAS",
     "CapabilityDescriptor",
     "CommandRouteSpec",
     "CommandTrigger",
     "CancelMessage",
+    "builtin_schemas",
     "CompositeFilterSpec",
     "ErrorPayload",
     "EventTrigger",
@@ -66,3 +74,20 @@ __all__ = [
     "Trigger",
     "parse_message",
 ]
+
+_BUILTIN_SCHEMA_EXPORTS = tuple(
+    name for name in builtin_schemas.__all__ if name != "BUILTIN_CAPABILITY_SCHEMAS"
+)
+
+
+def __getattr__(name: str) -> Any:
+    if name in _BUILTIN_SCHEMA_EXPORTS:
+        return getattr(builtin_schemas, name)
+    raise AttributeError(name)
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_BUILTIN_SCHEMA_EXPORTS))
+
+
+__all__ = list(dict.fromkeys([*_DIRECT_EXPORTS, *_BUILTIN_SCHEMA_EXPORTS]))

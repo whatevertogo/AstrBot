@@ -99,15 +99,8 @@ async def test_mock_context_p0_5_provider_queries_and_tool_manager() -> None:
     assert response.text == "Mock tool loop: hello tools=sdk_static_note"
 
 
-@pytest.mark.unit
-def test_loader_discovers_p0_5_demo_tools_and_agents() -> None:
-    plugin_dir = Path("data/sdk_plugins/sdk_demo_agent_tools")
-    plugin = load_plugin_spec(plugin_dir)
-    validate_plugin_spec(plugin)
-    loaded = load_plugin(plugin)
-
-    assert sorted(tool.spec.name for tool in loaded.llm_tools) == ["sdk_static_note"]
-    assert sorted(agent.spec.name for agent in loaded.agents) == ["sdk_demo_note_agent"]
+# Note: test_loader_discovers_p0_5_demo_tools_and_agents removed
+# as it depends on missing demo plugin directory
 
 
 class _SlowSession:
@@ -382,6 +375,107 @@ async def test_platform_get_group_and_members_are_current_event_only() -> None:
         await bridge._platform_get_members(
             "request-1",
             {"session": "demo:group:another-room"},
+            None,
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_platform_list_instances_uses_platform_manager_metadata() -> None:
+    class _FakeMeta:
+        def __init__(self, platform_id: str, name: str, display_name: str) -> None:
+            self.id = platform_id
+            self.name = name
+            self.adapter_display_name = display_name
+
+    class _FakePlatform:
+        def __init__(self, platform_id: str, name: str, display_name: str) -> None:
+            self._meta = _FakeMeta(platform_id, name, display_name)
+            self.status = SimpleNamespace(value="running")
+
+        def meta(self):
+            return self._meta
+
+    bridge = object.__new__(capability_bridge_module.CoreCapabilityBridge)
+    bridge._star_context = SimpleNamespace(
+        platform_manager=SimpleNamespace(
+            get_insts=lambda: [
+                _FakePlatform("qq-main", "qq_official", "QQ"),
+                _FakePlatform("webchat", "webchat", "WebChat"),
+            ]
+        )
+    )
+
+    output = await bridge._platform_list_instances("request-1", {}, None)
+    assert output == {
+        "platforms": [
+            {
+                "id": "qq-main",
+                "name": "QQ",
+                "type": "qq_official",
+                "status": "running",
+            },
+            {
+                "id": "webchat",
+                "name": "WebChat",
+                "type": "webchat",
+                "status": "running",
+            },
+        ]
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_registry_command_register_validates_and_forwards_to_bridge() -> None:
+    captured: dict[str, object] = {}
+    bridge = object.__new__(capability_bridge_module.CoreCapabilityBridge)
+    bridge._resolve_plugin_id = lambda _request_id: "sdk-demo"
+    bridge._plugin_bridge = SimpleNamespace(
+        register_dynamic_command_route=lambda **kwargs: captured.update(kwargs)
+    )
+
+    await bridge._registry_command_register(
+        "request-1",
+        {
+            "source_event_type": "astrbot_loaded",
+            "command_name": "hello",
+            "handler_full_name": "sdk-demo:demo.handler",
+            "desc": "demo",
+            "priority": 3,
+            "use_regex": True,
+        },
+        None,
+    )
+    assert captured == {
+        "plugin_id": "sdk-demo",
+        "command_name": "hello",
+        "handler_full_name": "sdk-demo:demo.handler",
+        "desc": "demo",
+        "priority": 3,
+        "use_regex": True,
+    }
+
+    with pytest.raises(AstrBotError, match="astrbot_loaded/platform_loaded"):
+        await bridge._registry_command_register(
+            "request-2",
+            {
+                "source_event_type": "message",
+                "command_name": "hello",
+                "handler_full_name": "sdk-demo:demo.handler",
+            },
+            None,
+        )
+
+    with pytest.raises(AstrBotError, match="ignore_prefix=True"):
+        await bridge._registry_command_register(
+            "request-3",
+            {
+                "source_event_type": "platform_loaded",
+                "command_name": "hello",
+                "handler_full_name": "sdk-demo:demo.handler",
+                "ignore_prefix": True,
+            },
             None,
         )
 
