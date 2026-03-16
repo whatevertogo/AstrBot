@@ -47,15 +47,15 @@ class Star(PluginKVStoreMixin):
         return ctx
 
     def _context_var(self) -> ContextVar[Context | None]:
-        context_var: Any = getattr(self, "__astrbot_context_var__", None)
-        if isinstance(context_var, ContextVar):
-            return cast(ContextVar[Context | None], context_var)
-        context_var: ContextVar[Context | None] = ContextVar(
+        existing_context_var = getattr(self, "__astrbot_context_var__", None)
+        if isinstance(existing_context_var, ContextVar):
+            return cast("ContextVar[Context | None]", existing_context_var)
+        created_context_var: ContextVar[Context | None] = ContextVar(
             f"astrbot_sdk_star_context_{id(self)}",
             default=None,
         )
-        setattr(self, "__astrbot_context_var__", context_var)
-        return context_var
+        setattr(self, "__astrbot_context_var__", created_context_var)
+        return created_context_var
 
     def _bind_runtime_context(self, ctx: Context | None) -> Token[Context | None]:
         return self._context_var().set(ctx)
