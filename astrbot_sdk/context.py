@@ -10,6 +10,7 @@ Attributes:
     llm: LLM 能力客户端，用于 AI 对话
     memory: 记忆能力客户端，用于语义存储
     db: 数据库客户端，用于 KV 持久化
+    files: 文件服务客户端，用于文件令牌注册与解析
     platform: 平台客户端，用于发送消息
     providers: Provider 客户端，用于查询和调用专用 Provider
     provider_manager: Provider 管理客户端，用于 reserved/system 级操作
@@ -33,6 +34,7 @@ from typing import Any
 
 from loguru import logger as base_logger
 
+from ._plugin_logger import PluginLogger
 from ._star_runtime import current_star_instance
 from .clients import (
     DBClient,
@@ -47,6 +49,7 @@ from .clients import (
     RegistryClient,
 )
 from .clients._proxy import CapabilityProxy
+from .clients.files import FileServiceClient
 from .clients.llm import LLMResponse
 from .clients.managers import (
     ConversationManagerClient,
@@ -250,12 +253,16 @@ class Context:
             logger: 日志器，None 时使用默认 logger 并绑定 plugin_id
         """
         proxy = CapabilityProxy(peer, caller_plugin_id=plugin_id)
-        bound_logger = logger or base_logger.bind(plugin_id=plugin_id)
+        if isinstance(logger, PluginLogger):
+            bound_logger = logger
+        else:
+            bound_logger = logger or base_logger.bind(plugin_id=plugin_id)
         self._proxy = proxy
         self.peer = peer
         self.llm = LLMClient(proxy)
         self.memory = MemoryClient(proxy)
         self.db = DBClient(proxy)
+        self.files = FileServiceClient(proxy)
         self.platform = PlatformClient(proxy)
         self.providers = ProviderClient(proxy)
         self.provider_manager = ProviderManagerClient(
@@ -276,7 +283,11 @@ class Context:
         self.kb_manager = self.kbs
         self._llm_tool_manager = LLMToolManager(proxy)
         self.plugin_id = plugin_id
-        self.logger = bound_logger
+        self.logger = (
+            bound_logger
+            if isinstance(bound_logger, PluginLogger)
+            else PluginLogger(plugin_id=plugin_id, logger=bound_logger)
+        )
         self.cancel_token = cancel_token or CancelToken()
         self._source_event_payload = (
             dict(source_event_payload) if isinstance(source_event_payload, dict) else {}
@@ -286,6 +297,13 @@ class Context:
         """Return the plugin-scoped data directory path."""
         output = await self._proxy.call("system.get_data_dir", {})
         return Path(str(output.get("path", "")))
+
+    async def _register_file_url(
+        self,
+        path: str,
+        timeout: float | None = None,
+    ) -> str:
+        return await self.files._register_file_url(path, timeout=timeout)
 
     async def text_to_image(
         self,

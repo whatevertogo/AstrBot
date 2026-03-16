@@ -795,16 +795,16 @@
 5. **动态 LLM Tool 注册** - `register_llm_tool()`, `unregister_llm_tool()` ✅
 
 #### P1.5 - 其他系统能力
-1. **文件服务** - `FileTokenService`, `register_file()`, `handle_file()`, `register_to_file_service()`
+1. **文件服务** - `ctx.files.register_file()`, `ctx.files.handle_file()`, `register_to_file_service()` ✅
 2. **MCP 支持** - `MCPClient`, `MCPTool`
 3. **事件总线** - `EventBus`, `event_queue`
 4. **热重载** - `_watch_plugins_changes()`
 5. **国际化** - `ConfigMetadataI18n`, `convert_to_i18n_keys()`
 6. **插件依赖管理** - `PluginVersionIncompatibleError`, `PluginDependencyInstallError`, `_import_plugin_with_dependency_recovery()`
 7. **消息撤回** - 消息撤回 API
-8. **日志系统** - `LogBroker`, `LogManager.GetLogger()`, 日志订阅机制
+8. **日志系统** - `ctx.logger.watch()` ✅；`LogBroker` / `LogManager.GetLogger()` 延期
 9. **Cron 定时任务管理** - `CronJobManager`, 任务持久化
-10. **Reply 消息组件属性** - `id`, `chain`, `sender_id`, `sender_nickname`, `message_str`
+10. **Reply 消息组件属性** - `id`, `chain`, `sender_id`, `sender_nickname`, `message_str` ✅
 
 ---
 
@@ -1136,17 +1136,17 @@
 | `ctx.logger` | ✅ | 绑定插件 ID 的日志器 |
 | `LogBroker` 日志代理 | ❌ | 日志缓存和订阅分发 |
 | `LogManager.GetLogger()` | ❌ | Core 端日志管理器 |
-| 日志订阅机制 | ❌ | 外部订阅日志消息队列 |
+| 日志订阅机制 | ✅ | `ctx.logger.watch()` 仅订阅当前插件在 SDK worker 内的日志 |
 
 ### 文件服务
 
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
 | `FileTokenService` | ❌ | 临时文件令牌服务 |
-| `register_file(path, timeout) -> token` | ❌ | 注册文件获取下载令牌 |
-| `handle_file(token) -> path` | ❌ | 通过令牌获取文件路径 |
-| `File.register_to_file_service()` | ❌ | 消息组件注册到文件服务 |
-| `File.get_file()` | ❌ | 异步获取文件（支持 URL 下载） |
+| `register_file(path, timeout) -> token` | ✅ | 通过 `ctx.files.register_file()` 注册文件获取下载令牌 |
+| `handle_file(token) -> path` | ✅ | 通过 `ctx.files.handle_file()` 解析文件路径 |
+| `File.register_to_file_service()` | ✅ | 消息组件通过运行时 context 调宿主文件服务 |
+| `File.get_file()` | ✅ | 异步获取文件（支持 URL 下载） |
 
 ### Webhook 处理
 
@@ -1243,8 +1243,8 @@
 
 | 属性 | 状态 | 说明 |
 | --- | --- | --- |
-| `Reply.id` | ❌ | 被引用消息 ID |
-| `Reply.chain` | ❌ | 被引用的消息段列表 |
-| `Reply.sender_id` | ❌ | 发送者 ID |
-| `Reply.sender_nickname` | ❌ | 发送者昵称 |
-| `Reply.message_str` | ❌ | 被引用消息的纯文本 |
+| `Reply.id` | ✅ | 被引用消息 ID |
+| `Reply.chain` | ✅ | 被引用的消息段列表 |
+| `Reply.sender_id` | ✅ | 发送者 ID |
+| `Reply.sender_nickname` | ✅ | 发送者昵称 |
+| `Reply.message_str` | ✅ | 被引用消息的纯文本 |

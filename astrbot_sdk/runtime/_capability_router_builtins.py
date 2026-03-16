@@ -71,6 +71,7 @@ class _CapabilityRouterHost:
     _session_service_configs: dict[str, dict[str, Any]]
     _db_watch_subscriptions: dict[str, tuple[str | None, asyncio.Queue[dict[str, Any]]]]
     _dynamic_command_routes: dict[str, list[dict[str, Any]]]
+    _file_token_store: dict[str, str]
     _platform_instances: list[dict[str, Any]]
     _persona_store: dict[str, dict[str, Any]]
     _conversation_store: dict[str, dict[str, Any]]
@@ -2366,6 +2367,16 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
             exposed=False,
         )
         self.register(
+            self._builtin_descriptor("system.file.register", "注册文件令牌"),
+            call_handler=self._system_file_register,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor("system.file.handle", "解析文件令牌"),
+            call_handler=self._system_file_handle,
+            exposed=False,
+        )
+        self.register(
             self._builtin_descriptor(
                 "system.session_waiter.register",
                 "注册会话等待器",
@@ -2522,6 +2533,27 @@ class BuiltinCapabilityRouterMixin(_CapabilityRouterHost):
         if bool(payload.get("return_url", True)):
             return {"result": f"mock://html_render/{tmpl}"}
         return {"result": json.dumps({"tmpl": tmpl, "data": data}, ensure_ascii=False)}
+
+    async def _system_file_register(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        path = str(payload.get("path", "")).strip()
+        if not path:
+            raise AstrBotError.invalid_input("system.file.register requires path")
+        file_token = uuid.uuid4().hex
+        self._file_token_store[file_token] = path
+        return {"token": file_token, "url": f"mock://file/{file_token}"}
+
+    async def _system_file_handle(
+        self, _request_id: str, payload: dict[str, Any], _token
+    ) -> dict[str, Any]:
+        file_token = str(payload.get("token", "")).strip()
+        if not file_token:
+            raise AstrBotError.invalid_input("system.file.handle requires token")
+        path = self._file_token_store.pop(file_token, None)
+        if path is None:
+            raise AstrBotError.invalid_input(f"Unknown file token: {file_token}")
+        return {"path": path}
 
     async def _system_event_llm_get_state(
         self, request_id: str, _payload: dict[str, Any], _token

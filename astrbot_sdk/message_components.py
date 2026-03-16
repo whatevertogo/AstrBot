@@ -18,6 +18,8 @@ from typing import Any
 from urllib.parse import urlparse
 from urllib.request import urlretrieve
 
+from ._star_runtime import current_runtime_context
+
 
 def _temp_path(prefix: str, suffix: str = "") -> Path:
     return Path(tempfile.gettempdir()) / f"{prefix}_{uuid.uuid4().hex}{suffix}"
@@ -39,16 +41,36 @@ def _stringify_mapping(mapping: Mapping[Any, Any]) -> dict[str, Any]:
 
 
 async def _register_file_to_service(path: str) -> str:
-    from astrbot.core import astrbot_config, file_token_service
+    context = current_runtime_context()
+    if context is None:
+        raise RuntimeError("message component file service requires runtime context")
+    return await context._register_file_url(path)
 
-    callback_host = astrbot_config.get("callback_api_base")
-    if not callback_host:
-        raise RuntimeError("未配置 callback_api_base，文件服务不可用")
-    register_file = getattr(file_token_service, "register_file", None)
-    if not inspect.iscoroutinefunction(register_file):
-        raise RuntimeError("文件服务未正确初始化，register_file 不可用")
-    token = await register_file(path)
-    return f"{str(callback_host).rstrip('/')}/api/file/{token}"
+
+def _reply_chain_payloads_sync(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [component_to_payload_sync(item) for item in value]
+
+
+async def _reply_chain_payloads(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [await component_to_payload(item) for item in value]
+
+
+def _coerce_reply_chain(value: Any) -> list[BaseMessageComponent]:
+    if not isinstance(value, list):
+        return []
+    if value and all(isinstance(item, BaseMessageComponent) for item in value):
+        return list(value)
+    return payloads_to_components(value)
+
+
+def _component_type_name(component: Any) -> str:
+    raw_type = getattr(component, "type", "unknown")
+    normalized = getattr(raw_type, "value", raw_type)
+    return str(normalized or "unknown").lower()
 
 
 class BaseMessageComponent:
@@ -101,7 +123,7 @@ class Reply(BaseMessageComponent):
 
     def __init__(self, **kwargs: Any) -> None:
         self.id = kwargs.get("id", "")
-        self.chain = kwargs.get("chain", [])
+        self.chain = _coerce_reply_chain(kwargs.get("chain", []))
         self.sender_id = kwargs.get("sender_id", 0)
         self.sender_nickname = kwargs.get("sender_nickname", "")
         self.time = kwargs.get("time", 0)
@@ -109,6 +131,38 @@ class Reply(BaseMessageComponent):
         self.text = kwargs.get("text", "")
         self.qq = kwargs.get("qq", 0)
         self.seq = kwargs.get("seq", 0)
+
+    def toDict(self) -> dict[str, Any]:
+        return {
+            "type": "reply",
+            "data": {
+                "id": self.id,
+                "chain": _reply_chain_payloads_sync(self.chain),
+                "sender_id": self.sender_id,
+                "sender_nickname": self.sender_nickname,
+                "time": self.time,
+                "message_str": self.message_str,
+                "text": self.text,
+                "qq": self.qq,
+                "seq": self.seq,
+            },
+        }
+
+    async def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": "reply",
+            "data": {
+                "id": self.id,
+                "chain": await _reply_chain_payloads(self.chain),
+                "sender_id": self.sender_id,
+                "sender_nickname": self.sender_nickname,
+                "time": self.time,
+                "message_str": self.message_str,
+                "text": self.text,
+                "qq": self.qq,
+                "seq": self.seq,
+            },
+        }
 
 
 class Image(BaseMessageComponent):
@@ -406,6 +460,21 @@ def component_to_payload_sync(component: Any) -> dict[str, Any]:
         return component.toDict()
     if isinstance(component, Plain):
         return {"type": "text", "data": {"text": component.text}}
+    if _component_type_name(component) == "reply":
+        return {
+            "type": "reply",
+            "data": {
+                "id": getattr(component, "id", ""),
+                "chain": _reply_chain_payloads_sync(getattr(component, "chain", [])),
+                "sender_id": getattr(component, "sender_id", 0),
+                "sender_nickname": getattr(component, "sender_nickname", ""),
+                "time": getattr(component, "time", 0),
+                "message_str": getattr(component, "message_str", ""),
+                "text": getattr(component, "text", ""),
+                "qq": getattr(component, "qq", 0),
+                "seq": getattr(component, "seq", 0),
+            },
+        }
     to_dict = getattr(component, "toDict", None)
     if callable(to_dict):
         result = to_dict()

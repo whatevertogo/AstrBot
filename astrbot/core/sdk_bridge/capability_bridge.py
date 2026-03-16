@@ -31,6 +31,7 @@ from .event_converter import EventConverter
 
 if TYPE_CHECKING:
     from astrbot.core.agent.tool import ToolSet
+    from astrbot.core.file_token_service import FileTokenService
     from astrbot.core.provider.entities import LLMResponse
     from astrbot.core.star.context import Context as StarContext
 
@@ -45,6 +46,18 @@ def _get_runtime_html_renderer():
     from astrbot.core import html_renderer
 
     return html_renderer
+
+
+def _get_runtime_astrbot_config():
+    from astrbot.core import astrbot_config
+
+    return astrbot_config
+
+
+def _get_runtime_file_token_service() -> FileTokenService:
+    from astrbot.core import file_token_service
+
+    return file_token_service
 
 
 def _get_runtime_tool_types():
@@ -2332,6 +2345,16 @@ class CoreCapabilityBridge(CapabilityRouter):
             exposed=False,
         )
         self.register(
+            self._builtin_descriptor("system.file.register", "Register file token"),
+            call_handler=self._system_file_register,
+            exposed=False,
+        )
+        self.register(
+            self._builtin_descriptor("system.file.handle", "Resolve file token"),
+            call_handler=self._system_file_handle,
+            exposed=False,
+        )
+        self.register(
             self._builtin_descriptor(
                 "system.session_waiter.register",
                 "Register sdk session waiter",
@@ -3447,6 +3470,49 @@ class CoreCapabilityBridge(CapabilityRouter):
             options=options,
         )
         return {"result": result}
+
+    async def _system_file_register(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        path = str(payload.get("path", "")).strip()
+        if not path:
+            raise AstrBotError.invalid_input("system.file.register requires path")
+        raw_timeout = payload.get("timeout")
+        timeout: float | None
+        if raw_timeout is None:
+            timeout = None
+        else:
+            try:
+                timeout = float(raw_timeout)
+            except (TypeError, ValueError) as exc:
+                raise AstrBotError.invalid_input(
+                    "system.file.register timeout must be a number or null"
+                ) from exc
+        file_token = await _get_runtime_file_token_service().register_file(
+            path, timeout
+        )
+        callback_host = _get_runtime_astrbot_config().get("callback_api_base")
+        if not callback_host:
+            raise AstrBotError.invalid_input(
+                "callback_api_base is required for system.file.register"
+            )
+        base_url = str(callback_host).rstrip("/")
+        return {"token": file_token, "url": f"{base_url}/api/file/{file_token}"}
+
+    async def _system_file_handle(
+        self,
+        _request_id: str,
+        payload: dict[str, Any],
+        _token,
+    ) -> dict[str, Any]:
+        file_token = str(payload.get("token", "")).strip()
+        if not file_token:
+            raise AstrBotError.invalid_input("system.file.handle requires token")
+        path = await _get_runtime_file_token_service().handle_file(file_token)
+        return {"path": str(path)}
 
     async def _system_session_waiter_register(
         self,

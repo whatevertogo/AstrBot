@@ -11,6 +11,7 @@ capability clients so `Context` keeps a narrow, stable surface.
     - LLMClient: 文本/结构化/流式 LLM 调用
     - MemoryClient: 记忆搜索、保存、读取、删除
     - DBClient: 键值存储 get/set/delete/list
+    - FileServiceClient: 文件令牌注册与解析
     - PlatformClient: 平台消息发送与成员查询
     - ProviderClient: Provider 元信息与专用 provider proxy
     - PersonaManagerClient: 人格管理
@@ -21,6 +22,7 @@ capability clients so `Context` keeps a narrow, stable surface.
 """
 
 from .db import DBClient
+from .files import FileRegistration, FileServiceClient
 from .http import HTTPClient
 from .llm import ChatMessage, LLMClient, LLMResponse
 from .managers import (
@@ -55,6 +57,8 @@ __all__ = [
     "ConversationRecord",
     "ConversationUpdateParams",
     "DBClient",
+    "FileRegistration",
+    "FileServiceClient",
     "HTTPClient",
     "KnowledgeBaseCreateParams",
     "KnowledgeBaseManagerClient",

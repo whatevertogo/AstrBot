@@ -249,6 +249,7 @@ class CapabilityRouter(BuiltinCapabilityRouterMixin):
         self._session_plugin_configs: dict[str, dict[str, Any]] = {}
         self._session_service_configs: dict[str, dict[str, Any]] = {}
         self._dynamic_command_routes: dict[str, list[dict[str, Any]]] = {}
+        self._file_token_store: dict[str, str] = {}
         self._persona_store: dict[str, dict[str, Any]] = {}
         self._conversation_store: dict[str, dict[str, Any]] = {}
         self._session_current_conversation_ids: dict[str, str] = {}

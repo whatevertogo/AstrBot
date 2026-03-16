@@ -24,6 +24,10 @@ def current_star_context() -> Context | None:
     return _CURRENT_STAR_CONTEXT.get()
 
 
+def current_runtime_context() -> Context | None:
+    return _CURRENT_STAR_CONTEXT.get()
+
+
 def current_star_instance() -> Star | None:
     return _CURRENT_STAR_INSTANCE.get()
 

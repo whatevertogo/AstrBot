@@ -159,6 +159,24 @@ SYSTEM_HTML_RENDER_OUTPUT_SCHEMA = _object_schema(
     required=("result",),
     result={"type": "string"},
 )
+SYSTEM_FILE_REGISTER_INPUT_SCHEMA = _object_schema(
+    required=("path",),
+    path={"type": "string"},
+    timeout=_nullable({"type": "number"}),
+)
+SYSTEM_FILE_REGISTER_OUTPUT_SCHEMA = _object_schema(
+    required=("token", "url"),
+    token={"type": "string"},
+    url={"type": "string"},
+)
+SYSTEM_FILE_HANDLE_INPUT_SCHEMA = _object_schema(
+    required=("token",),
+    token={"type": "string"},
+)
+SYSTEM_FILE_HANDLE_OUTPUT_SCHEMA = _object_schema(
+    required=("path",),
+    path={"type": "string"},
+)
 SYSTEM_SESSION_WAITER_REGISTER_INPUT_SCHEMA = _object_schema(
     required=("session_key",),
     session_key={"type": "string"},
@@ -1378,6 +1396,14 @@ BUILTIN_CAPABILITY_SCHEMAS: dict[str, dict[str, JSONSchema]] = {
         "input": SYSTEM_HTML_RENDER_INPUT_SCHEMA,
         "output": SYSTEM_HTML_RENDER_OUTPUT_SCHEMA,
     },
+    "system.file.register": {
+        "input": SYSTEM_FILE_REGISTER_INPUT_SCHEMA,
+        "output": SYSTEM_FILE_REGISTER_OUTPUT_SCHEMA,
+    },
+    "system.file.handle": {
+        "input": SYSTEM_FILE_HANDLE_INPUT_SCHEMA,
+        "output": SYSTEM_FILE_HANDLE_OUTPUT_SCHEMA,
+    },
     "system.session_waiter.register": {
         "input": SYSTEM_SESSION_WAITER_REGISTER_INPUT_SCHEMA,
         "output": SYSTEM_SESSION_WAITER_REGISTER_OUTPUT_SCHEMA,
@@ -1656,4 +1682,8 @@ __all__ = [
     "SYSTEM_EVENT_SEND_STREAMING_OUTPUT_SCHEMA",
     "SYSTEM_EVENT_SEND_TYPING_INPUT_SCHEMA",
     "SYSTEM_EVENT_SEND_TYPING_OUTPUT_SCHEMA",
+    "SYSTEM_FILE_HANDLE_INPUT_SCHEMA",
+    "SYSTEM_FILE_HANDLE_OUTPUT_SCHEMA",
+    "SYSTEM_FILE_REGISTER_INPUT_SCHEMA",
+    "SYSTEM_FILE_REGISTER_OUTPUT_SCHEMA",
 ]

@@ -43,8 +43,13 @@ def _install_optional_dependency_stubs() -> None:
 _install_optional_dependency_stubs()
 
 from astrbot.core.message.components import File as CoreFile
+from astrbot.core.message.components import Plain as CorePlain
+from astrbot.core.message.components import Reply as CoreReply
+from astrbot.core.sdk_bridge.event_converter import EventConverter
 from astrbot_sdk import MessageEvent
 from astrbot_sdk import message_components as sdk_message_components
+from astrbot_sdk._plugin_logger import PluginLogEntry
+from astrbot_sdk._star_runtime import bind_star_runtime
 from astrbot_sdk.context import Context
 from astrbot_sdk.errors import AstrBotError
 from astrbot_sdk.message_components import (
@@ -74,6 +79,8 @@ class _DummyPeer:
             "system.event.send_streaming": SimpleNamespace(supports_stream=False),
             "system.event.send_streaming_chunk": SimpleNamespace(supports_stream=False),
             "system.event.send_streaming_close": SimpleNamespace(supports_stream=False),
+            "system.file.register": SimpleNamespace(supports_stream=False),
+            "system.file.handle": SimpleNamespace(supports_stream=False),
         }
         self.sent_messages: list[dict] = []
         self.event_actions: list[dict] = []
@@ -87,6 +94,7 @@ class _DummyPeer:
             }
         ]
         self._open_streams: dict[str, dict] = {}
+        self._file_tokens: dict[str, str] = {}
 
     async def invoke(self, capability: str, payload: dict, *, stream: bool = False):
         if stream:
@@ -175,6 +183,17 @@ class _DummyPeer:
                 }
             )
             return {"supported": True}
+        if capability == "system.file.register":
+            token = f"file-{len(self._file_tokens) + 1}"
+            self._file_tokens[token] = str(payload.get("path", ""))
+            return {
+                "token": token,
+                "url": f"https://callback.example/api/file/{token}",
+            }
+        if capability == "system.file.handle":
+            token = str(payload.get("token", ""))
+            path = self._file_tokens.pop(token)
+            return {"path": path}
         raise AssertionError(f"unexpected capability: {capability}")
 
     async def invoke_stream(self, capability: str, payload: dict):
@@ -243,6 +262,105 @@ def test_payloads_to_components_unknown_fallback() -> None:
 
 
 @pytest.mark.unit
+def test_reply_component_roundtrip_keeps_chain_and_metadata() -> None:
+    payload = {
+        "type": "reply",
+        "data": {
+            "id": "reply-1",
+            "sender_id": "user-9",
+            "sender_nickname": "Tester",
+            "message_str": "quoted text",
+            "chain": [{"type": "text", "data": {"text": "quoted text"}}],
+        },
+    }
+
+    component = sdk_message_components.payload_to_component(payload)
+
+    assert isinstance(component, sdk_message_components.Reply)
+    assert component.sender_id == "user-9"
+    assert component.message_str == "quoted text"
+    assert len(component.chain) == 1
+    assert isinstance(component.chain[0], Plain)
+    normalized = sdk_message_components.component_to_payload_sync(component)
+    assert normalized["type"] == "reply"
+    assert normalized["data"]["id"] == "reply-1"
+    assert normalized["data"]["sender_id"] == "user-9"
+    assert normalized["data"]["sender_nickname"] == "Tester"
+    assert normalized["data"]["message_str"] == "quoted text"
+    assert normalized["data"]["chain"] == payload["data"]["chain"]
+
+
+@pytest.mark.unit
+def test_event_converter_serializes_core_reply_chain() -> None:
+    reply = CoreReply(
+        id="reply-2",
+        sender_id="user-8",
+        sender_nickname="Quoted",
+        message_str="quoted core text",
+        chain=[CorePlain(text="quoted core text")],
+    )
+
+    class _CoreEvent:
+        is_wake = False
+        is_at_or_wake_command = False
+
+        def get_message_type(self):
+            return SimpleNamespace(value="private")
+
+        def get_message_str(self) -> str:
+            return "hello"
+
+        def get_sender_id(self) -> str:
+            return "user-1"
+
+        def get_group_id(self) -> str:
+            return ""
+
+        def get_platform_name(self) -> str:
+            return "demo"
+
+        def get_platform_id(self) -> str:
+            return "demo"
+
+        def get_self_id(self) -> str:
+            return "bot-1"
+
+        def get_sender_name(self) -> str:
+            return "Sender"
+
+        def is_admin(self) -> bool:
+            return False
+
+        def get_message_outline(self) -> str:
+            return "hello"
+
+        def get_extra(self) -> dict[str, object]:
+            return {}
+
+        @property
+        def unified_msg_origin(self) -> str:
+            return "demo:private:user-1"
+
+        def get_messages(self):
+            return [reply]
+
+    payload = EventConverter.core_to_sdk(
+        _CoreEvent(),
+        dispatch_token="dispatch-1",
+        plugin_id="sdk-demo",
+        request_id="req-1",
+    )
+
+    reply_payload = payload["messages"][0]
+    assert reply_payload["type"] == "reply"
+    assert reply_payload["data"]["sender_id"] == "user-8"
+    assert reply_payload["data"]["message_str"] == "quoted core text"
+    assert reply_payload["data"]["chain"] == [
+        {"type": "text", "data": {"text": "quoted core text"}}
+    ]
+
+
+@pytest.mark.unit
 def test_file_component_roundtrip_accepts_legacy_core_payload() -> None:
     payload = sdk_message_components.component_to_payload_sync(
         CoreFile(name="sample.txt", file="C:/tmp/sample.txt")
@@ -291,6 +409,38 @@ async def test_message_component_file_methods(
         await file_component.register_to_file_service()
         == "https://callback.example/api/file/token-123"
     )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_message_component_file_service_requires_runtime_context(
+    tmp_path: Path,
+) -> None:
+    sample = tmp_path / "sample.txt"
+    sample.write_text("hello", encoding="utf-8")
+    image = Image.fromFileSystem(str(sample))
+
+    with pytest.raises(RuntimeError, match="runtime context"):
+        await image.register_to_file_service()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_message_component_file_service_uses_current_runtime_context(
+    tmp_path: Path,
+) -> None:
+    sample = tmp_path / "sample.txt"
+    sample.write_text("hello", encoding="utf-8")
+    image = Image.fromFileSystem(str(sample))
+    ctx = Context(peer=_DummyPeer(), plugin_id="sdk-demo")
+
+    with bind_star_runtime(None, ctx):
+        url = await image.register_to_file_service()
+
+    assert url == "https://callback.example/api/file/file-1"
+    token = await ctx.files.register_file(str(sample))
+    assert token == "file-2"
+    assert await ctx.files.handle_file(token) == str(sample)
 
 
 @pytest.mark.unit
@@ -463,6 +613,27 @@ async def test_context_register_task_logs_background_exceptions() -> None:
     assert "background task failed" in str(msg).lower()
     assert plugin_id == "sdk-demo"
     assert desc == "probe-task"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_context_logger_watch_streams_current_plugin_logs() -> None:
+    ctx = Context(peer=_DummyPeer(), plugin_id="sdk-demo")
+    watcher = ctx.logger.watch()
+
+    async def _next_entry() -> PluginLogEntry:
+        return await watcher.__anext__()
+
+    pending = asyncio.create_task(_next_entry())
+    await asyncio.sleep(0)
+    ctx.logger.info("hello {}", "sdk")
+    entry = await pending
+
+    assert entry.plugin_id == "sdk-demo"
+    assert entry.level == "INFO"
+    assert entry.message == "hello sdk"
+
+    await watcher.aclose()
 
 
 @pytest.mark.unit
