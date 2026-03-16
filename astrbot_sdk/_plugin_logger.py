@@ -6,6 +6,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
+__all__ = ["PluginLogEntry", "PluginLogger"]
+
 
 @dataclass(slots=True)
 class PluginLogEntry:
@@ -109,7 +111,9 @@ class PluginLogger:
 
     @staticmethod
     def _format_message(message: Any, *args: Any, **kwargs: Any) -> str:
-        text = str(message)
+        if not isinstance(message, str):
+            return str(message)
+        text = message
         if not args and not kwargs:
             return text
         try:
