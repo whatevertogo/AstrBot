@@ -1,0 +1,50 @@
+# OS files
+.DS_Store
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.pytest_cache/
+pytest-cache-files-*/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+site/
+wheels/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+#
+fork-docs/
+tmp/
+openspec/
+scripts/
+docs/zh/reference
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+plugins/.venv/
+
+# Tool caches
+.uv-cache/
+.astrbot/
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+uv.lock
+/astrBot/
+plugins/
