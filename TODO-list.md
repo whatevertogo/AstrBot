@@ -19,21 +19,21 @@
 | Metadata Client | 4 | 4 | 0 | 0 | 0 | 100% |
 | Memory Client | 8 | 8 | 0 | 0 | 0 | 100% |
 | HTTP Client | 3 | 3 | 0 | 0 | 0 | 100% |
-| MessageEvent | 40 | 33 | 0 | 7 | 0 | 83% |
+| MessageEvent | 40 | 38 | 0 | 2 | 0 | 95% |
 | 装饰器/触发器 | 17 | 13 | 0 | 2 | 2 | 76% |
 | 事件类型 | 14 | 14 | 0 | 0 | 0 | 100% |
 | 消息组件 | 22 | 10 | 0 | 12 | 0 | 45% |
-| Legacy Context | 22 | 8 | 0 | 14 | 0 | 36% |
-| 工具方法 | 6 | 6 | 0 | 0 | 0 | 100% |
+| Legacy Context | 27 | 22 | 0 | 5 | 0 | 81% |
+| 工具方法 | 6 | 4 | 0 | 2 | 0 | 67% |
 | 会话控制 | 5 | 5 | 0 | 0 | 0 | 100% |
 | 过滤器 | 5 | 5 | 0 | 0 | 0 | 100% |
 | 高级管理器 | 12 | 12 | 0 | 0 | 0 | 100% |
-| Provider管理 | 12 | 0 | 0 | 12 | 0 | 0% |
-| Provider实体 | 10 | 1 | 0 | 9 | 0 | 10% |
-| TTS/STT/Embedding | 6 | 0 | 0 | 6 | 0 | 0% |
-| Platform实体 | 12 | 2 | 0 | 10 | 0 | 17% |
-| Agent运行器 | 7 | 7 | 0 | 0 | 0 | 100% |
-| Handler注册表 | 5 | 5 | 0 | 0 | 0 | 100% |
+| Provider管理 | 11 | 10 | 0 | 1 | 0 | 91% |
+| Provider实体 | 9 | 6 | 1 | 2 | 0 | 72% |
+| TTS/STT/Embedding | 8 | 8 | 0 | 0 | 0 | 100% |
+| Platform实体 | 12 | 7 | 1 | 4 | 0 | 62% |
+| Agent运行器 | 7 | 1 | 0 | 6 | 0 | 14% |
+| Handler注册表 | 5 | 2 | 0 | 3 | 0 | 40% |
 | SDK扩展能力 | 19 | 8 | 0 | 11 | 0 | 47% |
 | 其他系统能力 | 52 | 7 | 0 | 44 | 1 | 14% |
 | **Star基类扩展** | **7** | **7** | **0** | **0** | **0** | **100%** |
@@ -45,9 +45,11 @@
 | **消息类型过滤** | **7** | **7** | **0** | **0** | **0** | **100%** |
 | **PluginKVStoreMixin** | **5** | **5** | **0** | **0** | **0** | **100%** |
 | **StarMetadata字段** | **2** | **2** | **0** | **0** | **0** | **100%** |
-| **总计** | **334** | **187** | **2** | **141** | **4** | **56%** |
+| **总计** | **334** | **重算中** | **-** | **-** | **-** | **以正文为准** |
 
 > 注：覆盖率 = `(已实现 + 部分实现 × 0.5) / 总计`，⚠️ 表示SDK已定义但Core端未实现
+> 
+> 说明：顶部模块统计存在**分类重叠**（例如 `Provider 管理` 与 `P1.3`、`StarTools` 与 `P0.7/P1.4`、`其他系统能力` 与 `P1.5` 不是互斥维度），因此不再维护单一“总覆盖率”数字；请以各模块表格和 P0/P1/P2 正文状态为准。
 >
 > **2026-03-16 更新说明**：
 > - **P1.4 已完成**：Star 兼容层与开发工具全部实现
@@ -65,6 +67,10 @@
 > - 新增 Handler注册表 模块（5项）
 > - @session_waiter 装饰器已实现，装饰器覆盖率提升
 > - MessageSession.from_str() 已实现，Provider实体覆盖率提升
+>
+> **2026-03-17 校对说明**：
+> - 已按当前代码实现修正文档中一批过时状态，尤其是 `MessageEvent` 结果控制、Provider 管理、TTS/STT/Embedding、Platform facade、RegistryClient、群组管理与 Legacy 入口
+> - 顶部模块统计已同步校正关键模块，整体总计保留为“重算中”，本轮以正文和优先级章节为准
 
 ---
 
@@ -354,12 +360,12 @@
 | `image_result(url)` | ✅ | 创建图片结果 |
 | `chain_result(chain)` | ✅ | 创建消息链结果 |
 | `get_group()` | ✅ | 获取当前消息所属群聊数据；私聊返回 `None` |
-| `request_llm()` | ❌ | 触发默认 LLM 请求 |
-| `set_result()` | ❌ | 设置处理结果 |
-| `get_result()` | ❌ | 获取处理结果 |
-| `clear_result()` | ❌ | 清空处理结果 |
+| `request_llm()` | ✅ | 触发默认 LLM 请求 |
+| `set_result()` | ✅ | 设置处理结果 |
+| `get_result()` | ✅ | 获取处理结果 |
+| `clear_result()` | ✅ | 清空处理结果 |
 | `make_result()` | ✅ | 构造 SDK 本地标准结果对象 |
-| `should_call_llm()` | ❌ | 标记/查询是否继续默认 LLM |
+| `should_call_llm()` | ✅ | 标记/查询是否继续默认 LLM |
 | `get_platform_id()` | ✅ | 获取平台实例 ID |
 | `get_message_type()` | ✅ | 获取消息类型 |
 | `get_session_id()` | ✅ | 获取会话 ID |
@@ -490,10 +496,10 @@
 | `get_using_tts_provider()` | `ctx.get_using_tts_provider()` | ✅ | TTS Provider |
 | `get_using_stt_provider()` | `ctx.get_using_stt_provider()` | ✅ | STT Provider |
 | `register_web_api()` | `ctx.http.register_api()` | ✅ | 注册 API |
-| `register_commands()` | 无 | ❌ | 注册命令描述/帮助信息 |
-| `register_task()` | 无 | ❌ | 注册后台任务 |
-| `get_platform()` | 无 | ❌ | 获取平台 |
-| `get_platform_inst()` | 无 | ❌ | 获取平台实例 |
+| `register_commands()` | `ctx.register_commands()` | ✅ | 注册命令描述/帮助信息；仅在 `astrbot_loaded`/`platform_loaded` 事件中可用 |
+| `register_task()` | `ctx.register_task()` | ✅ | 注册后台任务；返回 SDK 后台任务对象 |
+| `get_platform()` | `ctx.get_platform()` | ✅ | 按平台类型获取 `PlatformCompatFacade` |
+| `get_platform_inst()` | `ctx.get_platform_inst()` | ✅ | 按平台实例 ID 获取 `PlatformCompatFacade` |
 | `get_event_queue()` | 无 | ❌ | 事件队列 |
 
 ---
@@ -564,16 +570,16 @@
 
 | 方法 | 状态 | 说明 |
 | --- | --- | --- |
-| `set_provider(provider_id, type, umo)` | ❌ | 设置提供商 |
-| `get_provider_by_id(provider_id)` | ❌ | 根据ID获取提供商实例 |
-| `get_using_provider(type, umo)` | ❌ | 获取当前使用的提供商 |
-| `load_provider(config)` | ❌ | 加载提供商 |
-| `terminate_provider(provider_id)` | ❌ | 终止提供商 |
-| `create_provider(config)` | ❌ | 创建提供商 |
-| `update_provider(origin_id, config)` | ❌ | 更新提供商 |
-| `delete_provider(provider_id)` | ❌ | 删除提供商 |
-| `register_provider_change_hook(hook)` | ❌ | 注册提供商变更钩子 |
-| `get_insts()` | ❌ | 获取所有提供商实例列表 |
+| `set_provider(provider_id, type, umo)` | ✅ | 设置提供商 |
+| `get_provider_by_id(provider_id)` | ✅ | 根据ID获取提供商实例 |
+| `get_using_provider(type, umo)` | ✅ | 获取当前使用的提供商（通过 Provider 查询接口暴露） |
+| `load_provider(config)` | ✅ | 加载提供商 |
+| `terminate_provider(provider_id)` | ✅ | 终止提供商 |
+| `create_provider(config)` | ✅ | 创建提供商 |
+| `update_provider(origin_id, config)` | ✅ | 更新提供商 |
+| `delete_provider(provider_id)` | ✅ | 删除提供商 |
+| `register_provider_change_hook(hook)` | ✅ | 注册提供商变更钩子 |
+| `get_insts()` | ✅ | 获取所有提供商实例列表 |
 | `get_merged_provider_config(config)` | ❌ | 获取合并后的提供商配置 |
 
 ### Provider 类型枚举
@@ -595,7 +601,7 @@
 | `ProviderMeta` | ✅ | 提供商元数据（id, model, type, provider_type） |
 | `ProviderRequest` | ✅ | 提供商请求对象 |
 | `TokenUsage` | ❌ | Token 使用统计 |
-| `LLMResponse` (完整版) | ❌ | LLM 完整响应（含 result_chain, reasoning_content 等） |
+| `LLMResponse` (完整版) | 🔄 | 已包含 `usage`、`tool_calls`、`reasoning_content`、`reasoning_signature`，但未提供 legacy 风格完整实体集 |
 | `ToolCallsResult` | ✅ | 工具调用结果 |
 | `RerankResult` | ✅ | 重排序结果 |
 | `MessageSession` | ✅ | 消息会话对象（platform_name, message_type, session_id） |
@@ -608,14 +614,14 @@
 
 | 方法 | 状态 | 说明 |
 | --- | --- | --- |
-| **STTProvider** | ❌ | 语音转文字提供商 |
-| `get_text(audio_url)` | ❌ | 获取音频的文本 |
-| **TTSProvider** | ❌ | 文字转语音提供商 |
-| `get_audio(text)` | ❌ | 获取文本的音频（返回文件路径） |
-| `get_audio_stream(text_q, audio_q)` | ❌ | 流式 TTS 处理 |
-| `support_stream()` | ❌ | 是否支持流式 TTS |
-| **EmbeddingProvider** | ❌ | 嵌入向量提供商 |
-| **RerankProvider** | ❌ | 重排序提供商 |
+| **STTProvider** | ✅ | 语音转文字提供商 |
+| `get_text(audio_url)` | ✅ | 获取音频的文本 |
+| **TTSProvider** | ✅ | 文字转语音提供商 |
+| `get_audio(text)` | ✅ | 获取文本的音频（返回文件路径） |
+| `get_audio_stream(text_q, audio_q)` | ✅ | 流式 TTS 处理 |
+| `support_stream()` | ✅ | 是否支持流式 TTS |
+| **EmbeddingProvider** | ✅ | 嵌入向量提供商 |
+| **RerankProvider** | ✅ | 重排序提供商 |
 
 ---
 
@@ -623,17 +629,17 @@
 
 | 类/方法 | 状态 | 说明 |
 | --- | --- | --- |
-| `PlatformStatus` 枚举 | ❌ | 平台状态（PENDING/RUNNING/ERROR/STOPPED） |
-| `PlatformError` | ❌ | 平台错误信息 |
+| `PlatformStatus` 枚举 | ✅ | 平台状态（PENDING/RUNNING/ERROR/STOPPED） |
+| `PlatformError` | ✅ | 平台错误信息 |
 | `Platform.record_error()` | ❌ | 记录平台错误 |
-| `Platform.last_error` | ❌ | 最近一次平台错误 |
-| `Platform.errors` | ❌ | 平台错误历史 |
-| `Platform.clear_errors()` | ❌ | 清空平台错误历史 |
-| `Platform.send_by_session()` | ❌ | 通过会话发送消息 |
+| `Platform.last_error` | ✅ | 最近一次平台错误 |
+| `Platform.errors` | ✅ | 平台错误历史 |
+| `Platform.clear_errors()` | ✅ | 清空平台错误历史 |
+| `Platform.send_by_session()` | ✅ | 通过会话发送消息 |
 | `Platform.commit_event()` | ❌ | 提交事件到队列 |
 | `Platform.get_client()` | ❌ | 获取平台客户端对象 |
-| `Platform.get_stats()` | ❌ | 获取平台统计信息 |
-| `Platform.unified_webhook()` | ❌ | 统一 Webhook 模式 |
+| `Platform.get_stats()` | ✅ | 获取平台统计信息 |
+| `Platform.unified_webhook()` | 🔄 | 已支持统一 webhook 状态观测，不提供 legacy 原始方法入口 |
 | `Platform.webhook_callback()` | ❌ | Webhook 回调 |
 
 ---
@@ -657,8 +663,8 @@
 | 类/方法 | 状态 | 说明 |
 | --- | --- | --- |
 | `StarHandlerRegistry` | ❌ | Handler 注册表 |
-| `get_handlers_by_event_type(type)` | ❌ | 按事件类型获取 Handler |
-| `get_handler_by_full_name(name)` | ❌ | 按全名获取 Handler |
+| `get_handlers_by_event_type(type)` | ✅ | 按事件类型获取 Handler |
+| `get_handler_by_full_name(name)` | ✅ | 按全名获取 Handler |
 | `get_handlers_by_module_name(name)` | ❌ | 按模块名获取 Handler |
 | `StarHandlerMetadata` | ❌ | Handler 元数据 |
 
@@ -761,9 +767,9 @@
 3. **会话级插件管理** - ✅ `SessionPluginManager`, ✅ `is_plugin_enabled_for_session()`, ✅ `filter_handlers_by_session()`
 4. **会话级服务开关** - ✅ `SessionServiceManager`, ✅ `is_llm_enabled_for_session()`, ✅ `set_llm_status_for_session()`, ✅ `should_process_llm_request()`, ✅ `is_tts_enabled_for_session()`, ✅ `set_tts_status_for_session()`, ✅ `should_process_tts_request()`
 
-#### P0.7 - Legacy Context 与开发者入口 ✅ 已完成
-1. **Legacy Context 迁移入口** - `register_commands()`, `register_task()`, `get_platform()`, `get_platform_inst()`, `get_event_queue()`
-2. **StarTools 迁移入口** - `create_message()`, `create_event()`, `MessageChain.get_plain_text()`
+#### P0.7 - Legacy Context 与开发者入口 🔄 部分完成
+1. **Legacy Context 迁移入口** - ✅ `register_commands()`, ✅ `register_task()`, ✅ `get_platform()`, ✅ `get_platform_inst()`；❌ `get_event_queue()`
+2. **StarTools 迁移入口** - ❌ `create_message()`, ❌ `create_event()`；✅ `MessageChain.get_plain_text()`
 
 ---
 
@@ -782,10 +788,10 @@
 2. **ConversationManager** - ✅ 对话管理器（`new_conversation()`, `switch_conversation()`, `delete_conversation()`, `get_conversation()`, `get_conversations()`, `update_conversation()`）
 3. **KnowledgeBaseManager** - ✅ 知识库管理器（`get_kb()`, `create_kb()`, `delete_kb()`）
 
-#### P1.3 - Provider 与 Platform 管理面
-1. **Provider 管理** - ✅ `set_provider()`, `get_provider_by_id()`, `load_provider()`, `terminate_provider()`, `create_provider()`, `update_provider()`, `delete_provider()`, `register_provider_change_hook()`, `get_insts()`
-2. **Platform 实体** - ✅ `PlatformStatus` 枚举, `PlatformError`, `last_error`, `errors`, `clear_errors()`, `send_by_session()`, `get_stats()`, `unified_webhook()`
-3. **Webhook 处理** - 🔄 只补统一 webhook 状态观测；`webhook_callback()` 原始请求入口延期
+#### P1.3 - Provider 与 Platform 管理面 🔄 部分完成
+1. **Provider 管理** - ✅ `set_provider()`, `get_provider_by_id()`, `get_using_provider()`, `load_provider()`, `terminate_provider()`, `create_provider()`, `update_provider()`, `delete_provider()`, `register_provider_change_hook()`, `get_insts()`；❌ `get_merged_provider_config()`
+2. **Platform 实体** - ✅ `PlatformStatus` 枚举, `PlatformError`, `last_error`, `errors`, `clear_errors()`, `send_by_session()`, `get_stats()`；🔄 `unified_webhook()`；❌ `record_error()`, `commit_event()`, `get_client()`
+3. **Webhook 处理** - 🔄 只补统一 webhook 状态观测；`webhook_callback()` 原始请求入口与 Dashboard webhook 路由延期
 
 #### P1.4 - Star 兼容层与开发工具 ✅ 已完成
 1. **Star 基类方法/属性** - `context` 属性及剩余兼容层 ✅
@@ -902,8 +908,8 @@
 
 | 方法 | 状态 | 说明 | 建议实现 |
 | --- | --- | --- | --- |
-| `Star.text_to_image(text)` | ❌ | 文本转图片渲染 | 通过Capability暴露给SDK |
-| `Star.html_render(tmpl, data)` | ❌ | HTML模板渲染 | 通过Capability暴露给SDK |
+| `Star.text_to_image(text)` | ✅ | 文本转图片渲染 | 已由 `ctx.text_to_image()` / `Star.text_to_image()` 等价覆盖 |
+| `Star.html_render(tmpl, data)` | ✅ | HTML模板渲染 | 已由 `ctx.html_render()` / `Star.html_render()` 等价覆盖 |
 | `Star.initialize()` | ✅ | 插件激活时调用（旧系统生命周期） | SDK 已用 `on_start()` 等价覆盖 |
 | `Star.terminate()` | ✅ | 插件禁用时调用（旧系统生命周期） | SDK 已用 `on_stop()` 等价覆盖 |
 | `Star.__init_subclass__()` | ✅ | 自动注册插件到star_map | SDK已实现类似的`__init_subclass__` |
@@ -938,14 +944,14 @@
 
 | 旧系统特性 | 新SDK状态 | 说明 |
 | --- | --- | --- |
-| `EventType` 枚举（14种事件） | 🔄 | SDK有事件触发器但Core端未实现完整事件系统 |
-| `OnWaitingLLMRequestEvent` | ❌ | 等待调用LLM前的通知事件 |
-| `OnCallingFuncToolEvent` | ❌ | 调用函数工具时的事件 |
-| `OnUsingLLMToolEvent` | ❌ | 使用LLM工具时的事件 |
-| `OnLLMToolRespondEvent` | ❌ | LLM工具响应后的事件 |
+| `EventType` 枚举（14种事件） | 🔄 | SDK 已覆盖主要事件类型，但未提供 legacy 风格事件枚举对象 |
+| `OnWaitingLLMRequestEvent` | ✅ | 以 `waiting_llm_request` 事件类型覆盖 |
+| `OnCallingFuncToolEvent` | ✅ | 以 `calling_func_tool` 事件类型覆盖 |
+| `OnUsingLLMToolEvent` | ✅ | 以 `using_llm_tool` 事件类型覆盖 |
+| `OnLLMToolRespondEvent` | ✅ | 以 `llm_tool_respond` 事件类型覆盖 |
 | `StarHandlerRegistry` | ❌ | Handler注册表（全局单例） |
-| Handler优先级排序 | ❌ | 按`priority`字段排序执行 |
-| Handler白名单过滤 | ❌ | 按插件名称过滤Handler |
+| Handler优先级排序 | ✅ | SDK bridge 按 `priority/load_order/declaration_order` 排序执行 |
+| Handler白名单过滤 | ✅ | 已支持按插件名称设置白名单 |
 
 ### 平台适配器类型系统 → P0.3
 
@@ -972,16 +978,16 @@
 
 | 方法 | 状态 | 说明 | 使用场景 |
 | --- | --- | --- | --- |
-| `StarTools.send_message(session, chain)` | ❌ | 根据session主动发送消息 | 定时任务、后台通知 |
-| `StarTools.send_message_by_id(type, id, chain, platform)` | ❌ | 根据ID直接发送消息 | 跨会话发送 |
+| `StarTools.send_message(session, chain)` | ✅ | 根据session主动发送消息 | 定时任务、后台通知 |
+| `StarTools.send_message_by_id(type, id, chain, platform)` | ✅ | 根据ID直接发送消息 | 跨会话发送 |
 | `StarTools.create_message(...)` | ❌ | 创建AstrBotMessage对象 | 构造人工消息事件 |
 | `StarTools.create_event(abm, platform)` | ❌ | 创建并提交事件到平台 | 触发处理流程 |
-| `StarTools.activate_llm_tool(name)` | ❌ | 激活LLM工具 | 动态控制工具 |
-| `StarTools.deactivate_llm_tool(name)` | ❌ | 停用LLM工具 | 动态控制工具 |
-| `StarTools.register_llm_tool(...)` | ❌ | 注册LLM工具 | 动态注册 |
-| `StarTools.unregister_llm_tool(name)` | ❌ | 注销LLM工具 | 动态注销 |
+| `StarTools.activate_llm_tool(name)` | ✅ | 激活LLM工具 | 动态控制工具 |
+| `StarTools.deactivate_llm_tool(name)` | ✅ | 停用LLM工具 | 动态控制工具 |
+| `StarTools.register_llm_tool(...)` | ✅ | 注册LLM工具 | 动态注册 |
+| `StarTools.unregister_llm_tool(name)` | ✅ | 注销LLM工具 | 动态注销 |
 | `StarTools.get_data_dir(plugin_name?)` | ❌ | 获取插件数据目录 | 文件存储 |
-| `StarTools._context` | ❌ | 类级别的Context引用 | 工具方法访问Core |
+| `StarTools._context` | ✅ | 类级别的Context引用 | 工具方法访问Core |
 
 ### 会话级插件管理 → P0.6
 
@@ -1037,11 +1043,11 @@
 
 | 方法 | 状态 | 说明 | 替代方案 |
 | --- | --- | --- | --- |
-| `PluginKVStoreMixin` 类 | ❌ | 为插件提供KV存储的Mixin | SDK的`ctx.db` |
-| `put_kv_data(key, value)` | ❌ | 存储键值对 | `ctx.db.set()` |
-| `get_kv_data(key, default)` | ❌ | 获取键值对 | `ctx.db.get()` |
-| `delete_kv_data(key)` | ❌ | 删除键值对 | `ctx.db.delete()` |
-| `plugin_id` 属性 | ❌ | 插件ID标识 | SDK自动处理 |
+| `PluginKVStoreMixin` 类 | ✅ | 已提供兼容层/等价能力 | SDK的`ctx.db` |
+| `put_kv_data(key, value)` | ✅ | 存储键值对 | `ctx.db.set()` |
+| `get_kv_data(key, default)` | ✅ | 获取键值对 | `ctx.db.get()` |
+| `delete_kv_data(key)` | ✅ | 删除键值对 | `ctx.db.delete()` |
+| `plugin_id` 属性 | ✅ | 插件ID标识 | SDK自动处理 |
 
 ### StarMetadata 完整字段 → P1.4
 
@@ -1063,8 +1069,8 @@
 | `star_handler_full_names` | ✅ | Handler全名列表 |
 | `display_name` | ✅ | 显示名称 |
 | `logo_path` | ✅ | Logo路径 |
-| `support_platforms` | ❌ | 支持的平台列表 |
-| `astrbot_version` | ❌ | 要求的AstrBot版本范围 |
+| `support_platforms` | ✅ | 支持的平台列表 |
+| `astrbot_version` | ✅ | 要求的AstrBot版本范围 |
 
 ---
 
@@ -1073,9 +1079,7 @@
 ### Core端 MVP 不支持的功能
 以下功能 SDK 已定义接口，但 Core 端 `capability_bridge.py` 标记为 MVP 不支持：
 
-2. **db.watch()** 流式订阅
-3. **@on_event** 事件触发器（除 `astrbot_loaded/platform_loaded/after_message_sent` 外）
-4. **@on_schedule** 定时触发器
+1. **db.watch()** 流式订阅
 
 ### Core端简化实现的功能
 以下功能 Core 端有简化实现，但非完整功能：
@@ -1095,24 +1099,14 @@
 ### 旧系统独有能力
 以下能力是旧系统独有，新 SDK 未实现的：
 
-1. `CustomFilter` - 自定义过滤器（支持与/或组合）
-2. `CommandGroupFilter` - 命令组（子命令路由）
-3. 命令参数自动类型解析（int/float/bool/GreedyStr）
-4. `PlatformAdapterTypeFilter` - 平台适配器类型过滤（15+平台）
-5. `EventMessageTypeFilter` - 消息类型过滤（GROUP/PRIVATE/OTHER）
-6. `PersonaManager` - 人格管理 API
-7. `ConversationManager` - 对话管理 API
-8. `KnowledgeBaseManager` - 知识库管理 API
-9. `FunctionToolManager` - LLM 工具管理器
-10. `ProviderManager` - 提供商管理器
-11. `BaseAgentRunner` - Agent 运行器基类
-12. `StarHandlerRegistry` - Handler 注册表
-13. `Platform` 实体类（状态、统计、Webhook）
-14. TTS/STT/Embedding/Rerank Provider 支持
-15. `StarTools` - 插件开发工具集（send_message_by_id, create_event等）
-16. `SessionPluginManager` - 会话级插件管理
-17. `PluginKVStoreMixin` - 插件KV存储Mixin
-18. `CommandFilter.print_types()` - 命令参数类型打印
+1. `PlatformAdapterType` / 平台类型枚举全量兼容
+2. `StarHandlerRegistry` 全局单例与 `StarHandlerMetadata` 原样对象
+3. `Platform` 原始实体方法：`record_error()` / `commit_event()` / `get_client()` / `webhook_callback()`
+4. `StarTools.create_message()` / `StarTools.create_event()`
+5. `get_event_queue()` 直接暴露
+6. `TokenUsage` / `Providers` 类型别名 / legacy 风格完整 `LLMResponse`
+7. `MCP` / `EventBus` / 热重载 / i18n / 依赖恢复 / 消息撤回
+8. `CommandFilter.print_types()` - 命令参数类型打印
 
 ---
 
@@ -1152,7 +1146,7 @@
 
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
-| `Platform.unified_webhook()` | ❌ | 统一 Webhook 模式检查 |
+| `Platform.unified_webhook()` | 🔄 | 已支持统一 Webhook 状态观测，不提供 legacy 原始方法入口 |
 | `Platform.webhook_callback(request)` | ❌ | Webhook 回调处理 |
 | `/api/platform/webhook/{uuid}` 路由 | ❌ | Dashboard Webhook 路由 |
 
@@ -1205,8 +1199,8 @@
 
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
-| `get_group(group_id?)` | ❌ | 获取群聊数据 |
-| 群成员列表获取 | ❌ | 依赖 `get_group()` |
+| `get_group(group_id?)` | ✅ | 获取群聊数据 |
+| 群成员列表获取 | ✅ | 通过 `ctx.platform.get_members()` 支持 |
 
 ### 插件间通信
 
@@ -1215,8 +1209,8 @@
 | `get_registered_star(name)` | ✅ | 通过 `ctx.metadata.get_plugin()` 支持 |
 | `get_all_stars()` | ✅ | 通过 `ctx.metadata.list_plugins()` 支持 |
 | `StarHandlerRegistry` 访问 | ❌ | 直接访问 Handler 注册表 |
-| `get_handlers_by_event_type()` | ❌ | 按事件类型获取 Handler |
-| `get_handler_by_full_name()` | ❌ | 按全名获取 Handler |
+| `get_handlers_by_event_type()` | ✅ | 按事件类型获取 Handler |
+| `get_handler_by_full_name()` | ✅ | 按全名获取 Handler |
 
 ### 命令参数类型解析
 
