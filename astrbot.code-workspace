@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "astrbot-sdk",
+			"name": "astrbot-sdk"
+		}
+	],
+	"settings": {
+		"python.analysis.extraPaths": [
+			"${workspaceFolder:astrbot-sdk}/src"
+		]
+	}
+}
