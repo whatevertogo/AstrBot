@@ -190,28 +190,58 @@ def test_build_prompt_trace_snapshot_contains_sorted_sources():
     assert "messages" not in snapshot["context_suffix"][0]
 
 
-def test_prompt_mutation_facade_registers_blocks():
+def test_prompt_mutation_facade_dispatches_to_helper_functions():
     assembly = PromptAssembly()
     mutation = PromptMutation(assembly)
 
-    mutation.add_system("\nPLUGIN\n", "plugin:test", 950)
-    mutation.add_user_text("plugin user", "plugin:test", 950)
-    mutation.add_context_prefix(
-        [{"role": "system", "content": "prefix"}], "plugin:test", 950
-    )
-    mutation.add_context_suffix(
-        [{"role": "assistant", "content": "suffix"}], "plugin:test", 950
-    )
+    with (
+        patch("astrbot.core.prompt.assembly.add_system_block") as mock_add_system,
+        patch("astrbot.core.prompt.assembly.add_user_text") as mock_add_user_text,
+        patch(
+            "astrbot.core.prompt.assembly.add_context_prefix"
+        ) as mock_add_context_prefix,
+        patch(
+            "astrbot.core.prompt.assembly.add_context_suffix"
+        ) as mock_add_context_suffix,
+        patch("astrbot.core.prompt.assembly.logger.warning"),
+    ):
+        mutation.add_system("\nPLUGIN\n", "plugin:test", 950)
+        mutation.add_user_text("plugin user", "plugin:test", 950)
+        mutation.add_context_prefix(
+            [{"role": "system", "content": "prefix"}], "plugin:test", 950
+        )
+        mutation.add_context_suffix(
+            [{"role": "assistant", "content": "suffix"}], "plugin:test", 950
+        )
 
-    req = ProviderRequest(prompt="hello")
-    render_prompt_assembly(req, assembly)
-
-    assert req.system_prompt == "\nPLUGIN\n"
-    assert [part.text for part in req.extra_user_content_parts] == ["plugin user"]
-    assert req.contexts == [
-        {"role": "system", "content": "prefix"},
-        {"role": "assistant", "content": "suffix"},
-    ]
+    mock_add_system.assert_called_once_with(
+        assembly,
+        source="plugin:test",
+        order=950,
+        content="\nPLUGIN\n",
+        visible_in_trace=True,
+    )
+    mock_add_user_text.assert_called_once_with(
+        assembly,
+        source="plugin:test",
+        order=950,
+        text="plugin user",
+        visible_in_trace=True,
+    )
+    mock_add_context_prefix.assert_called_once_with(
+        assembly,
+        source="plugin:test",
+        order=950,
+        messages=[{"role": "system", "content": "prefix"}],
+        visible_in_trace=True,
+    )
+    mock_add_context_suffix.assert_called_once_with(
+        assembly,
+        source="plugin:test",
+        order=950,
+        messages=[{"role": "assistant", "content": "suffix"}],
+        visible_in_trace=True,
+    )
 
 
 def test_prompt_mutation_warns_once_for_reserved_plugin_order():
