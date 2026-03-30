@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from astrbot.core.prompt import PromptAssembly
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -93,10 +94,8 @@ class TestApplySandboxToolsConditional:
         config = _make_config("shipyard_neo")
         req = _make_req()
 
-        with patch(
-            "astrbot.core.computer.computer_client.session_booter", {}
-        ):
-            fn(config, req, "session-1")
+        with patch("astrbot.core.computer.computer_client.session_booter", {}):
+            fn(config, req, "session-1", PromptAssembly())
 
         names = self._tool_names(req)
         assert "astrbot_execute_browser" in names
@@ -116,7 +115,7 @@ class TestApplySandboxToolsConditional:
             "astrbot.core.computer.computer_client.session_booter",
             {"session-1": fake_booter},
         ):
-            fn(config, req, "session-1")
+            fn(config, req, "session-1", PromptAssembly())
 
         names = self._tool_names(req)
         assert "astrbot_execute_browser" in names
@@ -126,15 +125,13 @@ class TestApplySandboxToolsConditional:
         fn = _import_apply_sandbox_tools()
         config = _make_config("shipyard_neo")
         req = _make_req()
-        fake_booter = SimpleNamespace(
-            capabilities=["python", "shell", "filesystem"]
-        )
+        fake_booter = SimpleNamespace(capabilities=["python", "shell", "filesystem"])
 
         with patch(
             "astrbot.core.computer.computer_client.session_booter",
             {"session-1": fake_booter},
         ):
-            fn(config, req, "session-1")
+            fn(config, req, "session-1", PromptAssembly())
 
         names = self._tool_names(req)
         assert "astrbot_execute_browser" not in names
@@ -154,7 +151,7 @@ class TestApplySandboxToolsConditional:
             "astrbot.core.computer.computer_client.session_booter",
             {"session-1": fake_booter},
         ):
-            fn(config, req, "session-1")
+            fn(config, req, "session-1", PromptAssembly())
 
         names = self._tool_names(req)
         assert "astrbot_create_skill_candidate" in names

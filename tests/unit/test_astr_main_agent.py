@@ -13,6 +13,7 @@ from astrbot.core.conversation_mgr import Conversation
 from astrbot.core.message.components import File, Image, Plain, Reply
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.platform_metadata import PlatformMetadata
+from astrbot.core.prompt import PromptAssembly, render_prompt_assembly
 from astrbot.core.provider import Provider
 from astrbot.core.provider.entities import ProviderRequest
 
@@ -114,6 +115,10 @@ def _setup_conversation_for_build(conv_mgr, cid: str = "conv-id") -> MagicMock:
     conversation = _new_mock_conversation(cid=cid)
     conv_mgr.get_conversation = AsyncMock(return_value=conversation)
     return conversation
+
+
+def _render_assembly(req: ProviderRequest, assembly: PromptAssembly) -> None:
+    render_prompt_assembly(req, assembly)
 
 
 class TestMainAgentBuildConfig:
@@ -306,12 +311,14 @@ class TestApplyKb:
         config = module.MainAgentBuildConfig(
             tool_call_timeout=60, kb_agentic_mode=False
         )
+        assembly = PromptAssembly()
 
         with patch(
             "astrbot.core.astr_main_agent.retrieve_knowledge_base",
             AsyncMock(return_value="KB result"),
         ):
-            await module._apply_kb(mock_event, req, mock_context, config)
+            await module._apply_kb(mock_event, req, mock_context, config, assembly)
+        _render_assembly(req, assembly)
 
         assert "[Related Knowledge Base Results]:" in req.system_prompt
         assert "KB result" in req.system_prompt
@@ -322,8 +329,9 @@ class TestApplyKb:
         module = ama
         req = ProviderRequest(prompt="test question")
         config = module.MainAgentBuildConfig(tool_call_timeout=60, kb_agentic_mode=True)
+        assembly = PromptAssembly()
 
-        await module._apply_kb(mock_event, req, mock_context, config)
+        await module._apply_kb(mock_event, req, mock_context, config, assembly)
 
         assert req.func_tool is not None
 
@@ -335,8 +343,10 @@ class TestApplyKb:
         config = module.MainAgentBuildConfig(
             tool_call_timeout=60, kb_agentic_mode=False
         )
+        assembly = PromptAssembly()
 
-        await module._apply_kb(mock_event, req, mock_context, config)
+        await module._apply_kb(mock_event, req, mock_context, config, assembly)
+        _render_assembly(req, assembly)
 
         assert req.system_prompt == "System"
 
@@ -348,12 +358,14 @@ class TestApplyKb:
         config = module.MainAgentBuildConfig(
             tool_call_timeout=60, kb_agentic_mode=False
         )
+        assembly = PromptAssembly()
 
         with patch(
             "astrbot.core.astr_main_agent.retrieve_knowledge_base",
             AsyncMock(return_value=None),
         ):
-            await module._apply_kb(mock_event, req, mock_context, config)
+            await module._apply_kb(mock_event, req, mock_context, config, assembly)
+        _render_assembly(req, assembly)
 
         assert req.system_prompt == "System"
 
@@ -364,8 +376,9 @@ class TestApplyKb:
         existing_tools = ToolSet()
         req = ProviderRequest(prompt="test", func_tool=existing_tools)
         config = module.MainAgentBuildConfig(tool_call_timeout=60, kb_agentic_mode=True)
+        assembly = PromptAssembly()
 
-        await module._apply_kb(mock_event, req, mock_context, config)
+        await module._apply_kb(mock_event, req, mock_context, config, assembly)
 
         assert req.func_tool is not None
 
@@ -383,13 +396,15 @@ class TestApplyFileExtract:
         mock_event.message_obj.message = [mock_file]
 
         req = ProviderRequest(prompt="Summarize")
+        assembly = PromptAssembly()
 
         with patch(
             "astrbot.core.astr_main_agent.extract_file_moonshotai"
         ) as mock_extract:
             mock_extract.return_value = "File content"
 
-            await module._apply_file_extract(mock_event, req, sample_config)
+            await module._apply_file_extract(mock_event, req, sample_config, assembly)
+        _render_assembly(req, assembly)
 
         assert req.contexts == [
             {
@@ -407,8 +422,10 @@ class TestApplyFileExtract:
         module = ama
         mock_event.message_obj.message = [Plain(text="Hello")]
         req = ProviderRequest(prompt="Hello")
+        assembly = PromptAssembly()
 
-        await module._apply_file_extract(mock_event, req, sample_config)
+        await module._apply_file_extract(mock_event, req, sample_config, assembly)
+        _render_assembly(req, assembly)
 
         assert len(req.contexts) == 0
 
@@ -424,13 +441,15 @@ class TestApplyFileExtract:
         mock_event.message_obj.message = [mock_reply]
 
         req = ProviderRequest(prompt="Summarize")
+        assembly = PromptAssembly()
 
         with patch(
             "astrbot.core.astr_main_agent.extract_file_moonshotai"
         ) as mock_extract:
             mock_extract.return_value = "Reply content"
 
-            await module._apply_file_extract(mock_event, req, sample_config)
+            await module._apply_file_extract(mock_event, req, sample_config, assembly)
+        _render_assembly(req, assembly)
 
         assert len(req.contexts) == 1
 
@@ -444,13 +463,14 @@ class TestApplyFileExtract:
         mock_event.message_obj.message = [mock_file]
 
         req = ProviderRequest(prompt=None)
+        assembly = PromptAssembly()
 
         with patch(
             "astrbot.core.astr_main_agent.extract_file_moonshotai"
         ) as mock_extract:
             mock_extract.return_value = "Content"
 
-            await module._apply_file_extract(mock_event, req, sample_config)
+            await module._apply_file_extract(mock_event, req, sample_config, assembly)
 
         assert req.prompt == "总结一下文件里面讲了什么？"
 
@@ -469,8 +489,10 @@ class TestApplyFileExtract:
         mock_event.message_obj.message = [mock_file]
 
         req = ProviderRequest(prompt="Summarize")
+        assembly = PromptAssembly()
 
-        await module._apply_file_extract(mock_event, req, config)
+        await module._apply_file_extract(mock_event, req, config, assembly)
+        _render_assembly(req, assembly)
 
         assert len(req.contexts) == 0
 
@@ -490,8 +512,12 @@ class TestEnsurePersonaAndSkills:
         mock_event.trace = MagicMock(record=MagicMock())
         req = ProviderRequest()
         req.conversation = MagicMock(persona_id=None)
+        assembly = PromptAssembly()
 
-        await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)
+        await module._ensure_persona_and_skills(
+            req, {}, mock_context, mock_event, assembly
+        )
+        _render_assembly(req, assembly)
 
         assert "You are helpful." in req.system_prompt
 
@@ -506,8 +532,12 @@ class TestEnsurePersonaAndSkills:
         )
         req = ProviderRequest()
         req.conversation = MagicMock(persona_id="conv-persona")
+        assembly = PromptAssembly()
 
-        await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)
+        await module._ensure_persona_and_skills(
+            req, {}, mock_context, mock_event, assembly
+        )
+        _render_assembly(req, assembly)
 
         assert "Custom persona." in req.system_prompt
 
@@ -521,8 +551,12 @@ class TestEnsurePersonaAndSkills:
         )
         req = ProviderRequest()
         req.conversation = MagicMock(persona_id="[%None]")
+        assembly = PromptAssembly()
 
-        await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)
+        await module._ensure_persona_and_skills(
+            req, {}, mock_context, mock_event, assembly
+        )
+        _render_assembly(req, assembly)
 
         assert "Persona Instructions" not in req.system_prompt
 
@@ -543,8 +577,11 @@ class TestEnsurePersonaAndSkills:
 
         req = ProviderRequest()
         req.conversation = MagicMock(persona_id="persona")
+        assembly = PromptAssembly()
 
-        await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)
+        await module._ensure_persona_and_skills(
+            req, {}, mock_context, mock_event, assembly
+        )
 
         assert req.func_tool is not None
 
@@ -598,8 +635,11 @@ class TestEnsurePersonaAndSkills:
 
         req = ProviderRequest()
         req.conversation = MagicMock(persona_id=None)
+        assembly = PromptAssembly()
 
-        await module._ensure_persona_and_skills(req, {}, mock_context, mock_event)
+        await module._ensure_persona_and_skills(
+            req, {}, mock_context, mock_event, assembly
+        )
 
         assert req.func_tool is not None
         assert "transfer_to_planner" in req.func_tool.names()
@@ -617,8 +657,12 @@ class TestDecorateLlmRequest:
         """Test basic LLM request decoration."""
         module = ama
         req = ProviderRequest(prompt="Hello", system_prompt="System")
+        assembly = PromptAssembly()
 
-        await module._decorate_llm_request(mock_event, req, mock_context, sample_config)
+        await module._decorate_llm_request(
+            mock_event, req, mock_context, sample_config, assembly
+        )
+        _render_assembly(req, assembly)
 
         assert req.prompt == "Hello"
         assert req.system_prompt == "System"
@@ -631,11 +675,14 @@ class TestDecorateLlmRequest:
         config = module.MainAgentBuildConfig(
             tool_call_timeout=60, provider_settings={"prompt_prefix": "AI: "}
         )
+        assembly = PromptAssembly()
 
         with patch.object(mock_context, "get_config") as mock_get_config:
             mock_get_config.return_value = {}
 
-            await module._decorate_llm_request(mock_event, req, mock_context, config)
+            await module._decorate_llm_request(
+                mock_event, req, mock_context, config, assembly
+            )
 
         assert req.prompt == "AI: Hello"
 
@@ -650,11 +697,14 @@ class TestDecorateLlmRequest:
             tool_call_timeout=60,
             provider_settings={"prompt_prefix": "AI {{prompt}} - Please respond:"},
         )
+        assembly = PromptAssembly()
 
         with patch.object(mock_context, "get_config") as mock_get_config:
             mock_get_config.return_value = {}
 
-            await module._decorate_llm_request(mock_event, req, mock_context, config)
+            await module._decorate_llm_request(
+                mock_event, req, mock_context, config, assembly
+            )
 
         assert req.prompt == "AI Hello - Please respond:"
 
@@ -673,10 +723,14 @@ class TestDecorateLlmRequest:
             tool_call_timeout=60,
             provider_settings={"identifier": True, "datetime_system_prompt": False},
         )
+        assembly = PromptAssembly()
 
         with patch.object(mock_context, "get_config") as mock_get_config:
             mock_get_config.return_value = {}
-            await module._decorate_llm_request(mock_event, req, mock_context, config)
+            await module._decorate_llm_request(
+                mock_event, req, mock_context, config, assembly
+            )
+        _render_assembly(req, assembly)
 
         assert [part.text for part in req.extra_user_content_parts] == [
             "<Quoted Message>\n(Alice): Quoted hi\n</Quoted Message>",
@@ -690,11 +744,15 @@ class TestDecorateLlmRequest:
         req = ProviderRequest(prompt="Hello")
         req.conversation = None
         config = module.MainAgentBuildConfig(tool_call_timeout=60)
+        assembly = PromptAssembly()
 
         with patch.object(mock_context, "get_config") as mock_get_config:
             mock_get_config.return_value = {}
 
-            await module._decorate_llm_request(mock_event, req, mock_context, config)
+            await module._decorate_llm_request(
+                mock_event, req, mock_context, config, assembly
+            )
+        _render_assembly(req, assembly)
 
         assert req.prompt == "Hello"
 
@@ -1664,8 +1722,10 @@ class TestApplyLlmSafetyMode:
             safety_mode_strategy="system_prompt",
         )
         req = ProviderRequest(prompt="Test", system_prompt="Original prompt")
+        assembly = PromptAssembly()
 
-        module._apply_llm_safety_mode(config, req)
+        module._apply_llm_safety_mode(config, req, assembly)
+        _render_assembly(req, assembly)
 
         assert "You are running in Safe Mode" in req.system_prompt
         assert "Original prompt" in req.system_prompt
@@ -1678,8 +1738,10 @@ class TestApplyLlmSafetyMode:
             safety_mode_strategy="system_prompt",
         )
         req = ProviderRequest(prompt="Test", system_prompt="My custom prompt")
+        assembly = PromptAssembly()
 
-        module._apply_llm_safety_mode(config, req)
+        module._apply_llm_safety_mode(config, req, assembly)
+        _render_assembly(req, assembly)
 
         assert req.system_prompt.startswith("You are running in Safe Mode")
         assert "My custom prompt" in req.system_prompt
@@ -1692,8 +1754,10 @@ class TestApplyLlmSafetyMode:
             safety_mode_strategy="system_prompt",
         )
         req = ProviderRequest(prompt="Test", system_prompt=None)
+        assembly = PromptAssembly()
 
-        module._apply_llm_safety_mode(config, req)
+        module._apply_llm_safety_mode(config, req, assembly)
+        _render_assembly(req, assembly)
 
         assert "You are running in Safe Mode" in req.system_prompt
 
@@ -1705,9 +1769,11 @@ class TestApplyLlmSafetyMode:
             safety_mode_strategy="unsupported_strategy",
         )
         req = ProviderRequest(prompt="Test", system_prompt="Original")
+        assembly = PromptAssembly()
 
         with patch("astrbot.core.astr_main_agent.logger") as mock_logger:
-            module._apply_llm_safety_mode(config, req)
+            module._apply_llm_safety_mode(config, req, assembly)
+        _render_assembly(req, assembly)
 
         mock_logger.warning.assert_called_once()
         assert (
@@ -1724,8 +1790,10 @@ class TestApplyLlmSafetyMode:
             safety_mode_strategy="system_prompt",
         )
         req = ProviderRequest(prompt="Test", system_prompt="")
+        assembly = PromptAssembly()
 
-        module._apply_llm_safety_mode(config, req)
+        module._apply_llm_safety_mode(config, req, assembly)
+        _render_assembly(req, assembly)
 
         assert "You are running in Safe Mode" in req.system_prompt
 
@@ -1742,8 +1810,9 @@ class TestApplySandboxTools:
             sandbox_cfg={},
         )
         req = ProviderRequest(prompt="Test", func_tool=None)
+        assembly = PromptAssembly()
 
-        module._apply_sandbox_tools(config, req, "session-123")
+        module._apply_sandbox_tools(config, req, "session-123", assembly)
 
         assert req.func_tool is not None
         assert isinstance(req.func_tool, ToolSet)
@@ -1757,8 +1826,9 @@ class TestApplySandboxTools:
             sandbox_cfg={},
         )
         req = ProviderRequest(prompt="Test", func_tool=None)
+        assembly = PromptAssembly()
 
-        module._apply_sandbox_tools(config, req, "session-123")
+        module._apply_sandbox_tools(config, req, "session-123", assembly)
 
         tool_names = req.func_tool.names()
         assert "astrbot_execute_shell" in tool_names
@@ -1775,8 +1845,10 @@ class TestApplySandboxTools:
             sandbox_cfg={},
         )
         req = ProviderRequest(prompt="Test", system_prompt="Original prompt")
+        assembly = PromptAssembly()
 
-        module._apply_sandbox_tools(config, req, "session-123")
+        module._apply_sandbox_tools(config, req, "session-123", assembly)
+        _render_assembly(req, assembly)
 
         assert "sandboxed environment" in req.system_prompt
 
@@ -1793,11 +1865,12 @@ class TestApplySandboxTools:
             },
         )
         req = ProviderRequest(prompt="Test", func_tool=None)
+        assembly = PromptAssembly()
 
         monkeypatch.delenv("SHIPYARD_ENDPOINT", raising=False)
         monkeypatch.delenv("SHIPYARD_ACCESS_TOKEN", raising=False)
 
-        module._apply_sandbox_tools(config, req, "session-123")
+        module._apply_sandbox_tools(config, req, "session-123", assembly)
 
         assert os.environ.get("SHIPYARD_ENDPOINT") == "https://shipyard.example.com"
         assert os.environ.get("SHIPYARD_ACCESS_TOKEN") == "test-token"
@@ -1815,9 +1888,10 @@ class TestApplySandboxTools:
             },
         )
         req = ProviderRequest(prompt="Test", func_tool=None)
+        assembly = PromptAssembly()
 
         with patch("astrbot.core.astr_main_agent.logger") as mock_logger:
-            module._apply_sandbox_tools(config, req, "session-123")
+            module._apply_sandbox_tools(config, req, "session-123", assembly)
 
         mock_logger.error.assert_called_once()
         assert (
@@ -1838,9 +1912,10 @@ class TestApplySandboxTools:
             },
         )
         req = ProviderRequest(prompt="Test", func_tool=None)
+        assembly = PromptAssembly()
 
         with patch("astrbot.core.astr_main_agent.logger") as mock_logger:
-            module._apply_sandbox_tools(config, req, "session-123")
+            module._apply_sandbox_tools(config, req, "session-123", assembly)
 
         mock_logger.error.assert_called_once()
 
@@ -1857,8 +1932,9 @@ class TestApplySandboxTools:
         existing_tool.name = "existing_tool"
         existing_toolset.add_tool(existing_tool)
         req = ProviderRequest(prompt="Test", func_tool=existing_toolset)
+        assembly = PromptAssembly()
 
-        module._apply_sandbox_tools(config, req, "session-123")
+        module._apply_sandbox_tools(config, req, "session-123", assembly)
 
         assert "existing_tool" in req.func_tool.names()
         assert "astrbot_execute_shell" in req.func_tool.names()
@@ -1872,8 +1948,10 @@ class TestApplySandboxTools:
             sandbox_cfg={},
         )
         req = ProviderRequest(prompt="Test", system_prompt="Base prompt")
+        assembly = PromptAssembly()
 
-        module._apply_sandbox_tools(config, req, "session-123")
+        module._apply_sandbox_tools(config, req, "session-123", assembly)
+        _render_assembly(req, assembly)
 
         assert req.system_prompt.startswith("Base prompt")
         assert "sandboxed environment" in req.system_prompt
@@ -1887,8 +1965,10 @@ class TestApplySandboxTools:
             sandbox_cfg={},
         )
         req = ProviderRequest(prompt="Test", system_prompt=None)
+        assembly = PromptAssembly()
 
-        module._apply_sandbox_tools(config, req, "session-123")
+        module._apply_sandbox_tools(config, req, "session-123", assembly)
+        _render_assembly(req, assembly)
 
         assert isinstance(req.system_prompt, str)
         assert "sandboxed environment" in req.system_prompt

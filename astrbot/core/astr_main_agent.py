@@ -177,23 +177,6 @@ class MainAgentBuildResult:
     reset_coro: Coroutine | None = None
 
 
-def _resolve_prompt_assembly(
-    assembly: PromptAssembly | None,
-) -> tuple[PromptAssembly, bool]:
-    if assembly is None:
-        return PromptAssembly(), True
-    return assembly, False
-
-
-def _finalize_prompt_assembly(
-    req: ProviderRequest,
-    assembly: PromptAssembly,
-    should_render: bool,
-) -> None:
-    if should_render:
-        render_prompt_assembly(req, assembly)
-
-
 def _select_provider(
     event: AstrMessageEvent, plugin_context: Context
 ) -> Provider | None:
@@ -238,12 +221,10 @@ async def _apply_kb(
     req: ProviderRequest,
     plugin_context: Context,
     config: MainAgentBuildConfig,
-    assembly: PromptAssembly | None = None,
+    assembly: PromptAssembly,
 ) -> None:
-    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     if not config.kb_agentic_mode:
         if req.prompt is None:
-            _finalize_prompt_assembly(req, prompt_assembly, should_render)
             return
         try:
             kb_result = await retrieve_knowledge_base(
@@ -252,10 +233,9 @@ async def _apply_kb(
                 context=plugin_context,
             )
             if not kb_result:
-                _finalize_prompt_assembly(req, prompt_assembly, should_render)
                 return
             add_system_block(
-                prompt_assembly,
+                assembly,
                 source="knowledge_base",
                 order=SYSTEM_BLOCK_ORDER_KB,
                 content=f"\n\n[Related Knowledge Base Results]:\n{kb_result}",
@@ -266,16 +246,14 @@ async def _apply_kb(
         if req.func_tool is None:
             req.func_tool = ToolSet()
         req.func_tool.add_tool(KNOWLEDGE_BASE_QUERY_TOOL)
-    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 async def _apply_file_extract(
     event: AstrMessageEvent,
     req: ProviderRequest,
     config: MainAgentBuildConfig,
-    assembly: PromptAssembly | None = None,
+    assembly: PromptAssembly,
 ) -> None:
-    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     file_paths = []
     file_names = []
     for comp in event.message_obj.message:
@@ -288,7 +266,6 @@ async def _apply_file_extract(
                     file_paths.append(await reply_comp.get_file())
                     file_names.append(reply_comp.name)
     if not file_paths:
-        _finalize_prompt_assembly(req, prompt_assembly, should_render)
         return
     if not req.prompt:
         req.prompt = "总结一下文件里面讲了什么？"
@@ -311,7 +288,7 @@ async def _apply_file_extract(
 
     for file_content, file_name in zip(file_contents, file_names):
         add_context_suffix(
-            prompt_assembly,
+            assembly,
             source="file_extract",
             order=CONTEXT_ORDER_FILE_EXTRACT,
             messages=[
@@ -324,7 +301,6 @@ async def _apply_file_extract(
                 }
             ],
         )
-    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 def _apply_prompt_prefix(req: ProviderRequest, cfg: dict) -> None:
@@ -339,20 +315,18 @@ def _apply_prompt_prefix(req: ProviderRequest, cfg: dict) -> None:
 
 def _apply_local_env_tools(
     req: ProviderRequest,
-    assembly: PromptAssembly | None = None,
+    assembly: PromptAssembly,
 ) -> None:
-    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     if req.func_tool is None:
         req.func_tool = ToolSet()
     req.func_tool.add_tool(LOCAL_EXECUTE_SHELL_TOOL)
     req.func_tool.add_tool(LOCAL_PYTHON_TOOL)
     add_system_block(
-        prompt_assembly,
+        assembly,
         source="runtime:local",
         order=SYSTEM_BLOCK_ORDER_RUNTIME,
         content=f"\n{_build_local_mode_prompt()}\n",
     )
-    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 def _build_local_mode_prompt() -> str:
@@ -375,12 +349,10 @@ async def _ensure_persona_and_skills(
     cfg: dict,
     plugin_context: Context,
     event: AstrMessageEvent,
-    assembly: PromptAssembly | None = None,
+    assembly: PromptAssembly,
 ) -> None:
     """Ensure persona and skills are applied to the request's system prompt or user prompt."""
-    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     if not req.conversation:
-        _finalize_prompt_assembly(req, prompt_assembly, should_render)
         return
 
     (
@@ -403,21 +375,21 @@ async def _ensure_persona_and_skills(
         # Inject persona system prompt
         if prompt := persona["prompt"]:
             add_system_block(
-                prompt_assembly,
+                assembly,
                 source="persona",
                 order=SYSTEM_BLOCK_ORDER_PERSONA,
                 content=f"\n# Persona Instructions\n\n{prompt}\n",
             )
         if begin_dialogs := copy.deepcopy(persona.get("_begin_dialogs_processed")):
             add_context_prefix(
-                prompt_assembly,
+                assembly,
                 source="persona_begin_dialogs",
                 order=CONTEXT_ORDER_PERSONA_BEGIN_DIALOGS,
                 messages=begin_dialogs,
             )
     elif use_webchat_special_default:
         add_system_block(
-            prompt_assembly,
+            assembly,
             source="persona",
             order=SYSTEM_BLOCK_ORDER_PERSONA,
             content=CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT,
@@ -437,14 +409,14 @@ async def _ensure_persona_and_skills(
                 skills = [skill for skill in skills if skill.name in allowed]
         if skills:
             add_system_block(
-                prompt_assembly,
+                assembly,
                 source="skills",
                 order=SYSTEM_BLOCK_ORDER_SKILLS,
                 content=f"\n{build_skills_prompt(skills)}\n",
             )
             if runtime == "none":
                 add_system_block(
-                    prompt_assembly,
+                    assembly,
                     source="skills_runtime_notice",
                     order=SYSTEM_BLOCK_ORDER_SKILLS + 10,
                     content=(
@@ -534,7 +506,7 @@ async def _ensure_persona_and_skills(
         ).strip()
         if router_prompt:
             add_system_block(
-                prompt_assembly,
+                assembly,
                 source="router",
                 order=SYSTEM_BLOCK_ORDER_ROUTER,
                 content=f"\n{router_prompt}\n",
@@ -547,7 +519,6 @@ async def _ensure_persona_and_skills(
         )
     except Exception:
         pass
-    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 async def _request_img_caption(
@@ -584,9 +555,8 @@ async def _ensure_img_caption(
     cfg: dict,
     plugin_context: Context,
     image_caption_provider: str,
-    assembly: PromptAssembly | None = None,
+    assembly: PromptAssembly,
 ) -> None:
-    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     try:
         compressed_urls = []
         for url in req.image_urls:
@@ -602,7 +572,7 @@ async def _ensure_img_caption(
         )
         if caption:
             add_user_text(
-                prompt_assembly,
+                assembly,
                 source="image_caption",
                 order=USER_APPEND_ORDER_ATTACHMENTS,
                 text=f"<image_caption>{caption}</image_caption>",
@@ -611,14 +581,13 @@ async def _ensure_img_caption(
     except Exception as exc:  # noqa: BLE001
         logger.error("处理图片描述失败: %s", exc)
         add_user_text(
-            prompt_assembly,
+            assembly,
             source="image_caption",
             order=USER_APPEND_ORDER_ATTACHMENTS,
             text="[Image Captioning Failed]",
         )
     finally:
         req.image_urls = []
-        _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 def _append_quoted_image_attachment(
@@ -700,18 +669,16 @@ async def _process_quote_message(
     req: ProviderRequest,
     img_cap_prov_id: str,
     plugin_context: Context,
+    assembly: PromptAssembly,
     quoted_message_settings: QuotedMessageParserSettings = DEFAULT_QUOTED_MESSAGE_SETTINGS,
     config: MainAgentBuildConfig | None = None,
-    assembly: PromptAssembly | None = None,
 ) -> None:
-    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     quote = None
     for comp in event.message_obj.message:
         if isinstance(comp, Reply):
             quote = comp
             break
     if not quote:
-        _finalize_prompt_assembly(req, prompt_assembly, should_render)
         return
 
     content_parts = []
@@ -778,12 +745,11 @@ async def _process_quote_message(
     quoted_content = "\n".join(content_parts)
     quoted_text = f"<Quoted Message>\n{quoted_content}\n</Quoted Message>"
     add_user_text(
-        prompt_assembly,
+        assembly,
         source="quoted_message",
         order=USER_APPEND_ORDER_QUOTED,
         text=quoted_text,
     )
-    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 def _append_system_reminders(
@@ -791,9 +757,8 @@ def _append_system_reminders(
     req: ProviderRequest,
     cfg: dict,
     timezone: str | None,
-    assembly: PromptAssembly | None = None,
+    assembly: PromptAssembly,
 ) -> None:
-    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     system_parts: list[str] = []
     if cfg.get("identifier"):
         user_id = event.message_obj.sender.user_id
@@ -830,12 +795,11 @@ def _append_system_reminders(
             "<system_reminder>" + "\n".join(system_parts) + "</system_reminder>"
         )
         add_user_text(
-            prompt_assembly,
+            assembly,
             source="system_reminder",
             order=USER_APPEND_ORDER_SYSTEM_REMINDER,
             text=system_content,
         )
-    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 async def _decorate_llm_request(
@@ -843,9 +807,8 @@ async def _decorate_llm_request(
     req: ProviderRequest,
     plugin_context: Context,
     config: MainAgentBuildConfig,
-    assembly: PromptAssembly | None = None,
+    assembly: PromptAssembly,
 ) -> None:
-    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     cfg = config.provider_settings or plugin_context.get_config(
         umo=event.unified_msg_origin
     ).get("provider_settings", {})
@@ -853,9 +816,7 @@ async def _decorate_llm_request(
     _apply_prompt_prefix(req, cfg)
 
     if req.conversation:
-        await _ensure_persona_and_skills(
-            req, cfg, plugin_context, event, prompt_assembly
-        )
+        await _ensure_persona_and_skills(req, cfg, plugin_context, event, assembly)
 
         img_cap_prov_id: str = cfg.get("default_image_caption_provider_id") or ""
         if img_cap_prov_id and req.image_urls:
@@ -865,7 +826,7 @@ async def _decorate_llm_request(
                 cfg,
                 plugin_context,
                 img_cap_prov_id,
-                prompt_assembly,
+                assembly,
             )
 
     img_cap_prov_id = cfg.get("default_image_caption_provider_id") or ""
@@ -875,16 +836,15 @@ async def _decorate_llm_request(
         req,
         img_cap_prov_id,
         plugin_context,
+        assembly,
         quoted_message_settings,
         config,
-        prompt_assembly,
     )
 
     tz = config.timezone
     if tz is None:
         tz = plugin_context.get_config().get("timezone")
-    _append_system_reminders(event, req, cfg, tz, prompt_assembly)
-    _finalize_prompt_assembly(req, prompt_assembly, should_render)
+    _append_system_reminders(event, req, cfg, tz, assembly)
 
 
 def _modalities_fix(provider: Provider, req: ProviderRequest) -> None:
@@ -1064,12 +1024,11 @@ async def _handle_webchat(
 def _apply_llm_safety_mode(
     config: MainAgentBuildConfig,
     req: ProviderRequest,
-    assembly: PromptAssembly | None = None,
+    assembly: PromptAssembly,
 ) -> None:
-    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     if config.safety_mode_strategy == "system_prompt":
         add_system_block(
-            prompt_assembly,
+            assembly,
             source="safety",
             order=SYSTEM_BLOCK_ORDER_SAFETY,
             content=f"{LLM_SAFETY_MODE_SYSTEM_PROMPT}\n\n",
@@ -1080,16 +1039,14 @@ def _apply_llm_safety_mode(
             "Unsupported llm_safety_mode strategy: %s.",
             config.safety_mode_strategy,
         )
-    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 def _apply_sandbox_tools(
     config: MainAgentBuildConfig,
     req: ProviderRequest,
     session_id: str,
-    assembly: PromptAssembly | None = None,
+    assembly: PromptAssembly,
 ) -> None:
-    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     if req.func_tool is None:
         req.func_tool = ToolSet()
     booter = config.sandbox_cfg.get("booter", "shipyard_neo")
@@ -1098,7 +1055,6 @@ def _apply_sandbox_tools(
         at = config.sandbox_cfg.get("shipyard_access_token", "")
         if not ep or not at:
             logger.error("Shipyard sandbox configuration is incomplete.")
-            _finalize_prompt_assembly(req, prompt_assembly, should_render)
             return
         os.environ["SHIPYARD_ENDPOINT"] = ep
         os.environ["SHIPYARD_ACCESS_TOKEN"] = at
@@ -1111,7 +1067,7 @@ def _apply_sandbox_tools(
         # Neo-specific path rule: filesystem tools operate relative to sandbox
         # workspace root. Do not prepend "/workspace".
         add_system_block(
-            prompt_assembly,
+            assembly,
             source="runtime:sandbox_path_rule",
             order=SYSTEM_BLOCK_ORDER_RUNTIME,
             content=(
@@ -1123,7 +1079,7 @@ def _apply_sandbox_tools(
         )
 
         add_system_block(
-            prompt_assembly,
+            assembly,
             source="runtime:sandbox_skill_lifecycle",
             order=SYSTEM_BLOCK_ORDER_RUNTIME + 10,
             content=(
@@ -1170,12 +1126,11 @@ def _apply_sandbox_tools(
         req.func_tool.add_tool(SYNC_SKILL_RELEASE_TOOL)
 
     add_system_block(
-        prompt_assembly,
+        assembly,
         source="runtime:sandbox",
         order=SYSTEM_BLOCK_ORDER_RUNTIME + 20,
         content=f"\n{SANDBOX_MODE_PROMPT}\n",
     )
-    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 def _proactive_cron_job_tools(req: ProviderRequest) -> None:
