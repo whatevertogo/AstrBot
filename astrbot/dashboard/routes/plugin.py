@@ -77,6 +77,7 @@ class PluginRoute(Route):
 
         self.translated_event_type = {
             EventType.AdapterMessageEvent: "平台消息下发时",
+            EventType.OnPromptAssemblyEvent: "Prompt 组装时",
             EventType.OnLLMRequestEvent: "LLM 请求时",
             EventType.OnLLMResponseEvent: "LLM 响应后",
             EventType.OnDecoratingResultEvent: "回复消息前",

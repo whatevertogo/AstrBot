@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from astrbot.core import logger
 from astrbot.core.agent.handoff import HandoffTool
 from astrbot.core.agent.mcp_client import MCPTool
-from astrbot.core.agent.message import TextPart
 from astrbot.core.agent.tool import ToolSet
 from astrbot.core.astr_agent_context import AgentContextWrapper, AstrAgentContext
 from astrbot.core.astr_agent_hooks import MAIN_AGENT_HOOKS
@@ -56,12 +55,37 @@ from astrbot.core.persona_error_reply import (
     extract_persona_custom_error_message_from_persona,
     set_persona_custom_error_message_on_event,
 )
+from astrbot.core.pipeline.context_utils import call_event_hook
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.prompt import (
+    CONTEXT_ORDER_FILE_EXTRACT,
+    CONTEXT_ORDER_PERSONA_BEGIN_DIALOGS,
+    SYSTEM_BLOCK_ORDER_KB,
+    SYSTEM_BLOCK_ORDER_LIVE_MODE,
+    SYSTEM_BLOCK_ORDER_PERSONA,
+    SYSTEM_BLOCK_ORDER_ROUTER,
+    SYSTEM_BLOCK_ORDER_RUNTIME,
+    SYSTEM_BLOCK_ORDER_SAFETY,
+    SYSTEM_BLOCK_ORDER_SKILLS,
+    SYSTEM_BLOCK_ORDER_TOOL_USE,
+    USER_APPEND_ORDER_ATTACHMENTS,
+    USER_APPEND_ORDER_QUOTED,
+    USER_APPEND_ORDER_SYSTEM_REMINDER,
+    PromptAssembly,
+    PromptMutation,
+    add_context_prefix,
+    add_context_suffix,
+    add_system_block,
+    add_user_text,
+    build_prompt_trace_snapshot,
+    render_prompt_assembly,
+    summarize_provider_request_base,
+)
 from astrbot.core.provider import Provider
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.skills.skill_manager import SkillManager, build_skills_prompt
 from astrbot.core.star.context import Context
-from astrbot.core.star.star_handler import star_map
+from astrbot.core.star.star_handler import EventType, star_map
 from astrbot.core.tools.cron_tools import (
     CREATE_CRON_JOB_TOOL,
     DELETE_CRON_JOB_TOOL,
@@ -153,6 +177,23 @@ class MainAgentBuildResult:
     reset_coro: Coroutine | None = None
 
 
+def _resolve_prompt_assembly(
+    assembly: PromptAssembly | None,
+) -> tuple[PromptAssembly, bool]:
+    if assembly is None:
+        return PromptAssembly(), True
+    return assembly, False
+
+
+def _finalize_prompt_assembly(
+    req: ProviderRequest,
+    assembly: PromptAssembly,
+    should_render: bool,
+) -> None:
+    if should_render:
+        render_prompt_assembly(req, assembly)
+
+
 def _select_provider(
     event: AstrMessageEvent, plugin_context: Context
 ) -> Provider | None:
@@ -197,9 +238,12 @@ async def _apply_kb(
     req: ProviderRequest,
     plugin_context: Context,
     config: MainAgentBuildConfig,
+    assembly: PromptAssembly | None = None,
 ) -> None:
+    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     if not config.kb_agentic_mode:
         if req.prompt is None:
+            _finalize_prompt_assembly(req, prompt_assembly, should_render)
             return
         try:
             kb_result = await retrieve_knowledge_base(
@@ -208,24 +252,30 @@ async def _apply_kb(
                 context=plugin_context,
             )
             if not kb_result:
+                _finalize_prompt_assembly(req, prompt_assembly, should_render)
                 return
-            if req.system_prompt is not None:
-                req.system_prompt += (
-                    f"\n\n[Related Knowledge Base Results]:\n{kb_result}"
-                )
+            add_system_block(
+                prompt_assembly,
+                source="knowledge_base",
+                order=SYSTEM_BLOCK_ORDER_KB,
+                content=f"\n\n[Related Knowledge Base Results]:\n{kb_result}",
+            )
         except Exception as exc:  # noqa: BLE001
             logger.error("Error occurred while retrieving knowledge base: %s", exc)
     else:
         if req.func_tool is None:
             req.func_tool = ToolSet()
         req.func_tool.add_tool(KNOWLEDGE_BASE_QUERY_TOOL)
+    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 async def _apply_file_extract(
     event: AstrMessageEvent,
     req: ProviderRequest,
     config: MainAgentBuildConfig,
+    assembly: PromptAssembly | None = None,
 ) -> None:
+    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     file_paths = []
     file_names = []
     for comp in event.message_obj.message:
@@ -238,6 +288,7 @@ async def _apply_file_extract(
                     file_paths.append(await reply_comp.get_file())
                     file_names.append(reply_comp.name)
     if not file_paths:
+        _finalize_prompt_assembly(req, prompt_assembly, should_render)
         return
     if not req.prompt:
         req.prompt = "总结一下文件里面讲了什么？"
@@ -259,15 +310,21 @@ async def _apply_file_extract(
         return
 
     for file_content, file_name in zip(file_contents, file_names):
-        req.contexts.append(
-            {
-                "role": "system",
-                "content": (
-                    "File Extract Results of user uploaded files:\n"
-                    f"{file_content}\nFile Name: {file_name or 'Unknown'}"
-                ),
-            },
+        add_context_suffix(
+            prompt_assembly,
+            source="file_extract",
+            order=CONTEXT_ORDER_FILE_EXTRACT,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "File Extract Results of user uploaded files:\n"
+                        f"{file_content}\nFile Name: {file_name or 'Unknown'}"
+                    ),
+                }
+            ],
         )
+    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 def _apply_prompt_prefix(req: ProviderRequest, cfg: dict) -> None:
@@ -280,12 +337,22 @@ def _apply_prompt_prefix(req: ProviderRequest, cfg: dict) -> None:
         req.prompt = f"{prefix}{req.prompt}"
 
 
-def _apply_local_env_tools(req: ProviderRequest) -> None:
+def _apply_local_env_tools(
+    req: ProviderRequest,
+    assembly: PromptAssembly | None = None,
+) -> None:
+    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     if req.func_tool is None:
         req.func_tool = ToolSet()
     req.func_tool.add_tool(LOCAL_EXECUTE_SHELL_TOOL)
     req.func_tool.add_tool(LOCAL_PYTHON_TOOL)
-    req.system_prompt = f"{req.system_prompt or ''}\n{_build_local_mode_prompt()}\n"
+    add_system_block(
+        prompt_assembly,
+        source="runtime:local",
+        order=SYSTEM_BLOCK_ORDER_RUNTIME,
+        content=f"\n{_build_local_mode_prompt()}\n",
+    )
+    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 def _build_local_mode_prompt() -> str:
@@ -308,9 +375,12 @@ async def _ensure_persona_and_skills(
     cfg: dict,
     plugin_context: Context,
     event: AstrMessageEvent,
+    assembly: PromptAssembly | None = None,
 ) -> None:
     """Ensure persona and skills are applied to the request's system prompt or user prompt."""
+    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     if not req.conversation:
+        _finalize_prompt_assembly(req, prompt_assembly, should_render)
         return
 
     (
@@ -332,11 +402,26 @@ async def _ensure_persona_and_skills(
     if persona:
         # Inject persona system prompt
         if prompt := persona["prompt"]:
-            req.system_prompt += f"\n# Persona Instructions\n\n{prompt}\n"
+            add_system_block(
+                prompt_assembly,
+                source="persona",
+                order=SYSTEM_BLOCK_ORDER_PERSONA,
+                content=f"\n# Persona Instructions\n\n{prompt}\n",
+            )
         if begin_dialogs := copy.deepcopy(persona.get("_begin_dialogs_processed")):
-            req.contexts[:0] = begin_dialogs
+            add_context_prefix(
+                prompt_assembly,
+                source="persona_begin_dialogs",
+                order=CONTEXT_ORDER_PERSONA_BEGIN_DIALOGS,
+                messages=begin_dialogs,
+            )
     elif use_webchat_special_default:
-        req.system_prompt += CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT
+        add_system_block(
+            prompt_assembly,
+            source="persona",
+            order=SYSTEM_BLOCK_ORDER_PERSONA,
+            content=CHATUI_SPECIAL_DEFAULT_PERSONA_PROMPT,
+        )
 
     # Inject skills prompt
     runtime = cfg.get("computer_use_runtime", "local")
@@ -351,12 +436,22 @@ async def _ensure_persona_and_skills(
                 allowed = set(persona["skills"])
                 skills = [skill for skill in skills if skill.name in allowed]
         if skills:
-            req.system_prompt += f"\n{build_skills_prompt(skills)}\n"
+            add_system_block(
+                prompt_assembly,
+                source="skills",
+                order=SYSTEM_BLOCK_ORDER_SKILLS,
+                content=f"\n{build_skills_prompt(skills)}\n",
+            )
             if runtime == "none":
-                req.system_prompt += (
-                    "User has not enabled the Computer Use feature. "
-                    "You cannot use shell or Python to perform skills. "
-                    "If you need to use these capabilities, ask the user to enable Computer Use in the AstrBot WebUI -> Config."
+                add_system_block(
+                    prompt_assembly,
+                    source="skills_runtime_notice",
+                    order=SYSTEM_BLOCK_ORDER_SKILLS,
+                    content=(
+                        "User has not enabled the Computer Use feature. "
+                        "You cannot use shell or Python to perform skills. "
+                        "If you need to use these capabilities, ask the user to enable Computer Use in the AstrBot WebUI -> Config."
+                    ),
                 )
     tmgr = plugin_context.get_llm_tool_manager()
 
@@ -438,7 +533,12 @@ async def _ensure_persona_and_skills(
             .get("router_system_prompt", "")
         ).strip()
         if router_prompt:
-            req.system_prompt += f"\n{router_prompt}\n"
+            add_system_block(
+                prompt_assembly,
+                source="router",
+                order=SYSTEM_BLOCK_ORDER_ROUTER,
+                content=f"\n{router_prompt}\n",
+            )
     try:
         event.trace.record(
             "sel_persona",
@@ -447,6 +547,7 @@ async def _ensure_persona_and_skills(
         )
     except Exception:
         pass
+    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 async def _request_img_caption(
@@ -483,7 +584,9 @@ async def _ensure_img_caption(
     cfg: dict,
     plugin_context: Context,
     image_caption_provider: str,
+    assembly: PromptAssembly | None = None,
 ) -> None:
+    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     try:
         compressed_urls = []
         for url in req.image_urls:
@@ -498,20 +601,35 @@ async def _ensure_img_caption(
             plugin_context,
         )
         if caption:
-            req.extra_user_content_parts.append(
-                TextPart(text=f"<image_caption>{caption}</image_caption>")
+            add_user_text(
+                prompt_assembly,
+                source="image_caption",
+                order=USER_APPEND_ORDER_ATTACHMENTS,
+                text=f"<image_caption>{caption}</image_caption>",
             )
             req.image_urls = []
     except Exception as exc:  # noqa: BLE001
         logger.error("处理图片描述失败: %s", exc)
-        req.extra_user_content_parts.append(TextPart(text="[Image Captioning Failed]"))
+        add_user_text(
+            prompt_assembly,
+            source="image_caption",
+            order=USER_APPEND_ORDER_ATTACHMENTS,
+            text="[Image Captioning Failed]",
+        )
     finally:
         req.image_urls = []
+        _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
-def _append_quoted_image_attachment(req: ProviderRequest, image_path: str) -> None:
-    req.extra_user_content_parts.append(
-        TextPart(text=f"[Image Attachment in quoted message: path {image_path}]")
+def _append_quoted_image_attachment(
+    assembly: PromptAssembly,
+    image_path: str,
+) -> None:
+    add_user_text(
+        assembly,
+        source="quoted_attachment",
+        order=USER_APPEND_ORDER_ATTACHMENTS,
+        text=f"[Image Attachment in quoted message: path {image_path}]",
     )
 
 
@@ -584,13 +702,16 @@ async def _process_quote_message(
     plugin_context: Context,
     quoted_message_settings: QuotedMessageParserSettings = DEFAULT_QUOTED_MESSAGE_SETTINGS,
     config: MainAgentBuildConfig | None = None,
+    assembly: PromptAssembly | None = None,
 ) -> None:
+    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     quote = None
     for comp in event.message_obj.message:
         if isinstance(comp, Reply):
             quote = comp
             break
     if not quote:
+        _finalize_prompt_assembly(req, prompt_assembly, should_render)
         return
 
     content_parts = []
@@ -656,7 +777,13 @@ async def _process_quote_message(
 
     quoted_content = "\n".join(content_parts)
     quoted_text = f"<Quoted Message>\n{quoted_content}\n</Quoted Message>"
-    req.extra_user_content_parts.append(TextPart(text=quoted_text))
+    add_user_text(
+        prompt_assembly,
+        source="quoted_message",
+        order=USER_APPEND_ORDER_QUOTED,
+        text=quoted_text,
+    )
+    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 def _append_system_reminders(
@@ -664,7 +791,9 @@ def _append_system_reminders(
     req: ProviderRequest,
     cfg: dict,
     timezone: str | None,
+    assembly: PromptAssembly | None = None,
 ) -> None:
+    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     system_parts: list[str] = []
     if cfg.get("identifier"):
         user_id = event.message_obj.sender.user_id
@@ -700,7 +829,13 @@ def _append_system_reminders(
         system_content = (
             "<system_reminder>" + "\n".join(system_parts) + "</system_reminder>"
         )
-        req.extra_user_content_parts.append(TextPart(text=system_content))
+        add_user_text(
+            prompt_assembly,
+            source="system_reminder",
+            order=USER_APPEND_ORDER_SYSTEM_REMINDER,
+            text=system_content,
+        )
+    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 async def _decorate_llm_request(
@@ -708,7 +843,9 @@ async def _decorate_llm_request(
     req: ProviderRequest,
     plugin_context: Context,
     config: MainAgentBuildConfig,
+    assembly: PromptAssembly | None = None,
 ) -> None:
+    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     cfg = config.provider_settings or plugin_context.get_config(
         umo=event.unified_msg_origin
     ).get("provider_settings", {})
@@ -716,7 +853,9 @@ async def _decorate_llm_request(
     _apply_prompt_prefix(req, cfg)
 
     if req.conversation:
-        await _ensure_persona_and_skills(req, cfg, plugin_context, event)
+        await _ensure_persona_and_skills(
+            req, cfg, plugin_context, event, prompt_assembly
+        )
 
         img_cap_prov_id: str = cfg.get("default_image_caption_provider_id") or ""
         if img_cap_prov_id and req.image_urls:
@@ -726,6 +865,7 @@ async def _decorate_llm_request(
                 cfg,
                 plugin_context,
                 img_cap_prov_id,
+                prompt_assembly,
             )
 
     img_cap_prov_id = cfg.get("default_image_caption_provider_id") or ""
@@ -737,12 +877,14 @@ async def _decorate_llm_request(
         plugin_context,
         quoted_message_settings,
         config,
+        prompt_assembly,
     )
 
     tz = config.timezone
     if tz is None:
         tz = plugin_context.get_config().get("timezone")
-    _append_system_reminders(event, req, cfg, tz)
+    _append_system_reminders(event, req, cfg, tz, prompt_assembly)
+    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 def _modalities_fix(provider: Provider, req: ProviderRequest) -> None:
@@ -919,29 +1061,44 @@ async def _handle_webchat(
         )
 
 
-def _apply_llm_safety_mode(config: MainAgentBuildConfig, req: ProviderRequest) -> None:
+def _apply_llm_safety_mode(
+    config: MainAgentBuildConfig,
+    req: ProviderRequest,
+    assembly: PromptAssembly | None = None,
+) -> None:
+    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     if config.safety_mode_strategy == "system_prompt":
-        req.system_prompt = f"{LLM_SAFETY_MODE_SYSTEM_PROMPT}\n\n{req.system_prompt}"
+        add_system_block(
+            prompt_assembly,
+            source="safety",
+            order=SYSTEM_BLOCK_ORDER_SAFETY,
+            content=f"{LLM_SAFETY_MODE_SYSTEM_PROMPT}\n\n",
+            prepend=True,
+        )
     else:
         logger.warning(
             "Unsupported llm_safety_mode strategy: %s.",
             config.safety_mode_strategy,
         )
+    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 def _apply_sandbox_tools(
-    config: MainAgentBuildConfig, req: ProviderRequest, session_id: str
+    config: MainAgentBuildConfig,
+    req: ProviderRequest,
+    session_id: str,
+    assembly: PromptAssembly | None = None,
 ) -> None:
+    prompt_assembly, should_render = _resolve_prompt_assembly(assembly)
     if req.func_tool is None:
         req.func_tool = ToolSet()
-    if req.system_prompt is None:
-        req.system_prompt = ""
     booter = config.sandbox_cfg.get("booter", "shipyard_neo")
     if booter == "shipyard":
         ep = config.sandbox_cfg.get("shipyard_endpoint", "")
         at = config.sandbox_cfg.get("shipyard_access_token", "")
         if not ep or not at:
             logger.error("Shipyard sandbox configuration is incomplete.")
+            _finalize_prompt_assembly(req, prompt_assembly, should_render)
             return
         os.environ["SHIPYARD_ENDPOINT"] = ep
         os.environ["SHIPYARD_ACCESS_TOKEN"] = at
@@ -953,23 +1110,33 @@ def _apply_sandbox_tools(
     if booter == "shipyard_neo":
         # Neo-specific path rule: filesystem tools operate relative to sandbox
         # workspace root. Do not prepend "/workspace".
-        req.system_prompt += (
-            "\n[Shipyard Neo File Path Rule]\n"
-            "When using sandbox filesystem tools (upload/download/read/write/list/delete), "
-            "always pass paths relative to the sandbox workspace root. "
-            "Example: use `baidu_homepage.png` instead of `/workspace/baidu_homepage.png`.\n"
+        add_system_block(
+            prompt_assembly,
+            source="runtime:sandbox_path_rule",
+            order=SYSTEM_BLOCK_ORDER_RUNTIME,
+            content=(
+                "\n[Shipyard Neo File Path Rule]\n"
+                "When using sandbox filesystem tools (upload/download/read/write/list/delete), "
+                "always pass paths relative to the sandbox workspace root. "
+                "Example: use `baidu_homepage.png` instead of `/workspace/baidu_homepage.png`.\n"
+            ),
         )
 
-        req.system_prompt += (
-            "\n[Neo Skill Lifecycle Workflow]\n"
-            "When user asks to create/update a reusable skill in Neo mode, use lifecycle tools instead of directly writing local skill folders.\n"
-            "Preferred sequence:\n"
-            "1) Use `astrbot_create_skill_payload` to store canonical payload content and get `payload_ref`.\n"
-            "2) Use `astrbot_create_skill_candidate` with `skill_key` + `source_execution_ids` (and optional `payload_ref`) to create a candidate.\n"
-            "3) Use `astrbot_promote_skill_candidate` to release: `stage=canary` for trial; `stage=stable` for production.\n"
-            "For stable release, set `sync_to_local=true` to sync `payload.skill_markdown` into local `SKILL.md`.\n"
-            "Do not treat ad-hoc generated files as reusable Neo skills unless they are captured via payload/candidate/release.\n"
-            "To update an existing skill, create a new payload/candidate and promote a new release version; avoid patching old local folders directly.\n"
+        add_system_block(
+            prompt_assembly,
+            source="runtime:sandbox_skill_lifecycle",
+            order=SYSTEM_BLOCK_ORDER_RUNTIME,
+            content=(
+                "\n[Neo Skill Lifecycle Workflow]\n"
+                "When user asks to create/update a reusable skill in Neo mode, use lifecycle tools instead of directly writing local skill folders.\n"
+                "Preferred sequence:\n"
+                "1) Use `astrbot_create_skill_payload` to store canonical payload content and get `payload_ref`.\n"
+                "2) Use `astrbot_create_skill_candidate` with `skill_key` + `source_execution_ids` (and optional `payload_ref`) to create a candidate.\n"
+                "3) Use `astrbot_promote_skill_candidate` to release: `stage=canary` for trial; `stage=stable` for production.\n"
+                "For stable release, set `sync_to_local=true` to sync `payload.skill_markdown` into local `SKILL.md`.\n"
+                "Do not treat ad-hoc generated files as reusable Neo skills unless they are captured via payload/candidate/release.\n"
+                "To update an existing skill, create a new payload/candidate and promote a new release version; avoid patching old local folders directly.\n"
+            ),
         )
 
         # Determine sandbox capabilities from an already-booted session.
@@ -1002,7 +1169,13 @@ def _apply_sandbox_tools(
         req.func_tool.add_tool(ROLLBACK_SKILL_RELEASE_TOOL)
         req.func_tool.add_tool(SYNC_SKILL_RELEASE_TOOL)
 
-    req.system_prompt = f"{req.system_prompt or ''}\n{SANDBOX_MODE_PROMPT}\n"
+    add_system_block(
+        prompt_assembly,
+        source="runtime:sandbox",
+        order=SYSTEM_BLOCK_ORDER_RUNTIME,
+        content=f"\n{SANDBOX_MODE_PROMPT}\n",
+    )
+    _finalize_prompt_assembly(req, prompt_assembly, should_render)
 
 
 def _proactive_cron_job_tools(req: ProviderRequest) -> None:
@@ -1089,6 +1262,8 @@ async def build_main_agent(
         logger.info("未找到任何对话模型（提供商），跳过 LLM 请求处理。")
         return None
 
+    prompt_assembly = PromptAssembly()
+
     if req is None:
         if event.get_extra("provider_request"):
             req = event.get_extra("provider_request")
@@ -1121,16 +1296,20 @@ async def build_main_agent(
                     if _is_generated_compressed_image_path(path, image_path):
                         event.track_temporary_local_file(image_path)
                     req.image_urls.append(image_path)
-                    req.extra_user_content_parts.append(
-                        TextPart(text=f"[Image Attachment: path {image_path}]")
+                    add_user_text(
+                        prompt_assembly,
+                        source="attachment",
+                        order=USER_APPEND_ORDER_ATTACHMENTS,
+                        text=f"[Image Attachment: path {image_path}]",
                     )
                 elif isinstance(comp, File):
                     file_path = await comp.get_file()
                     file_name = comp.name or os.path.basename(file_path)
-                    req.extra_user_content_parts.append(
-                        TextPart(
-                            text=f"[File Attachment: name {file_name}, path {file_path}]"
-                        )
+                    add_user_text(
+                        prompt_assembly,
+                        source="attachment",
+                        order=USER_APPEND_ORDER_ATTACHMENTS,
+                        text=f"[File Attachment: name {file_name}, path {file_path}]",
                     )
             # quoted message attachments
             reply_comps = [
@@ -1154,17 +1333,18 @@ async def build_main_agent(
                             if _is_generated_compressed_image_path(path, image_path):
                                 event.track_temporary_local_file(image_path)
                             req.image_urls.append(image_path)
-                            _append_quoted_image_attachment(req, image_path)
+                            _append_quoted_image_attachment(prompt_assembly, image_path)
                         elif isinstance(reply_comp, File):
                             file_path = await reply_comp.get_file()
                             file_name = reply_comp.name or os.path.basename(file_path)
-                            req.extra_user_content_parts.append(
-                                TextPart(
-                                    text=(
-                                        f"[File Attachment in quoted message: "
-                                        f"name {file_name}, path {file_path}]"
-                                    )
-                                )
+                            add_user_text(
+                                prompt_assembly,
+                                source="quoted_attachment",
+                                order=USER_APPEND_ORDER_ATTACHMENTS,
+                                text=(
+                                    f"[File Attachment in quoted message: "
+                                    f"name {file_name}, path {file_path}]"
+                                ),
                             )
 
                 # Fallback quoted image extraction for reply-id-only payloads, or when
@@ -1204,7 +1384,7 @@ async def build_main_agent(
                                 continue
                             req.image_urls.append(image_ref)
                             fallback_quoted_image_count += 1
-                            _append_quoted_image_attachment(req, image_ref)
+                            _append_quoted_image_attachment(prompt_assembly, image_ref)
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(
                             "Failed to resolve fallback quoted images for umo=%s, reply_id=%s: %s",
@@ -1225,34 +1405,35 @@ async def build_main_agent(
 
     if config.file_extract_enabled:
         try:
-            await _apply_file_extract(event, req, config)
+            await _apply_file_extract(event, req, config, prompt_assembly)
         except Exception as exc:  # noqa: BLE001
             logger.error("Error occurred while applying file extract: %s", exc)
 
     if not req.prompt and not req.image_urls:
-        if not event.get_group_id() and req.extra_user_content_parts:
+        if not event.get_group_id() and (
+            req.extra_user_content_parts or prompt_assembly.user_append_parts
+        ):
             req.prompt = "<attachment>"
         else:
             return None
 
-    await _decorate_llm_request(event, req, plugin_context, config)
+    await _decorate_llm_request(event, req, plugin_context, config, prompt_assembly)
 
-    await _apply_kb(event, req, plugin_context, config)
+    await _apply_kb(event, req, plugin_context, config, prompt_assembly)
 
     if not req.session_id:
         req.session_id = event.unified_msg_origin
 
     _modalities_fix(provider, req)
     _plugin_tool_fix(event, req)
-    _sanitize_context_by_modalities(config, provider, req)
 
     if config.llm_safety_mode:
-        _apply_llm_safety_mode(config, req)
+        _apply_llm_safety_mode(config, req, prompt_assembly)
 
     if config.computer_use_runtime == "sandbox":
-        _apply_sandbox_tools(config, req, req.session_id)
+        _apply_sandbox_tools(config, req, req.session_id, prompt_assembly)
     elif config.computer_use_runtime == "local":
-        _apply_local_env_tools(req)
+        _apply_local_env_tools(req, prompt_assembly)
 
     agent_runner = AgentRunner()
     astr_agent_ctx = AstrAgentContext(
@@ -1284,11 +1465,39 @@ async def build_main_agent(
             if config.tool_schema_mode == "full"
             else TOOL_CALL_PROMPT_SKILLS_LIKE_MODE
         )
-        req.system_prompt += f"\n{tool_prompt}\n"
+        add_system_block(
+            prompt_assembly,
+            source="tool_use",
+            order=SYSTEM_BLOCK_ORDER_TOOL_USE,
+            content=f"\n{tool_prompt}\n",
+        )
 
     action_type = event.get_extra("action_type")
     if action_type == "live":
-        req.system_prompt += f"\n{LIVE_MODE_SYSTEM_PROMPT}\n"
+        add_system_block(
+            prompt_assembly,
+            source="live_mode",
+            order=SYSTEM_BLOCK_ORDER_LIVE_MODE,
+            content=f"\n{LIVE_MODE_SYSTEM_PROMPT}\n",
+        )
+
+    prompt_assembly.metadata["base_request"] = summarize_provider_request_base(req)
+    if await call_event_hook(
+        event,
+        EventType.OnPromptAssemblyEvent,
+        PromptMutation(prompt_assembly),
+    ):
+        return None
+
+    render_prompt_assembly(req, prompt_assembly)
+    try:
+        event.trace.record(
+            "core_prompt_assembly",
+            **build_prompt_trace_snapshot(prompt_assembly),
+        )
+    except Exception:
+        logger.debug("Failed to record core_prompt_assembly trace", exc_info=True)
+    _sanitize_context_by_modalities(config, provider, req)
 
     reset_coro = agent_runner.reset(
         provider=provider,

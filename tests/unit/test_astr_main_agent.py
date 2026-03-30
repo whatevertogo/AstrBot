@@ -1,5 +1,6 @@
 """Tests for astr_main_agent module."""
 
+import json
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -70,6 +71,7 @@ def mock_event():
     event.get_platform_id.return_value = "test_platform"
     event.get_group_id.return_value = None
     event.get_sender_name.return_value = "TestUser"
+    event.is_stopped.return_value = False
     event.trace = MagicMock()
     event.plugins_name = None
     return event
@@ -389,8 +391,15 @@ class TestApplyFileExtract:
 
             await module._apply_file_extract(mock_event, req, sample_config)
 
-        assert len(req.contexts) == 1
-        assert "File Extract Results" in req.contexts[0]["content"]
+        assert req.contexts == [
+            {
+                "role": "system",
+                "content": (
+                    "File Extract Results of user uploaded files:\n"
+                    "File content\nFile Name: test.pdf"
+                ),
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_file_extract_no_files(self, mock_event, sample_config):
@@ -647,6 +656,31 @@ class TestDecorateLlmRequest:
             await module._decorate_llm_request(mock_event, req, mock_context, config)
 
         assert req.prompt == "AI Hello - Please respond:"
+
+    @pytest.mark.asyncio
+    async def test_decorate_llm_request_keeps_quote_and_system_reminder_in_user_parts(
+        self, mock_event, mock_context
+    ):
+        module = ama
+        req = ProviderRequest(prompt="Hello")
+        quote = MagicMock(spec=Reply)
+        quote.sender_nickname = "Alice"
+        quote.message_str = "Quoted hi"
+        quote.chain = []
+        mock_event.message_obj.message = [quote]
+        config = module.MainAgentBuildConfig(
+            tool_call_timeout=60,
+            provider_settings={"identifier": True, "datetime_system_prompt": False},
+        )
+
+        with patch.object(mock_context, "get_config") as mock_get_config:
+            mock_get_config.return_value = {}
+            await module._decorate_llm_request(mock_event, req, mock_context, config)
+
+        assert [part.text for part in req.extra_user_content_parts] == [
+            "<Quoted Message>\n(Alice): Quoted hi\n</Quoted Message>",
+            "<system_reminder>User ID: user123, Nickname: TestUser</system_reminder>",
+        ]
 
     @pytest.mark.asyncio
     async def test_decorate_llm_request_no_conversation(self, mock_event, mock_context):
@@ -1103,7 +1137,212 @@ class TestBuildMainAgent:
             )
 
         assert result is not None
-        assert result.provider_request == existing_req
+
+    @pytest.mark.asyncio
+    async def test_build_main_agent_prompt_assembly_ordering(
+        self, mock_event, mock_context, mock_provider
+    ):
+        module = ama
+        mock_event.platform_meta.support_proactive_message = True
+        mock_context.get_provider_by_id.return_value = None
+        mock_context.get_using_provider.return_value = mock_provider
+        mock_context.get_config.return_value = {
+            "provider_settings": {},
+            "subagent_orchestrator": {
+                "main_enable": True,
+                "router_system_prompt": "ROUTER_BLOCK",
+            },
+        }
+        conversation = _setup_conversation_for_build(mock_context.conversation_manager)
+        conversation.persona_id = "persona-1"
+        mock_context.persona_manager.resolve_selected_persona = AsyncMock(
+            return_value=(
+                "persona-1",
+                {
+                    "prompt": "PERSONA_BLOCK",
+                    "skills": None,
+                    "tools": None,
+                    "_begin_dialogs_processed": [],
+                },
+                None,
+                False,
+            )
+        )
+        tool_manager = MagicMock()
+        tool_manager.get_full_tool_set.return_value = ToolSet()
+        tool_manager.func_list = []
+        mock_context.get_llm_tool_manager.return_value = tool_manager
+        mock_context.subagent_orchestrator = MagicMock(handoffs=[])
+
+        with (
+            patch.object(module, "SkillManager") as mock_skill_manager_cls,
+            patch.object(module, "build_skills_prompt", return_value="SKILLS_BLOCK"),
+            patch.object(module, "_build_local_mode_prompt", return_value="LOCAL_BLOCK"),
+            patch.object(module, "LLM_SAFETY_MODE_SYSTEM_PROMPT", "SAFE_BLOCK"),
+            patch.object(module, "TOOL_CALL_PROMPT", "TOOL_BLOCK"),
+            patch("astrbot.core.astr_main_agent.AgentRunner") as mock_runner_cls,
+            patch("astrbot.core.astr_main_agent.AstrAgentContext"),
+        ):
+            mock_skill_manager = MagicMock()
+            mock_skill_manager.list_skills.return_value = [MagicMock(name="skill-a")]
+            mock_skill_manager_cls.return_value = mock_skill_manager
+            mock_runner = MagicMock()
+            mock_runner.reset = AsyncMock()
+            mock_runner_cls.return_value = mock_runner
+
+            result = await module.build_main_agent(
+                event=mock_event,
+                plugin_context=mock_context,
+                config=module.MainAgentBuildConfig(
+                    tool_call_timeout=60,
+                    llm_safety_mode=False,
+                ),
+            )
+
+        assert result is not None
+        assert result.provider_request.system_prompt == (
+            "\n# Persona Instructions\n\nPERSONA_BLOCK\n"
+            "\nSKILLS_BLOCK\n"
+            "\nROUTER_BLOCK\n"
+            "\nLOCAL_BLOCK\n"
+            "\nTOOL_BLOCK\n"
+        )
+        core_trace = next(
+            call
+            for call in mock_event.trace.record.call_args_list
+            if call.args and call.args[0] == "core_prompt_assembly"
+        )
+        assert [item["source"] for item in core_trace.kwargs["system_blocks"]] == [
+            "persona",
+            "skills",
+            "router",
+            "runtime:local",
+            "tool_use",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_build_main_agent_prepends_persona_begin_dialogs(
+        self, mock_event, mock_context, mock_provider
+    ):
+        module = ama
+        mock_context.get_provider_by_id.return_value = None
+        mock_context.get_using_provider.return_value = mock_provider
+        mock_context.get_config.return_value = {}
+        conversation = _setup_conversation_for_build(mock_context.conversation_manager)
+        conversation.persona_id = "persona-1"
+        conversation.history = json.dumps([{"role": "user", "content": "history"}])
+        mock_context.persona_manager.resolve_selected_persona = AsyncMock(
+            return_value=(
+                "persona-1",
+                {
+                    "prompt": "PERSONA_BLOCK",
+                    "skills": None,
+                    "tools": None,
+                    "_begin_dialogs_processed": [
+                        {"role": "assistant", "content": "example"}
+                    ],
+                },
+                None,
+                False,
+            )
+        )
+        tool_manager = MagicMock()
+        tool_manager.get_full_tool_set.return_value = ToolSet()
+        tool_manager.func_list = []
+        mock_context.get_llm_tool_manager.return_value = tool_manager
+
+        with (
+            patch("astrbot.core.astr_main_agent.AgentRunner") as mock_runner_cls,
+            patch("astrbot.core.astr_main_agent.AstrAgentContext"),
+        ):
+            mock_runner = MagicMock()
+            mock_runner.reset = AsyncMock()
+            mock_runner_cls.return_value = mock_runner
+
+            result = await module.build_main_agent(
+                event=mock_event,
+                plugin_context=mock_context,
+                config=module.MainAgentBuildConfig(
+                    tool_call_timeout=60,
+                    llm_safety_mode=False,
+                    computer_use_runtime="none",
+                    add_cron_tools=False,
+                ),
+            )
+
+        assert result is not None
+        assert result.provider_request.contexts == [
+            {"role": "assistant", "content": "example"},
+            {"role": "user", "content": "history"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_build_main_agent_prompt_assembly_hook_can_add_blocks(
+        self, mock_event, mock_context, mock_provider
+    ):
+        module = ama
+        mock_event.platform_meta.support_proactive_message = False
+        mock_context.get_provider_by_id.return_value = None
+        mock_context.get_using_provider.return_value = mock_provider
+        mock_context.get_config.return_value = {}
+        _setup_conversation_for_build(mock_context.conversation_manager)
+        tool_manager = MagicMock()
+        tool_manager.get_full_tool_set.return_value = ToolSet()
+        tool_manager.func_list = []
+        mock_context.get_llm_tool_manager.return_value = tool_manager
+
+        async def fake_call_event_hook(event, hook_type, *args):
+            if hook_type == module.EventType.OnPromptAssemblyEvent:
+                mutation = args[0]
+                mutation.add_system("\nPLUGIN_SYSTEM\n", "plugin:test", 950)
+                mutation.add_user_text("plugin user", "plugin:test", 950)
+                mutation.add_context_prefix(
+                    [{"role": "system", "content": "plugin prefix"}],
+                    "plugin:test",
+                    950,
+                )
+                mutation.add_context_suffix(
+                    [{"role": "assistant", "content": "plugin suffix"}],
+                    "plugin:test",
+                    950,
+                )
+            return False
+
+        with (
+            patch.object(module, "call_event_hook", AsyncMock(side_effect=fake_call_event_hook)),
+            patch("astrbot.core.astr_main_agent.AgentRunner") as mock_runner_cls,
+            patch("astrbot.core.astr_main_agent.AstrAgentContext"),
+        ):
+            mock_runner = MagicMock()
+            mock_runner.reset = AsyncMock()
+            mock_runner_cls.return_value = mock_runner
+
+            result = await module.build_main_agent(
+                event=mock_event,
+                plugin_context=mock_context,
+                config=module.MainAgentBuildConfig(
+                    tool_call_timeout=60,
+                    llm_safety_mode=False,
+                    computer_use_runtime="none",
+                    add_cron_tools=False,
+                ),
+            )
+
+        assert result is not None
+        assert result.provider_request.system_prompt == "\nPLUGIN_SYSTEM\n"
+        assert [part.text for part in result.provider_request.extra_user_content_parts] == [
+            "plugin user",
+        ]
+        assert result.provider_request.contexts == [
+            {"role": "system", "content": "plugin prefix"},
+            {"role": "assistant", "content": "plugin suffix"},
+        ]
+        core_trace = next(
+            call
+            for call in mock_event.trace.record.call_args_list
+            if call.args and call.args[0] == "core_prompt_assembly"
+        )
+        assert core_trace.kwargs["metadata"]["base_request"]["has_prompt"] is True
 
 
 class TestHandleWebchat:
