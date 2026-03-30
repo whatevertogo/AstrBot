@@ -44,6 +44,18 @@ def render_prompt_assembly(
     if assembly.rendered:
         return req
 
+    # TODO: Remove this compatibility shim after all helper entrypoints are
+    # tightened to accept only fully initialized ProviderRequest instances.
+    # Some legacy unit tests and helper-only call paths still pass lightweight
+    # request-like objects that only provide the fields they mutate.
+    if (
+        not hasattr(req, "extra_user_content_parts")
+        or req.extra_user_content_parts is None
+    ):
+        req.extra_user_content_parts = []
+    if not hasattr(req, "contexts") or req.contexts is None:
+        req.contexts = []
+
     # --- system_blocks → req.system_prompt ---
     # 将 prepend 块和 append 块分离，分别拼到原始 system_prompt 的前面和后面
     prepend_prompt = ""
