@@ -446,7 +446,7 @@ async def _ensure_persona_and_skills(
                 add_system_block(
                     prompt_assembly,
                     source="skills_runtime_notice",
-                    order=SYSTEM_BLOCK_ORDER_SKILLS,
+                    order=SYSTEM_BLOCK_ORDER_SKILLS + 10,
                     content=(
                         "User has not enabled the Computer Use feature. "
                         "You cannot use shell or Python to perform skills. "
@@ -1125,7 +1125,7 @@ def _apply_sandbox_tools(
         add_system_block(
             prompt_assembly,
             source="runtime:sandbox_skill_lifecycle",
-            order=SYSTEM_BLOCK_ORDER_RUNTIME,
+            order=SYSTEM_BLOCK_ORDER_RUNTIME + 10,
             content=(
                 "\n[Neo Skill Lifecycle Workflow]\n"
                 "When user asks to create/update a reusable skill in Neo mode, use lifecycle tools instead of directly writing local skill folders.\n"
@@ -1172,7 +1172,7 @@ def _apply_sandbox_tools(
     add_system_block(
         prompt_assembly,
         source="runtime:sandbox",
-        order=SYSTEM_BLOCK_ORDER_RUNTIME,
+        order=SYSTEM_BLOCK_ORDER_RUNTIME + 20,
         content=f"\n{SANDBOX_MODE_PROMPT}\n",
     )
     _finalize_prompt_assembly(req, prompt_assembly, should_render)
@@ -1482,6 +1482,7 @@ async def build_main_agent(
         )
 
     prompt_assembly.metadata["base_request"] = summarize_provider_request_base(req)
+    core_prompt_trace_snapshot = build_prompt_trace_snapshot(prompt_assembly)
     if await call_event_hook(
         event,
         EventType.OnPromptAssemblyEvent,
@@ -1493,7 +1494,7 @@ async def build_main_agent(
     try:
         event.trace.record(
             "core_prompt_assembly",
-            **build_prompt_trace_snapshot(prompt_assembly),
+            **core_prompt_trace_snapshot,
         )
     except Exception:
         logger.debug("Failed to record core_prompt_assembly trace", exc_info=True)

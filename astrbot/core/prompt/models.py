@@ -1,15 +1,12 @@
 """
-Prompt Assembly 数据模型 — AstrBot 内部 prompt 结构化管理核心类型。
+Prompt Assembly data models.
 
-本模块定义了三通道 prompt 组装的数据结构，供 `assembly.py` 注册、
-`renderer.py` 渲染、`tracing.py` 追踪使用。
+This module defines the three-channel prompt assembly structures used by
+``assembly.py``, ``renderer.py`` and ``tracing.py``.
 
-三通道设计：
-  - system_blocks:      所有写入 system prompt 的内容（安全规则、人格、技能、KB 等）
-  - user_append_parts:  追加到用户消息中的内容（附件通知、引用消息、系统提醒）
-  - context_contributions: 插入到对话历史前后的合成消息（预设对话、文件提取结果）
-
-这些类型仅用于 core 内部，不对外暴露为公共 API。
+The core types exported via ``astrbot.core.prompt`` are part of the extension
+surface for prompt assembly integrations. Internal wiring around those types
+may still evolve without separate notice.
 """
 
 from __future__ import annotations

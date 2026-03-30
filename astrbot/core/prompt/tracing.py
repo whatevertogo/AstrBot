@@ -36,13 +36,13 @@ def summarize_provider_request_base(req: ProviderRequest) -> dict:
 
 
 def build_prompt_trace_snapshot(assembly: PromptAssembly) -> dict:
-    """从已注册的 PromptAssembly 构建结构化 trace 快照。
+    """Build a redacted structured trace snapshot from a PromptAssembly.
 
     返回格式：
       {
           "system_blocks": [
-              {"source": "safety", "order": 100, "content": "...", "prepend": True},
-              {"source": "persona", "order": 200, "content": "...", "prepend": False},
+              {"source": "safety", "order": 100, "prepend": True, "char_count": 120},
+              {"source": "persona", "order": 200, "prepend": False, "char_count": 80},
               ...
           ],
           "user_append_parts": [
@@ -58,14 +58,14 @@ def build_prompt_trace_snapshot(assembly: PromptAssembly) -> dict:
           "metadata": {...},
       }
 
-    所有内容按 order 排序，且仅包含 visible_in_trace=True 的区块，
-    以控制敏感信息（如 KB 检索片段）的可见性。
+    所有内容按 order 排序，且仅包含 visible_in_trace=True 的区块。
+    快照默认只记录摘要信息（如字符数、消息数、角色），不直接记录原文内容。
 
     Args:
-        assembly: 已完成注册的 PromptAssembly（渲染前或渲染后均可）
+        assembly: PromptAssembly to summarize.
 
     Returns:
-        可序列化的 dict，适合记录到日志或调试系统
+        Serializable dict for traces and debugging.
     """
     return {
         "system_blocks": [

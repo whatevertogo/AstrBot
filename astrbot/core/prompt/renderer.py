@@ -1,15 +1,9 @@
 """
-Prompt Assembly 渲染器 — 将 PromptAssembly 中的结构化区块写回 ProviderRequest。
+Prompt Assembly renderer.
 
-这是 prompt 组装的最终步骤：各 core helper 向 assembly 注册完所有区块后，
-由 render_prompt_assembly() 一次性将三通道内容渲染到 req 的对应字段中。
-
-渲染顺序：
-  1. system_blocks: prepend 块按 order 排序 → 原始 system_prompt → append 块按 order 排序
-  2. user_append_parts: 按 order 排序后追加到 req.extra_user_content_parts
-  3. context_contributions: prefix 按 order 排序 → 原始 contexts → suffix 按 order 排序
-
-渲染是幂等的：assembly.rendered 标志确保同一 assembly 只能渲染一次。
+This is the final step of prompt assembly: core helpers register structured
+blocks into a request-scoped PromptAssembly, then render_prompt_assembly()
+writes the three channels back into the request fields once.
 """
 
 from __future__ import annotations
@@ -58,13 +52,15 @@ def render_prompt_assembly(
 
     # --- system_blocks → req.system_prompt ---
     # 将 prepend 块和 append 块分离，分别拼到原始 system_prompt 的前面和后面
-    prepend_prompt = ""
-    append_prompt = ""
+    prepend_parts: list[str] = []
+    append_parts: list[str] = []
     for block in sorted(assembly.system_blocks, key=lambda item: item.order):
         if block.prepend:
-            prepend_prompt += block.content
+            prepend_parts.append(block.content)
         else:
-            append_prompt += block.content
+            append_parts.append(block.content)
+    prepend_prompt = "".join(prepend_parts)
+    append_prompt = "".join(append_parts)
     system_prompt = f"{prepend_prompt}{req.system_prompt or ''}{append_prompt}"
     req.system_prompt = system_prompt
 

@@ -451,9 +451,11 @@ def register_on_prompt_assembly(**kwargs):
     - ``add_context_suffix(messages, source, order)`` — 追加到对话历史末尾
 
     Note:
-        ``add_context_prefix`` 会改变对话历史的内容，会**降低** LLM 服务端对
-          KV cache 前缀的复用率。静态内容（行为规则、固定策略）不受影响。其余三个通道
-        （user / context prefix / context suffix）每次请求本就不同，不影响缓存。
+        ``add_context_prefix`` 会改变对话历史的开头，会**降低** LLM 服务端对
+        KV cache 前缀的复用率。只有确实需要这些内容参与多轮推理时才建议使用。
+
+        相比之下，``add_system``、``add_user_text`` 和 ``add_context_suffix``
+        通常不会以同样的方式破坏历史前缀缓存，但它们依然会改变最终请求内容。
 
     Example:
     ```py

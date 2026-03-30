@@ -574,9 +574,10 @@ class TestEnsurePersonaAndSkills:
         tmgr = mock_context.get_llm_tool_manager.return_value
         tmgr.func_list = [tool_a, tool_b]
         tmgr.get_full_tool_set.return_value = ToolSet([tool_a, tool_b])
-        tmgr.get_func.side_effect = lambda name: {"tool_a": tool_a, "tool_b": tool_b}.get(
-            name
-        )
+        tmgr.get_func.side_effect = lambda name: {
+            "tool_a": tool_a,
+            "tool_b": tool_b,
+        }.get(name)
 
         handoff = MagicMock()
         handoff.name = "transfer_to_planner"
@@ -1177,7 +1178,9 @@ class TestBuildMainAgent:
         with (
             patch.object(module, "SkillManager") as mock_skill_manager_cls,
             patch.object(module, "build_skills_prompt", return_value="SKILLS_BLOCK"),
-            patch.object(module, "_build_local_mode_prompt", return_value="LOCAL_BLOCK"),
+            patch.object(
+                module, "_build_local_mode_prompt", return_value="LOCAL_BLOCK"
+            ),
             patch.object(module, "LLM_SAFETY_MODE_SYSTEM_PROMPT", "SAFE_BLOCK"),
             patch.object(module, "TOOL_CALL_PROMPT", "TOOL_BLOCK"),
             patch("astrbot.core.astr_main_agent.AgentRunner") as mock_runner_cls,
@@ -1309,7 +1312,9 @@ class TestBuildMainAgent:
             return False
 
         with (
-            patch.object(module, "call_event_hook", AsyncMock(side_effect=fake_call_event_hook)),
+            patch.object(
+                module, "call_event_hook", AsyncMock(side_effect=fake_call_event_hook)
+            ),
             patch("astrbot.core.astr_main_agent.AgentRunner") as mock_runner_cls,
             patch("astrbot.core.astr_main_agent.AstrAgentContext"),
         ):
@@ -1330,7 +1335,9 @@ class TestBuildMainAgent:
 
         assert result is not None
         assert result.provider_request.system_prompt == "\nPLUGIN_SYSTEM\n"
-        assert [part.text for part in result.provider_request.extra_user_content_parts] == [
+        assert [
+            part.text for part in result.provider_request.extra_user_content_parts
+        ] == [
             "plugin user",
         ]
         assert result.provider_request.contexts == [
@@ -1342,7 +1349,62 @@ class TestBuildMainAgent:
             for call in mock_event.trace.record.call_args_list
             if call.args and call.args[0] == "core_prompt_assembly"
         )
+        assert core_trace.kwargs["system_blocks"] == []
+        assert core_trace.kwargs["user_append_parts"] == []
+        assert core_trace.kwargs["context_prefix"] == []
+        assert core_trace.kwargs["context_suffix"] == []
         assert core_trace.kwargs["metadata"]["base_request"]["has_prompt"] is True
+
+    @pytest.mark.asyncio
+    async def test_build_main_agent_prompt_assembly_hook_can_cancel_request(
+        self, mock_event, mock_context, mock_provider
+    ):
+        module = ama
+        mock_event.platform_meta.support_proactive_message = False
+        mock_context.get_provider_by_id.return_value = None
+        mock_context.get_using_provider.return_value = mock_provider
+        mock_context.get_config.return_value = {}
+        _setup_conversation_for_build(mock_context.conversation_manager)
+        tool_manager = MagicMock()
+        tool_manager.get_full_tool_set.return_value = ToolSet()
+        tool_manager.func_list = []
+        mock_context.get_llm_tool_manager.return_value = tool_manager
+
+        async def fake_call_event_hook(event, hook_type, *args):
+            return hook_type == module.EventType.OnPromptAssemblyEvent
+
+        with (
+            patch.object(
+                module, "call_event_hook", AsyncMock(side_effect=fake_call_event_hook)
+            ),
+            patch.object(
+                module, "render_prompt_assembly"
+            ) as mock_render_prompt_assembly,
+            patch("astrbot.core.astr_main_agent.AgentRunner") as mock_runner_cls,
+            patch("astrbot.core.astr_main_agent.AstrAgentContext"),
+        ):
+            mock_runner = MagicMock()
+            mock_runner.reset = AsyncMock()
+            mock_runner_cls.return_value = mock_runner
+
+            result = await module.build_main_agent(
+                event=mock_event,
+                plugin_context=mock_context,
+                config=module.MainAgentBuildConfig(
+                    tool_call_timeout=60,
+                    llm_safety_mode=False,
+                    computer_use_runtime="none",
+                    add_cron_tools=False,
+                ),
+            )
+
+        assert result is None
+        mock_render_prompt_assembly.assert_not_called()
+        mock_runner.reset.assert_not_called()
+        assert not any(
+            call.args and call.args[0] == "core_prompt_assembly"
+            for call in mock_event.trace.record.call_args_list
+        )
 
 
 class TestHandleWebchat:
