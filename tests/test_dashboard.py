@@ -21,6 +21,7 @@ from astrbot.core.star.star import star_registry
 from astrbot.core.star.star_handler import star_handlers_registry
 from astrbot.core.utils.pip_installer import PipInstallError
 from astrbot.dashboard.routes.plugin import PluginRoute
+from astrbot.dashboard.routes.skills import _build_skill_export_paths
 from astrbot.dashboard.server import AstrBotDashboard
 from tests.fixtures.helpers import (
     MockPluginBuilder,
@@ -180,11 +181,47 @@ async def test_sdk_plugin_page_route_is_public_but_api_route_requires_auth(
     api_response = await test_client.get("/api/plug/sdk-demo")
     assert api_response.status_code == 401
 
+    padded_auth_header = {
+        "Authorization": (
+            f"Bearer   {authenticated_header['Authorization'].removeprefix('Bearer ')}   "
+        )
+    }
     authed_api_response = await test_client.get(
         "/api/plug/sdk-demo",
-        headers=authenticated_header,
+        headers=padded_auth_header,
     )
     assert authed_api_response.status_code == 200
+
+
+def test_sdk_plugin_response_filters_unsafe_headers() -> None:
+    response = AstrBotDashboard._build_sdk_plugin_response(
+        {
+            "status": 200,
+            "headers": {
+                "X-Test": "ok",
+                "Connection": "close",
+                "Content-Length": "999",
+                "X-Bad": "line1\r\nline2",
+            },
+            "body": "hello",
+        }
+    )
+
+    assert response.headers["X-Test"] == "ok"
+    assert "Connection" not in response.headers
+    assert response.headers["Content-Length"] == "5"
+    assert "X-Bad" not in response.headers
+
+
+def test_build_skill_export_paths_uses_unique_temp_names(tmp_path) -> None:
+    first_base, first_bundle = _build_skill_export_paths(tmp_path, "demo-skill")
+    second_base, second_bundle = _build_skill_export_paths(tmp_path, "demo-skill")
+
+    assert first_base != second_base
+    assert first_bundle != second_bundle
+    assert first_base.name.startswith("demo-skill_")
+    assert first_bundle.name.startswith("demo-skill_")
+    assert first_base.with_suffix(".zip").name.endswith(".zip")
 
 
 @pytest.mark.asyncio

@@ -74,7 +74,7 @@ from astrbot_sdk.testing import MockContext
 
 from astrbot.core.cron.manager import CronJobManager
 from astrbot.core.db.po import CronJob
-from astrbot.core.message.components import Plain
+from astrbot.core.message.components import Json, Plain
 from astrbot.core.message.message_event_result import (
     MessageChain,
     MessageEventResult,
@@ -947,12 +947,21 @@ class _DecoratingResultFakeBridge:
 
 
 class _DecoratingResultFakeEvent:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        platform_name: str = "test-platform",
+        extras: dict[str, object] | None = None,
+        result_content_type: ResultContentType = ResultContentType.STREAMING_FINISH,
+    ) -> None:
         self.plugins_name: list[str] = []
         self._stopped = False
+        self._extras = extras or {}
+        self._platform_name = platform_name
+        self.unified_msg_origin = f"{platform_name}:private:user-1"
         self._result = MessageEventResult(
             chain=[Plain("legacy", convert=False)],
-            result_content_type=ResultContentType.STREAMING_FINISH,
+            result_content_type=result_content_type,
         )
 
     def get_result(self) -> MessageEventResult | None:
@@ -960,6 +969,12 @@ class _DecoratingResultFakeEvent:
 
     def is_stopped(self) -> bool:
         return self._stopped
+
+    def get_extra(self, key: str) -> object | None:
+        return self._extras.get(key)
+
+    def get_platform_name(self) -> str:
+        return self._platform_name
 
 
 @pytest.mark.unit
@@ -987,6 +1002,48 @@ async def test_result_decorate_stage_dispatches_sdk_outline_for_legacy_chain_lis
             },
         ),
     ]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_result_decorate_stage_keeps_lark_reasoning_collapsible_panel() -> None:
+    stage = ResultDecorateStage()
+    event = _DecoratingResultFakeEvent(
+        platform_name="lark",
+        extras={"_llm_reasoning_content": "thinking"},
+        result_content_type=ResultContentType.LLM_RESULT,
+    )
+
+    stage.sdk_plugin_bridge = None
+    stage.content_safe_check_reply = False
+    stage.content_safe_check_stage = None
+    stage.reply_prefix = ""
+    stage.enable_segmented_reply = False
+    stage.show_reasoning = True
+    stage.tts_trigger_probability = 1.0
+    stage.ctx = types.SimpleNamespace(
+        astrbot_config={
+            "provider_tts_settings": {"enable": False},
+            "t2i": False,
+        },
+        plugin_manager=types.SimpleNamespace(
+            context=types.SimpleNamespace(
+                get_using_tts_provider=lambda _origin: None,
+            )
+        ),
+    )
+
+    async for _ in stage.process(event):
+        pass
+
+    marker = event.get_result().chain[0]
+    assert isinstance(marker, Json)
+    assert marker.data == {
+        "type": "lark_collapsible_panel_reasoning",
+        "title": "💭 Thinking",
+        "expanded": False,
+        "content": "thinking",
+    }
 
 
 @pytest.mark.unit

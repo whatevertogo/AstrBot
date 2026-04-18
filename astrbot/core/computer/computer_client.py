@@ -380,9 +380,10 @@ async def _sync_skills_to_sandbox(booter: ComputerBooter) -> None:
 
     temp_dir = Path(get_astrbot_temp_path())
     temp_dir.mkdir(parents=True, exist_ok=True)
-    zip_base = temp_dir / "skills_bundle"
+    bundle_id = uuid.uuid4().hex
+    zip_base = temp_dir / f"skills_bundle_{bundle_id}"
     zip_path = zip_base.with_suffix(".zip")
-    bundle_dir = temp_dir / f"skills_bundle_{uuid.uuid4().hex}"
+    bundle_dir = temp_dir / f"skills_bundle_{bundle_id}"
 
     try:
         if local_skill_sources:

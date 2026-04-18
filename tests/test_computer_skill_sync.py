@@ -157,6 +157,8 @@ def test_sync_skills_uses_managed_strategy_instead_of_wiping_all(
     asyncio.run(computer_client._sync_skills_to_sandbox(cast(ComputerBooter, booter)))
 
     assert len(booter.uploads) == 1
+    assert Path(booter.uploads[0][0]).stem.startswith("skills_bundle_")
+    assert not Path(booter.uploads[0][0]).exists()
     assert booter.uploads[0][1].replace("\\", "/") == "skills/skills.zip"
     assert not any(
         "find skills -mindepth 1 -delete" in cmd for cmd in booter.shell.commands

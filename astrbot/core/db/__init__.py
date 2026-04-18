@@ -281,9 +281,9 @@ class BaseDatabase(abc.ABC):
             page_size=max(int(limit), 50),
         )
         rows.sort(key=lambda item: int(item.id or 0), reverse=True)
+        total = len(rows) if include_total else None
         if cursor_id is not None:
             rows = [item for item in rows if int(item.id or 0) < int(cursor_id)]
-        total = len(rows) if include_total else None
         return rows[: max(int(limit), 1)], total
 
     async def delete_platform_message_before(

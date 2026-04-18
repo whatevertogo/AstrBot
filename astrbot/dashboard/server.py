@@ -36,6 +36,17 @@ from .routes.t2i import T2iRoute
 
 # Static assets shipped inside the wheel (built during `hatch build`).
 _BUNDLED_DIST = Path(__file__).parent / "dist"
+_BLOCKED_SDK_PLUGIN_HEADERS = {
+    "connection",
+    "content-length",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+}
 
 
 class _AddrWithPort(Protocol):
@@ -206,11 +217,7 @@ class AstrBotDashboard:
     @staticmethod
     def _build_sdk_plugin_response(output: dict) -> QuartResponse:
         status = int(output.get("status", 200))
-        headers = output.get("headers")
-        if headers is None:
-            headers = {}
-        if not isinstance(headers, dict):
-            raise ValueError("SDK HTTP handler headers must be an object")
+        headers = AstrBotDashboard._normalize_sdk_plugin_headers(output.get("headers"))
 
         body = output.get("body")
         if isinstance(body, (dict, list)):
@@ -246,12 +253,11 @@ class AstrBotDashboard:
 
     def _require_bearer_auth(self):
         """检查 Bearer token，无效时返回 401 响应，有效时返回 None。"""
-        token = request.headers.get("Authorization")
+        token = self._extract_bearer_token(request.headers.get("Authorization"))
         if not token:
             r = jsonify(Response().error("未授权").__dict__)
             r.status_code = 401
             return r
-        token = token.removeprefix("Bearer ")
         try:
             payload = jwt.decode(token, self._jwt_secret, algorithms=["HS256"])
             g.username = payload["username"]
@@ -260,6 +266,40 @@ class AstrBotDashboard:
             r.status_code = 401
             return r
         return None
+
+    @staticmethod
+    def _extract_bearer_token(raw_header: str | None) -> str | None:
+        auth_header = (raw_header or "").strip()
+        scheme, _, token = auth_header.partition(" ")
+        if scheme.lower() != "bearer":
+            return None
+        token = token.strip()
+        return token or None
+
+    @staticmethod
+    def _normalize_sdk_plugin_headers(raw_headers: object) -> dict[str, str]:
+        if raw_headers is None:
+            return {}
+        if not isinstance(raw_headers, dict):
+            raise ValueError("SDK HTTP handler headers must be an object")
+
+        headers: dict[str, str] = {}
+        for raw_key, raw_value in raw_headers.items():
+            key = str(raw_key).strip()
+            value = str(raw_value)
+            lower_key = key.lower()
+            if (
+                not key
+                or "\r" in key
+                or "\n" in key
+                or "\r" in value
+                or "\n" in value
+                or lower_key in _BLOCKED_SDK_PLUGIN_HEADERS
+            ):
+                logger.warning("Dropped unsafe SDK plugin response header: %s", key)
+                continue
+            headers[key] = value
+        return headers
 
     async def auth_middleware(self):
         if not request.path.startswith("/api"):

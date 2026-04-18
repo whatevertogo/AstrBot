@@ -19,6 +19,29 @@ class _ConversationCompatDB:
         self.calls.append(kwargs)
 
 
+class _ConversationLegacyCompatDB:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def update_conversation(
+        self,
+        cid: str,
+        title: str | None = None,
+        persona_id: str | None = None,
+        content: list[dict] | None = None,
+        token_usage: int | None = None,
+    ) -> None:
+        self.calls.append(
+            {
+                "cid": cid,
+                "title": title,
+                "persona_id": persona_id,
+                "content": content,
+                "token_usage": token_usage,
+            }
+        )
+
+
 def _make_legacy_db_class():
     def _build_placeholder(method_name: str):
         base_method = getattr(BaseDatabase, method_name)
@@ -90,7 +113,7 @@ def _make_legacy_db_class():
 async def test_conversation_manager_update_conversation_keeps_token_usage_position() -> (
     None
 ):
-    fake_db = _ConversationCompatDB()
+    fake_db = _ConversationLegacyCompatDB()
     manager = ConversationManager(cast(Any, fake_db))
 
     await manager.update_conversation(
@@ -107,9 +130,31 @@ async def test_conversation_manager_update_conversation_keeps_token_usage_positi
             "cid": "conv-1",
             "title": "Title",
             "persona_id": "persona-1",
-            "clear_persona": False,
             "content": [{"role": "user", "content": "hello"}],
             "token_usage": 123,
+        }
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_conversation_manager_clear_persona_uses_kwarg_when_supported() -> None:
+    fake_db = _ConversationCompatDB()
+    manager = ConversationManager(cast(Any, fake_db))
+
+    await manager.unset_conversation_persona(
+        "telegram:private:user-1",
+        conversation_id="conv-1",
+    )
+
+    assert fake_db.calls == [
+        {
+            "cid": "conv-1",
+            "title": None,
+            "persona_id": None,
+            "content": None,
+            "token_usage": None,
+            "clear_persona": True,
         }
     ]
 
@@ -165,6 +210,13 @@ async def test_base_database_legacy_history_fallbacks_keep_old_backends_usable()
         limit=2,
         include_total=True,
     )
+    cursor_listed, cursor_total = await legacy_db.list_sdk_platform_message_history(
+        "telegram",
+        "private:user-1",
+        cursor_id=3,
+        limit=2,
+        include_total=True,
+    )
     matched = await legacy_db.find_platform_message_history_by_idempotency_key(
         "telegram",
         "private:user-1",
@@ -182,6 +234,8 @@ async def test_base_database_legacy_history_fallbacks_keep_old_backends_usable()
 
     assert [int(item.id or 0) for item in listed] == [3, 2]
     assert total == 3
+    assert [int(item.id or 0) for item in cursor_listed] == [2, 1]
+    assert cursor_total == 3
     assert matched is not None
     assert int(matched.id or 0) == 2
     assert deleted_after == 2

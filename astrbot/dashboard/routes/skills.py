@@ -41,6 +41,12 @@ def _to_bool(value: Any, default: bool = False) -> bool:
     return bool(value)
 
 
+def _build_skill_export_paths(export_dir: Path, name: str) -> tuple[Path, Path]:
+    export_id = uuid.uuid4().hex
+    export_base = export_dir / f"{name}_{export_id}"
+    return export_base, export_dir / f"{name}_{export_id}_bundle"
+
+
 _SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
@@ -394,11 +400,8 @@ class SkillsRoute(Route):
 
             export_dir = Path(get_astrbot_temp_path()) / "skill_exports"
             export_dir.mkdir(parents=True, exist_ok=True)
-            zip_base = export_dir / name
+            zip_base, bundle_dir = _build_skill_export_paths(export_dir, name)
             zip_path = zip_base.with_suffix(".zip")
-            bundle_dir = export_dir / f"{name}_{uuid.uuid4().hex}"
-            if zip_path.exists():
-                zip_path.unlink()
 
             try:
                 skill_mgr.materialize_local_skill_bundle(bundle_dir, skill_names=[name])
