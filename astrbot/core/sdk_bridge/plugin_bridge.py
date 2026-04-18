@@ -49,9 +49,7 @@ from astrbot.core.provider.entities import ProviderRequest as CoreProviderReques
 from astrbot.core.skills.skill_manager import (
     SkillManager,
 )
-from astrbot.core.utils.astrbot_path import (
-    get_astrbot_data_path,
-)
+from astrbot.core.utils import astrbot_path
 
 from .capability_bridge import CoreCapabilityBridge
 from .dispatch_engine import SdkDispatchEngine
@@ -72,6 +70,9 @@ from .runtime_store import (
     _RequestOverlayState,
 )
 from .trigger_converter import TriggerConverter, TriggerMatch
+
+get_astrbot_data_path = astrbot_path.get_astrbot_data_path
+get_astrbot_plugin_data_path = astrbot_path.get_astrbot_plugin_data_path
 
 SDK_STATE_ENABLED = "enabled"
 SDK_STATE_DISABLED = "disabled"
