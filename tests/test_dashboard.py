@@ -7,6 +7,7 @@ import uuid
 import zipfile
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -20,6 +21,7 @@ from astrbot.core.star.star import star_registry
 from astrbot.core.star.star_handler import star_handlers_registry
 from astrbot.core.utils.pip_installer import PipInstallError
 from astrbot.dashboard.routes.plugin import PluginRoute
+from astrbot.dashboard.routes.skills import _build_skill_export_paths
 from astrbot.dashboard.server import AstrBotDashboard
 from tests.fixtures.helpers import (
     MockPluginBuilder,
@@ -151,6 +153,75 @@ async def test_dashboard_ssl_missing_cert_and_key_falls_back_to_http(
         )
     finally:
         core_lifecycle_td.astrbot_config["dashboard"] = original_dashboard_config
+
+
+@pytest.mark.asyncio
+async def test_sdk_plugin_page_route_is_public_but_api_route_requires_auth(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    test_client = app.test_client()
+    dispatch_spy = AsyncMock(
+        return_value={
+            "status": 200,
+            "headers": {"Content-Type": "text/html; charset=utf-8"},
+            "body": "<html><body>sdk page</body></html>",
+        }
+    )
+    monkeypatch.setattr(
+        core_lifecycle_td.sdk_plugin_bridge, "dispatch_http_request", dispatch_spy
+    )
+
+    public_response = await test_client.get("/plug/sdk-demo")
+    assert public_response.status_code == 200
+    assert "sdk page" in (await public_response.get_data(as_text=True))
+
+    api_response = await test_client.get("/api/plug/sdk-demo")
+    assert api_response.status_code == 401
+
+    padded_auth_header = {
+        "Authorization": (
+            f"Bearer   {authenticated_header['Authorization'].removeprefix('Bearer ')}   "
+        )
+    }
+    authed_api_response = await test_client.get(
+        "/api/plug/sdk-demo",
+        headers=padded_auth_header,
+    )
+    assert authed_api_response.status_code == 200
+
+
+def test_sdk_plugin_response_filters_unsafe_headers() -> None:
+    response = AstrBotDashboard._build_sdk_plugin_response(
+        {
+            "status": 200,
+            "headers": {
+                "X-Test": "ok",
+                "Connection": "close",
+                "Content-Length": "999",
+                "X-Bad": "line1\r\nline2",
+            },
+            "body": "hello",
+        }
+    )
+
+    assert response.headers["X-Test"] == "ok"
+    assert "Connection" not in response.headers
+    assert response.headers["Content-Length"] == "5"
+    assert "X-Bad" not in response.headers
+
+
+def test_build_skill_export_paths_uses_unique_temp_names(tmp_path) -> None:
+    first_base, first_bundle = _build_skill_export_paths(tmp_path, "demo-skill")
+    second_base, second_bundle = _build_skill_export_paths(tmp_path, "demo-skill")
+
+    assert first_base != second_base
+    assert first_bundle != second_bundle
+    assert first_base.name.startswith("demo-skill_")
+    assert first_bundle.name.startswith("demo-skill_")
+    assert first_base.with_suffix(".zip").name.endswith(".zip")
 
 
 @pytest.mark.asyncio
@@ -425,15 +496,122 @@ async def test_plugins(
 
 
 @pytest.mark.asyncio
+async def test_plugin_install_api_returns_sdk_type(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+    monkeypatch,
+):
+    test_client = app.test_client()
+    sdk_repo_url = "https://github.com/test/sdk-demo"
+
+    async def _mock_install_plugin(
+        repo_url: str,
+        proxy: str = "",
+        ignore_version_check: bool = False,
+    ):
+        assert repo_url == sdk_repo_url
+        assert proxy is None
+        assert ignore_version_check is False
+        return {
+            "repo": repo_url,
+            "readme": "# SDK Demo\n",
+            "name": "sdk_demo",
+            "type": "sdk",
+        }
+
+    monkeypatch.setattr(
+        core_lifecycle_td.plugin_manager,
+        "install_plugin",
+        _mock_install_plugin,
+    )
+
+    response = await test_client.post(
+        "/api/plugin/install",
+        json={"url": sdk_repo_url},
+        headers=authenticated_header,
+    )
+
+    assert response.status_code == 200
+    data = await response.get_json()
+    assert data["status"] == "ok"
+    assert data["data"] == {
+        "repo": sdk_repo_url,
+        "readme": "# SDK Demo\n",
+        "name": "sdk_demo",
+        "type": "sdk",
+    }
+
+
+@pytest.mark.asyncio
+async def test_plugin_install_upload_api_returns_sdk_type(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+    monkeypatch,
+):
+    test_client = app.test_client()
+    captured = {}
+
+    async def _mock_install_plugin_from_file(
+        zip_file_path: str,
+        ignore_version_check: bool = False,
+    ):
+        captured["zip_file_path"] = zip_file_path
+        captured["ignore_version_check"] = ignore_version_check
+        if os.path.exists(zip_file_path):
+            os.remove(zip_file_path)
+        return {
+            "repo": None,
+            "readme": "# SDK Demo\n",
+            "name": "sdk_demo",
+            "type": "sdk",
+        }
+
+    monkeypatch.setattr(
+        core_lifecycle_td.plugin_manager,
+        "install_plugin_from_file",
+        _mock_install_plugin_from_file,
+    )
+
+    response = await test_client.post(
+        "/api/plugin/install-upload",
+        headers=authenticated_header,
+        files={
+            "file": FileStorage(
+                stream=io.BytesIO(b"fake-sdk-zip"),
+                filename="sdk_demo.zip",
+                content_type="application/zip",
+            ),
+        },
+        form={"ignore_version_check": "false"},
+    )
+
+    assert response.status_code == 200
+    data = await response.get_json()
+    assert data["status"] == "ok"
+    assert data["data"] == {
+        "repo": None,
+        "readme": "# SDK Demo\n",
+        "name": "sdk_demo",
+        "type": "sdk",
+    }
+    assert captured["ignore_version_check"] is False
+    assert captured["zip_file_path"].endswith("plugin_upload_sdk_demo.zip")
+
+
+@pytest.mark.asyncio
 async def test_plugins_when_installed_at_unresolved(
     app: Quart,
     authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
     monkeypatch,
 ):
     """Tests plugin payload when installed_at cannot be resolved."""
     test_client = app.test_client()
 
     monkeypatch.setattr(PluginRoute, "_get_plugin_installed_at", lambda *_args: None)
+    monkeypatch.setattr(core_lifecycle_td.sdk_plugin_bridge, "list_plugins", lambda: [])
 
     response = await test_client.get("/api/plugin/get", headers=authenticated_header)
     assert response.status_code == 200
@@ -444,6 +622,211 @@ async def test_plugins_when_installed_at_unresolved(
         assert "name" in plugin
         assert "installed_at" in plugin
         assert plugin["installed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_plugin_readme_api_keeps_legacy_local_lookup(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+    monkeypatch,
+    tmp_path,
+):
+    test_client = app.test_client()
+    plugin_dir = tmp_path / "legacy_demo"
+    plugin_dir.mkdir()
+    (plugin_dir / "README.md").write_text(
+        "# Legacy Demo\n\nhello legacy\n", encoding="utf-8"
+    )
+
+    fake_plugin = SimpleNamespace(
+        name="legacy_demo",
+        root_dir_name="legacy_demo",
+        reserved=False,
+        repo="https://github.com/test/legacy-demo",
+    )
+
+    async def _unexpected_remote_fetch(self, repo_url: str) -> str:
+        raise AssertionError(f"legacy readme should not fetch remote repo: {repo_url}")
+
+    monkeypatch.setattr(
+        core_lifecycle_td.plugin_manager,
+        "plugin_store_path",
+        str(tmp_path),
+    )
+    monkeypatch.setattr(
+        core_lifecycle_td.plugin_manager.context,
+        "get_all_stars",
+        lambda: [fake_plugin],
+    )
+    monkeypatch.setattr(
+        PluginRoute,
+        "_fetch_github_repo_readme",
+        _unexpected_remote_fetch,
+    )
+
+    response = await test_client.get(
+        "/api/plugin/readme?name=legacy_demo",
+        headers=authenticated_header,
+    )
+    assert response.status_code == 200
+    data = await response.get_json()
+    assert data["status"] == "ok"
+    assert data["data"]["content"] == "# Legacy Demo\n\nhello legacy\n"
+
+
+@pytest.mark.asyncio
+async def test_plugin_readme_api_supports_sdk_plugins(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+    tmp_path,
+):
+    test_client = app.test_client()
+    old_bridge = getattr(core_lifecycle_td, "sdk_plugin_bridge", None)
+    plugin_dir = tmp_path / "sdk_demo"
+    plugin_dir.mkdir()
+    (plugin_dir / "README.md").write_text("# SDK Demo\n\nhello sdk\n", encoding="utf-8")
+
+    try:
+        core_lifecycle_td.sdk_plugin_bridge = SimpleNamespace(
+            _records={
+                "sdk_demo": SimpleNamespace(
+                    plugin=SimpleNamespace(plugin_dir=plugin_dir)
+                )
+            }
+        )
+
+        response = await test_client.get(
+            "/api/plugin/readme?name=sdk_demo",
+            headers=authenticated_header,
+        )
+        assert response.status_code == 200
+        data = await response.get_json()
+        assert data["status"] == "ok"
+        assert data["data"]["content"] == "# SDK Demo\n\nhello sdk\n"
+    finally:
+        core_lifecycle_td.sdk_plugin_bridge = old_bridge
+
+
+@pytest.mark.asyncio
+async def test_sdk_plugin_on_returns_structured_error_on_runtime_failure(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+):
+    test_client = app.test_client()
+    old_bridge = getattr(core_lifecycle_td, "sdk_plugin_bridge", None)
+
+    try:
+        core_lifecycle_td.sdk_plugin_bridge = SimpleNamespace(
+            list_plugins=lambda: [{"name": "sdk_demo"}],
+            turn_on_plugin=AsyncMock(side_effect=RuntimeError("worker init timeout")),
+        )
+
+        response = await test_client.post(
+            "/api/plugin/on",
+            json={"name": "sdk_demo"},
+            headers=authenticated_header,
+        )
+
+        assert response.status_code == 200
+        data = await response.get_json()
+        assert data["status"] == "error"
+        assert data["message"] == "worker init timeout"
+    finally:
+        core_lifecycle_td.sdk_plugin_bridge = old_bridge
+
+
+@pytest.mark.asyncio
+async def test_sdk_plugin_off_returns_structured_error_on_runtime_failure(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+):
+    test_client = app.test_client()
+    old_bridge = getattr(core_lifecycle_td, "sdk_plugin_bridge", None)
+
+    try:
+        core_lifecycle_td.sdk_plugin_bridge = SimpleNamespace(
+            list_plugins=lambda: [{"name": "sdk_demo"}],
+            turn_off_plugin=AsyncMock(side_effect=RuntimeError("worker stop timeout")),
+        )
+
+        response = await test_client.post(
+            "/api/plugin/off",
+            json={"name": "sdk_demo"},
+            headers=authenticated_header,
+        )
+
+        assert response.status_code == 200
+        data = await response.get_json()
+        assert data["status"] == "error"
+        assert data["message"] == "worker stop timeout"
+    finally:
+        core_lifecycle_td.sdk_plugin_bridge = old_bridge
+
+
+@pytest.mark.asyncio
+async def test_plugin_readme_api_supports_remote_github_repo(
+    app: Quart,
+    authenticated_header: dict,
+    monkeypatch,
+):
+    test_client = app.test_client()
+
+    async def _mock_fetch(self, repo_url: str) -> str:
+        assert repo_url == "https://github.com/test/sdk-demo"
+        return "# Remote SDK Demo\n"
+
+    monkeypatch.setattr(
+        PluginRoute,
+        "_fetch_github_repo_readme",
+        _mock_fetch,
+    )
+
+    response = await test_client.get(
+        "/api/plugin/readme?name=sdk_demo&repo_url=https://github.com/test/sdk-demo",
+        headers=authenticated_header,
+    )
+    assert response.status_code == 200
+    data = await response.get_json()
+    assert data["status"] == "ok"
+    assert data["data"]["content"] == "# Remote SDK Demo\n"
+
+
+@pytest.mark.asyncio
+async def test_plugin_changelog_api_supports_sdk_plugins(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+    tmp_path,
+):
+    test_client = app.test_client()
+    old_bridge = getattr(core_lifecycle_td, "sdk_plugin_bridge", None)
+    plugin_dir = tmp_path / "sdk_demo"
+    plugin_dir.mkdir()
+    (plugin_dir / "CHANGELOG.md").write_text("## 1.0.0\n\n- init\n", encoding="utf-8")
+
+    try:
+        core_lifecycle_td.sdk_plugin_bridge = SimpleNamespace(
+            _records={
+                "sdk_demo": SimpleNamespace(
+                    plugin=SimpleNamespace(plugin_dir=plugin_dir)
+                )
+            }
+        )
+
+        response = await test_client.get(
+            "/api/plugin/changelog?name=sdk_demo",
+            headers=authenticated_header,
+        )
+        assert response.status_code == 200
+        data = await response.get_json()
+        assert data["status"] == "ok"
+        assert data["data"]["content"] == "## 1.0.0\n\n- init\n"
+    finally:
+        core_lifecycle_td.sdk_plugin_bridge = old_bridge
 
 
 @pytest.mark.asyncio
@@ -472,6 +855,185 @@ async def test_commands_api(app: Quart, authenticated_header: dict):
     assert data["status"] == "ok"
     # conflicts is a list
     assert isinstance(data["data"], list)
+
+
+@pytest.mark.asyncio
+async def test_commands_api_includes_sdk_dashboard_items(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+):
+    test_client = app.test_client()
+    old_bridge = getattr(core_lifecycle_td, "sdk_plugin_bridge", None)
+
+    sdk_command = {
+        "command_key": "sdk:command:sdk-demo:sdk-demo:main.chat",
+        "handler_full_name": "sdk-demo:main.chat",
+        "handler_name": "chat",
+        "plugin": "sdk-demo",
+        "plugin_display_name": "SDK Demo",
+        "module_path": "sdk-demo:main",
+        "description": "SDK dashboard command",
+        "type": "command",
+        "parent_signature": "",
+        "parent_group_handler": "",
+        "original_command": "chat",
+        "current_fragment": "chat",
+        "effective_command": "chat",
+        "aliases": [],
+        "permission": "everyone",
+        "enabled": True,
+        "is_group": False,
+        "has_conflict": False,
+        "reserved": False,
+        "runtime_kind": "sdk",
+        "supports_toggle": False,
+        "supports_rename": False,
+        "supports_permission": False,
+        "sub_commands": [],
+    }
+
+    try:
+        core_lifecycle_td.sdk_plugin_bridge = SimpleNamespace(
+            list_dashboard_commands=lambda: [dict(sdk_command)]
+        )
+
+        response = await test_client.get("/api/commands", headers=authenticated_header)
+        assert response.status_code == 200
+        data = await response.get_json()
+        assert data["status"] == "ok"
+        items = data["data"]["items"]
+        assert any(
+            item.get("command_key") == sdk_command["command_key"] for item in items
+        )
+
+        toggle_response = await test_client.post(
+            "/api/commands/toggle",
+            json={"command_key": sdk_command["command_key"], "enabled": False},
+            headers=authenticated_header,
+        )
+        toggle_data = await toggle_response.get_json()
+        assert toggle_data["status"] == "error"
+        assert "read-only" in toggle_data["message"]
+    finally:
+        core_lifecycle_td.sdk_plugin_bridge = old_bridge
+
+
+@pytest.mark.asyncio
+async def test_commands_conflicts_api_includes_sdk_legacy_incompatibility(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+):
+    test_client = app.test_client()
+    old_bridge = getattr(core_lifecycle_td, "sdk_plugin_bridge", None)
+
+    class _Conflict:
+        def to_dashboard_payload(self):
+            return {
+                "conflict_key": "hello",
+                "handlers": [
+                    {
+                        "handler_full_name": "legacy.demo.hello",
+                        "plugin": "legacy-demo",
+                        "current_name": "hello",
+                        "runtime_kind": "legacy",
+                    },
+                    {
+                        "handler_full_name": "sdk-demo:main.hello",
+                        "plugin": "sdk-demo",
+                        "current_name": "hello",
+                        "runtime_kind": "sdk",
+                    },
+                ],
+            }
+
+    try:
+        core_lifecycle_td.sdk_plugin_bridge = SimpleNamespace(
+            list_cross_system_command_conflicts=lambda: [_Conflict()]
+        )
+
+        response = await test_client.get(
+            "/api/commands/conflicts", headers=authenticated_header
+        )
+
+        assert response.status_code == 200
+        data = await response.get_json()
+        assert data["status"] == "ok"
+        assert any(
+            item.get("conflict_key") == "hello" and len(item.get("handlers", [])) == 2
+            for item in data["data"]
+        )
+    finally:
+        core_lifecycle_td.sdk_plugin_bridge = old_bridge
+
+
+@pytest.mark.asyncio
+async def test_tools_api_includes_and_toggles_sdk_tools(
+    app: Quart,
+    authenticated_header: dict,
+    core_lifecycle_td: AstrBotCoreLifecycle,
+):
+    test_client = app.test_client()
+    old_bridge = getattr(core_lifecycle_td, "sdk_plugin_bridge", None)
+    calls: list[tuple[str, str, str]] = []
+
+    sdk_tool = {
+        "tool_key": "sdk:sdk-demo:memory.search",
+        "name": "memory.search",
+        "description": "Search SDK memory",
+        "parameters": {"type": "object", "properties": {}},
+        "active": True,
+        "origin": "sdk_plugin",
+        "origin_name": "SDK Demo",
+        "runtime_kind": "sdk",
+        "plugin_id": "sdk-demo",
+    }
+
+    class _FakeSdkBridge:
+        def list_dashboard_tools(self):
+            return [dict(sdk_tool)]
+
+        def get_plugin_metadata(self, _plugin_id: str):
+            return {"enabled": True}
+
+        def activate_llm_tool(self, plugin_id: str, name: str) -> bool:
+            calls.append(("activate", plugin_id, name))
+            return True
+
+        def deactivate_llm_tool(self, plugin_id: str, name: str) -> bool:
+            calls.append(("deactivate", plugin_id, name))
+            return True
+
+    try:
+        core_lifecycle_td.sdk_plugin_bridge = _FakeSdkBridge()
+
+        response = await test_client.get(
+            "/api/tools/list", headers=authenticated_header
+        )
+        assert response.status_code == 200
+        data = await response.get_json()
+        assert data["status"] == "ok"
+        assert any(
+            item.get("tool_key") == sdk_tool["tool_key"] for item in data["data"]
+        )
+
+        toggle_response = await test_client.post(
+            "/api/tools/toggle-tool",
+            json={
+                "tool_key": sdk_tool["tool_key"],
+                "name": sdk_tool["name"],
+                "activate": False,
+                "runtime_kind": "sdk",
+                "plugin_id": sdk_tool["plugin_id"],
+            },
+            headers=authenticated_header,
+        )
+        toggle_data = await toggle_response.get_json()
+        assert toggle_data["status"] == "ok"
+        assert calls == [("deactivate", "sdk-demo", "memory.search")]
+    finally:
+        core_lifecycle_td.sdk_plugin_bridge = old_bridge
 
 
 @pytest.mark.asyncio

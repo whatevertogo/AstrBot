@@ -88,6 +88,35 @@ function Assert-RemotePath {
     }
 }
 
+function Test-SubtreeRegistered {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Prefix
+    )
+
+    $pattern = "^git-subtree-dir:\s+$([Regex]::Escape($Prefix))$"
+    & git log --format=%B "--grep=$pattern" --perl-regexp -n 1 HEAD 2>$null | Out-Null
+    return $LASTEXITCODE -eq 0
+}
+
+function Assert-SubtreeRegistered {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Prefix
+    )
+
+    if (-not (Test-SubtreeRegistered -Prefix $Prefix)) {
+        throw @"
+Path '$Prefix' exists locally, but the current branch does not contain git-subtree metadata for it.
+This usually means the SDK snapshot was copied in directly instead of being created with 'git subtree add',
+so 'git subtree pull' cannot work on this branch yet.
+
+Rebootstrap '$Prefix' as a real subtree on this branch (or merge/cherry-pick the subtree bootstrap commit)
+before running this sync script again.
+"@
+    }
+}
+
 function Test-ShouldWaitBeforeExit {
     if ($NoWait.IsPresent) {
         return $false
@@ -138,6 +167,7 @@ try {
 
     Assert-RemoteExists -Name $RemoteName
     Assert-CleanWorktree
+    Assert-SubtreeRegistered -Prefix $Prefix
 
     Write-Host "Fetching $RemoteName/$RemoteBranch..."
     Invoke-Git fetch $RemoteName $RemoteBranch

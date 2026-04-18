@@ -4,19 +4,12 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from astrbot.core import astrbot_config, logger
-from astrbot.core.agent.runners.coze.coze_agent_runner import CozeAgentRunner
-from astrbot.core.agent.runners.dashscope.dashscope_agent_runner import (
-    DashscopeAgentRunner,
-)
 from astrbot.core.agent.runners.deerflow.constants import (
     DEERFLOW_AGENT_RUNNER_PROVIDER_ID_KEY,
     DEERFLOW_PROVIDER_TYPE,
 )
-from astrbot.core.agent.runners.deerflow.deerflow_agent_runner import (
-    DeerFlowAgentRunner,
-)
-from astrbot.core.agent.runners.dify.dify_agent_runner import DifyAgentRunner
 from astrbot.core.astr_agent_hooks import MAIN_AGENT_HOOKS
+from astrbot.core.astr_agent_run_util import _apply_sdk_streaming_delta_filters
 from astrbot.core.message.components import Image, Record
 from astrbot.core.message.message_event_result import (
     MessageChain,
@@ -217,16 +210,25 @@ class ThirdPartyAgentSubStage(Stage):
 
         async def _stream_runner_chain() -> AsyncGenerator[MessageChain, None]:
             mark_stream_consumed()
+            sdk_plugin_bridge = getattr(
+                self.ctx.plugin_manager.context, "sdk_plugin_bridge", None
+            )
             try:
                 async for chain, is_error in run_third_party_agent(
                     runner,
                     stream_to_general=False,
                     custom_error_message=custom_error_message,
                 ):
+                    chain = await _apply_sdk_streaming_delta_filters(
+                        sdk_plugin_bridge,
+                        event,
+                        chain,
+                    )
                     aggregator.add_chunk(chain, is_error)
                     if is_error:
                         event.set_extra(THIRD_PARTY_RUNNER_ERROR_EXTRA_KEY, True)
-                    yield chain
+                    if chain is not None:
+                        yield chain
             finally:
                 # Streaming runner cleanup must happen after consumer
                 # finishes iterating to avoid tearing down active streams.
@@ -330,14 +332,46 @@ class ThirdPartyAgentSubStage(Stage):
         # call event hook
         if await call_event_hook(event, EventType.OnLLMRequestEvent, req):
             return
+        sdk_plugin_bridge = getattr(
+            self.ctx.plugin_manager.context, "sdk_plugin_bridge", None
+        )
+        if sdk_plugin_bridge is not None:
+            try:
+                await sdk_plugin_bridge.dispatch_message_event(
+                    "llm_request",
+                    event,
+                    {
+                        "prompt": req.prompt,
+                        "provider_id": self.prov_id,
+                    },
+                    provider_request=req,
+                )
+            except Exception as exc:
+                logger.warning("SDK llm_request dispatch failed: %s", exc)
 
         if self.runner_type == "dify":
+            from astrbot.core.agent.runners.dify.dify_agent_runner import (
+                DifyAgentRunner,
+            )
+
             runner = DifyAgentRunner[AstrAgentContext]()
         elif self.runner_type == "coze":
+            from astrbot.core.agent.runners.coze.coze_agent_runner import (
+                CozeAgentRunner,
+            )
+
             runner = CozeAgentRunner[AstrAgentContext]()
         elif self.runner_type == "dashscope":
+            from astrbot.core.agent.runners.dashscope.dashscope_agent_runner import (
+                DashscopeAgentRunner,
+            )
+
             runner = DashscopeAgentRunner[AstrAgentContext]()
         elif self.runner_type == DEERFLOW_PROVIDER_TYPE:
+            from astrbot.core.agent.runners.deerflow.deerflow_agent_runner import (
+                DeerFlowAgentRunner,
+            )
+
             runner = DeerFlowAgentRunner[AstrAgentContext]()
         else:
             raise ValueError(

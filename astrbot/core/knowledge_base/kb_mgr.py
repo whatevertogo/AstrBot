@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from astrbot.core import logger
 from astrbot.core.provider.manager import ProviderManager
@@ -9,9 +12,9 @@ from .chunking.recursive import RecursiveCharacterChunker
 from .kb_db_sqlite import KBSQLiteDatabase
 from .kb_helper import KBHelper
 from .models import KBDocument, KnowledgeBase
-from .retrieval.manager import RetrievalManager, RetrievalResult
-from .retrieval.rank_fusion import RankFusion
-from .retrieval.sparse_retriever import SparseRetriever
+
+if TYPE_CHECKING:
+    from .retrieval.manager import RetrievalManager, RetrievalResult
 
 FILES_PATH = get_astrbot_knowledge_base_path()
 DB_PATH = Path(FILES_PATH) / "kb.db"
@@ -36,6 +39,10 @@ class KnowledgeBaseManager:
     async def initialize(self) -> None:
         """初始化知识库模块"""
         try:
+            from .retrieval.manager import RetrievalManager
+            from .retrieval.rank_fusion import RankFusion
+            from .retrieval.sparse_retriever import SparseRetriever
+
             logger.info("正在初始化知识库模块...")
 
             # 初始化数据库

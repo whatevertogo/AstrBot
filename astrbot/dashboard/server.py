@@ -13,6 +13,7 @@ from flask.json.provider import DefaultJSONProvider
 from hypercorn.asyncio import serve
 from hypercorn.config import Config as HyperConfig
 from quart import Quart, g, jsonify, request
+from quart import Response as QuartResponse
 from quart.logging import default_handler
 
 from astrbot.core import logger
@@ -35,6 +36,17 @@ from .routes.t2i import T2iRoute
 
 # Static assets shipped inside the wheel (built during `hatch build`).
 _BUNDLED_DIST = Path(__file__).parent / "dist"
+_BLOCKED_SDK_PLUGIN_HEADERS = {
+    "connection",
+    "content-length",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+}
 
 
 class _AddrWithPort(Protocol):
@@ -108,7 +120,7 @@ class AstrBotDashboard:
             core_lifecycle,
             core_lifecycle.plugin_manager,
         )
-        self.command_route = CommandRoute(self.context)
+        self.command_route = CommandRoute(self.context, core_lifecycle)
         self.cr = ConfigRoute(self.context, core_lifecycle)
         self.lr = LogRoute(self.context, core_lifecycle.log_broker)
         self.sfr = StaticFileRoute(self.context)
@@ -145,22 +157,156 @@ class AstrBotDashboard:
             view_func=self.srv_plug_route,
             methods=["GET", "POST"],
         )
+        self.app.add_url_rule(
+            "/plug/<path:subpath>",
+            view_func=self.srv_public_plug_route,
+            methods=["GET"],
+        )
 
         self.shutdown_event = shutdown_event
 
         self._init_jwt_secret()
 
     async def srv_plug_route(self, subpath, *args, **kwargs):
-        """插件路由"""
+        """插件路由（需要认证）"""
+        auth_error = self._require_bearer_auth()
+        if auth_error is not None:
+            return auth_error
+        output = await self._dispatch_plugin_route(subpath, *args, **kwargs)
+        if output is not None:
+            return self._build_sdk_plugin_response(output)
+        return jsonify(Response().error("未找到该路由").__dict__)
+
+    async def srv_public_plug_route(self, subpath, *args, **kwargs):
+        """公开插件页面路由"""
+        output = await self._dispatch_plugin_route(subpath, *args, **kwargs)
+        if output is None:
+            return jsonify(Response().error("未找到该路由").__dict__)
+        if not self._is_public_plugin_page_response(output):
+            r = jsonify(Response().error("该路由需要通过 /api/plug 访问").__dict__)
+            r.status_code = 403
+            return r
+        return self._build_sdk_plugin_response(output)
+
+    async def _dispatch_plugin_route(self, subpath, *args, **kwargs):
         registered_web_apis = self.core_lifecycle.star_context.registered_web_apis
         for api in registered_web_apis:
             route, view_handler, methods, _ = api
             if route == f"/{subpath}" and request.method in methods:
                 return await view_handler(*args, **kwargs)
-        return jsonify(Response().error("未找到该路由").__dict__)
+        sdk_bridge = getattr(self.core_lifecycle, "sdk_plugin_bridge", None)
+        if sdk_bridge is not None:
+            return await sdk_bridge.dispatch_http_request(f"/{subpath}", request.method)
+        return None
+
+    @staticmethod
+    def _is_public_plugin_page_response(output: dict[str, object]) -> bool:
+        headers = output.get("headers")
+        if not isinstance(headers, dict):
+            headers = {}
+        content_type = str(
+            headers.get("Content-Type", headers.get("content-type", ""))
+        ).lower()
+        body = output.get("body")
+        if isinstance(body, str) and "text/html" in content_type:
+            return True
+        return isinstance(body, (bytes, bytearray)) and content_type.startswith(
+            "image/"
+        )
+
+    @staticmethod
+    def _build_sdk_plugin_response(output: dict) -> QuartResponse:
+        status = int(output.get("status", 200))
+        headers = AstrBotDashboard._normalize_sdk_plugin_headers(output.get("headers"))
+
+        body = output.get("body")
+        if isinstance(body, (dict, list)):
+            response = jsonify(body)
+            response.status_code = status
+            response.headers.setdefault("Content-Type", "application/json")
+        elif isinstance(body, str):
+            response = QuartResponse(
+                body,
+                status=status,
+                content_type="text/plain; charset=utf-8",
+            )
+        elif isinstance(body, (bytes, bytearray)):
+            response = QuartResponse(
+                bytes(body),
+                status=status,
+                content_type=str(
+                    headers.get("Content-Type")
+                    or headers.get("content-type")
+                    or "application/octet-stream"
+                ),
+            )
+        elif body is None:
+            response = QuartResponse("", status=status)
+        else:
+            raise ValueError(
+                "SDK HTTP handler body must be object, array, string, bytes or null"
+            )
+
+        for key, value in headers.items():
+            response.headers[str(key)] = str(value)
+        return response
+
+    def _require_bearer_auth(self):
+        """检查 Bearer token，无效时返回 401 响应，有效时返回 None。"""
+        token = self._extract_bearer_token(request.headers.get("Authorization"))
+        if not token:
+            r = jsonify(Response().error("未授权").__dict__)
+            r.status_code = 401
+            return r
+        try:
+            payload = jwt.decode(token, self._jwt_secret, algorithms=["HS256"])
+            g.username = payload["username"]
+        except (jwt.InvalidTokenError, KeyError):
+            r = jsonify(Response().error("未授权").__dict__)
+            r.status_code = 401
+            return r
+        return None
+
+    @staticmethod
+    def _extract_bearer_token(raw_header: str | None) -> str | None:
+        auth_header = (raw_header or "").strip()
+        scheme, _, token = auth_header.partition(" ")
+        if scheme.lower() != "bearer":
+            return None
+        token = token.strip()
+        return token or None
+
+    @staticmethod
+    def _normalize_sdk_plugin_headers(raw_headers: object) -> dict[str, str]:
+        if raw_headers is None:
+            return {}
+        if not isinstance(raw_headers, dict):
+            raise ValueError("SDK HTTP handler headers must be an object")
+
+        headers: dict[str, str] = {}
+        for raw_key, raw_value in raw_headers.items():
+            key = str(raw_key).strip()
+            value = str(raw_value)
+            lower_key = key.lower()
+            if (
+                not key
+                or "\r" in key
+                or "\n" in key
+                or "\r" in value
+                or "\n" in value
+                or lower_key in _BLOCKED_SDK_PLUGIN_HEADERS
+            ):
+                logger.warning("Dropped unsafe SDK plugin response header: %s", key)
+                continue
+            headers[key] = value
+        return headers
 
     async def auth_middleware(self):
         if not request.path.startswith("/api"):
+            return None
+        # SDK plugin HTTP routes are proxied under /api/plug and must be able to
+        # implement their own authentication flow, including public login pages.
+        if request.path.startswith("/api/plug/"):
             return None
         if request.path.startswith("/api/v1"):
             raw_key = self._extract_raw_api_key()

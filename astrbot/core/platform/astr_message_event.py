@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import abc
 import asyncio
 import hashlib
@@ -6,11 +8,9 @@ import re
 import uuid
 from collections.abc import AsyncGenerator
 from time import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from astrbot import logger
-from astrbot.core.agent.tool import ToolSet
-from astrbot.core.db.po import Conversation
 from astrbot.core.message.components import (
     At,
     AtAll,
@@ -23,13 +23,17 @@ from astrbot.core.message.components import (
 )
 from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
 from astrbot.core.platform.message_type import MessageType
-from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.utils.metrics import Metric
 from astrbot.core.utils.trace import TraceSpan
 
 from .astrbot_message import AstrBotMessage, Group
 from .message_session import MessageSesion, MessageSession  # noqa
 from .platform_metadata import PlatformMetadata
+
+if TYPE_CHECKING:
+    from astrbot.core.agent.tool import ToolSet
+    from astrbot.core.db.po import Conversation
+    from astrbot.core.provider.entities import ProviderRequest
 
 
 class AstrMessageEvent(abc.ABC):
@@ -86,9 +90,9 @@ class AstrMessageEvent(abc.ABC):
         """事件级 TraceSpan(别名: span)"""
 
         self._has_send_oper = False
-        """在此次事件中是否有过至少一次发送消息的操作"""
+        """底层标记：事件是否已触发至少一次平台发送。新代码应通过 mark_send_operation() / has_send_operation() 操作。"""
         self.call_llm = False
-        """是否在此消息事件中禁止默认的 LLM 请求"""
+        """语义反转的遗留字段：True 表示阻止内置默认 LLM 阶段。新代码应使用 set_default_llm_blocked() / should_call_default_llm()。"""
         self._temporary_local_files: list[str] = []
         """Temporary local files created during this event and safe to delete when it finishes."""
 
@@ -137,7 +141,10 @@ class AstrMessageEvent(abc.ABC):
         """获取消息字符串。"""
         return self.message_str
 
-    def _outline_chain(self, chain: list[BaseMessageComponent] | None) -> str:
+    def _outline_chain(
+        self,
+        chain: MessageChain | list[BaseMessageComponent] | None,
+    ) -> str:
         if not chain:
             return ""
 
@@ -261,6 +268,10 @@ class AstrMessageEvent(abc.ABC):
         """是否是管理员。"""
         return self.role == "admin"
 
+    def has_admin_permission(self) -> bool:
+        """语义更明确的别名：is_admin() 容易被误解为"判断身份"，has_admin_permission 强调权限语义。"""
+        return self.is_admin()
+
     async def process_buffer(self, buffer: str, pattern: re.Pattern) -> str:
         """将消息缓冲区中的文本按指定正则表达式分割后发送至消息平台，作为不支持流式输出平台的Fallback。"""
         while True:
@@ -285,7 +296,7 @@ class AstrMessageEvent(abc.ABC):
         asyncio.create_task(
             Metric.upload(msg_event_tick=1, adapter_name=self.platform_meta.name),
         )
-        self._has_send_oper = True
+        self.mark_send_operation()
 
     async def send_typing(self) -> None:
         """发送输入中状态。
@@ -304,6 +315,15 @@ class AstrMessageEvent(abc.ABC):
 
     async def _post_send(self) -> None:
         """调度器会在执行 send() 后调用该方法 deprecated in v3.5.18"""
+
+    def _active_sdk_result_binding(self):
+        binding = getattr(self, "_sdk_result_binding", None)
+        if binding is None:
+            return None
+        is_active = getattr(binding, "is_active", None)
+        if callable(is_active) and not is_active():
+            return None
+        return binding
 
     def set_result(self, result: MessageEventResult | str) -> None:
         """设置消息事件的结果。
@@ -332,10 +352,18 @@ class AstrMessageEvent(abc.ABC):
         # 兼容外部插件或调用方传入的 chain=None 的情况，确保为可迭代列表
         if isinstance(result, MessageEventResult) and result.chain is None:
             result.chain = []
+        binding = self._active_sdk_result_binding()
+        if binding is not None:
+            binding.set_result(result)
+            return
         self._result = result
 
     def stop_event(self) -> None:
         """终止事件传播。"""
+        binding = self._active_sdk_result_binding()
+        if binding is not None:
+            binding.stop_event()
+            return
         if self._result is None:
             self.set_result(MessageEventResult().stop_event())
         else:
@@ -343,6 +371,10 @@ class AstrMessageEvent(abc.ABC):
 
     def continue_event(self) -> None:
         """继续事件传播。"""
+        binding = self._active_sdk_result_binding()
+        if binding is not None:
+            binding.continue_event()
+            return
         if self._result is None:
             self.set_result(MessageEventResult().continue_event())
         else:
@@ -350,23 +382,65 @@ class AstrMessageEvent(abc.ABC):
 
     def is_stopped(self) -> bool:
         """是否终止事件传播。"""
+        binding = self._active_sdk_result_binding()
+        if binding is not None and binding.has_result_state():
+            return binding.is_stopped()
         if self._result is None:
             return False  # 默认是继续传播
         return self._result.is_stopped()
 
     def should_call_llm(self, call_llm: bool) -> None:
-        """是否在此消息事件中禁止默认的 LLM 请求。
+        """向后兼容的包装器：历史调用者传 True 意为“阻止 LLM”，名字语义反转。
 
-        只会阻止 AstrBot 默认的 LLM 请求链路，不会阻止插件中的 LLM 请求。
+        新代码应直接使用 set_default_llm_blocked() 或 should_call_default_llm()。
         """
-        self.call_llm = call_llm
+        self.set_default_llm_blocked(call_llm)
+
+    def disable_default_llm(self, disabled: bool = True) -> None:
+        """向后兼容别名：disabled=True 阻止内置默认 LLM 阶段。"""
+        self.set_default_llm_blocked(disabled)
+
+    def set_default_llm_blocked(self, blocked: bool = True) -> None:
+        """底层写入方法：blocked=True 阻止本事件的内置 LLM 阶段。"""
+        self.call_llm = bool(blocked)
+
+    def set_default_llm_allowed(self, allowed: bool = True) -> None:
+        """allowed=True 表示允许内置 LLM 阶段（等价于 blocked=False）。"""
+        self.set_default_llm_blocked(not allowed)
+
+    def should_call_default_llm(self) -> bool:
+        """返回内置默认 LLM 管道是否仍被允许。call_llm 语义反转：True=阻止。"""
+        return not bool(self.call_llm)
+
+    def mark_send_operation(self) -> None:
+        """标记本事件已至少发送过一条平台消息。"""
+        self.set_send_operation_state(True)
+
+    def set_send_operation_state(self, has_sent: bool) -> None:
+        """底层写入方法：更新事件的发送操作状态。"""
+        self._has_send_oper = bool(has_sent)
+
+    def has_send_operation(self) -> bool:
+        """返回本事件是否已发送过至少一条平台消息。"""
+        return bool(self._has_send_oper)
+
+    def get_send_operation_state(self) -> bool:
+        """向后兼容的读取方法，供 bridge 代码读取原始发送标记。"""
+        return self.has_send_operation()
 
     def get_result(self) -> MessageEventResult | None:
         """获取消息事件的结果。"""
+        binding = self._active_sdk_result_binding()
+        if binding is not None and binding.has_result_state():
+            return binding.get_result()
         return self._result
 
     def clear_result(self) -> None:
         """清除消息事件的结果。"""
+        binding = self._active_sdk_result_binding()
+        if binding is not None:
+            binding.clear_result()
+            return
         self._result = None
 
     """消息链相关"""
@@ -451,6 +525,8 @@ class AstrMessageEvent(abc.ABC):
         if len(contexts) > 0 and conversation:
             conversation = None
 
+        from astrbot.core.provider.entities import ProviderRequest
+
         return ProviderRequest(
             prompt=prompt,
             session_id=session_id,
@@ -482,7 +558,7 @@ class AstrMessageEvent(abc.ABC):
                 sid=sid,
             ),
         )
-        self._has_send_oper = True
+        self.mark_send_operation()
 
     async def react(self, emoji: str) -> None:
         """对消息添加表情回应。

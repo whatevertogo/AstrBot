@@ -5,25 +5,18 @@ from asyncio import Queue
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
+from astrbot_sdk.message.components import component_to_payload_sync
 from deprecated import deprecated
 
 from astrbot.core.agent.hooks import BaseAgentRunHooks
 from astrbot.core.agent.message import Message
 from astrbot.core.agent.runners.tool_loop_agent_runner import ToolLoopAgentRunner
 from astrbot.core.agent.tool import ToolSet
-from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
-from astrbot.core.config.astrbot_config import AstrBotConfig
-from astrbot.core.conversation_mgr import ConversationManager
-from astrbot.core.db import BaseDatabase
-from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
 from astrbot.core.message.message_event_result import MessageChain
-from astrbot.core.persona_mgr import PersonaManager
-from astrbot.core.platform import Platform
-from astrbot.core.platform.astr_message_event import AstrMessageEvent, MessageSesion
-from astrbot.core.platform_message_history_mgr import PlatformMessageHistoryManager
+from astrbot.core.message.message_types import sdk_message_type
+from astrbot.core.platform.astr_message_event import MessageSesion
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest, ProviderType
 from astrbot.core.provider.func_tool_manager import FunctionTool, FunctionToolManager
-from astrbot.core.provider.manager import ProviderManager
 from astrbot.core.provider.provider import (
     EmbeddingProvider,
     Provider,
@@ -47,7 +40,19 @@ from .star_handler import EventType, StarHandlerMetadata, star_handlers_registry
 logger = logging.getLogger("astrbot")
 
 if TYPE_CHECKING:
+    from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
+    from astrbot.core.config.astrbot_config import AstrBotConfig
+    from astrbot.core.conversation_mgr import ConversationManager
     from astrbot.core.cron.manager import CronJobManager
+    from astrbot.core.db import BaseDatabase
+    from astrbot.core.knowledge_base.kb_mgr import KnowledgeBaseManager
+    from astrbot.core.persona_mgr import PersonaManager
+    from astrbot.core.platform import Platform
+    from astrbot.core.platform.astr_message_event import AstrMessageEvent
+    from astrbot.core.platform_message_history_mgr import PlatformMessageHistoryManager
+    from astrbot.core.provider.manager import ProviderManager
+    from astrbot.core.sdk_bridge.plugin_bridge import SdkPluginBridge
+    from astrbot.core.subagent_orchestrator import SubAgentOrchestrator
 
 
 class PlatformManagerProtocol(Protocol):
@@ -101,6 +106,8 @@ class Context:
         self.cron_manager = cron_manager
         """Cron job manager, initialized by core lifecycle."""
         self.subagent_orchestrator = subagent_orchestrator
+        self.sdk_plugin_bridge: SdkPluginBridge | None = None
+        """SDK plugin bridge, initialized by core lifecycle when available."""
 
     async def llm_generate(
         self,
@@ -156,7 +163,7 @@ class Context:
         audio_urls: list[str] | None = None,
         tools: ToolSet | None = None,
         system_prompt: str | None = None,
-        contexts: list[Message] | None = None,
+        contexts: list[Message | dict[str, Any]] | None = None,
         max_steps: int = 30,
         tool_call_timeout: int = 120,
         **kwargs: Any,
@@ -356,6 +363,10 @@ class Context:
         """获取所有用于 Embedding 任务的 Provider。"""
         return self.provider_manager.embedding_provider_insts
 
+    def get_all_rerank_providers(self) -> list[RerankProvider]:
+        """获取所有用于 Rerank 任务的 Provider。"""
+        return self.provider_manager.rerank_provider_insts
+
     def get_using_provider(self, umo: str | None = None) -> Provider | None:
         """获取当前使用的用于文本生成任务的 LLM Provider(Chat_Completion 类型)。
 
@@ -468,6 +479,32 @@ class Context:
         for platform in self.platform_manager.platform_insts:
             if platform.meta().id == session.platform_name:
                 await platform.send_by_session(session, message_chain)
+                if self.sdk_plugin_bridge is not None:
+                    try:
+                        await self.sdk_plugin_bridge.dispatch_system_event(
+                            "after_message_sent",
+                            {
+                                "session_id": str(session),
+                                "platform": platform.meta().name,
+                                "platform_id": platform.meta().id,
+                                "message_type": sdk_message_type(session.message_type),
+                                "message_outline": message_chain.get_plain_text(
+                                    with_other_comps_mark=True
+                                ),
+                                "sent_message_outline": message_chain.get_plain_text(
+                                    with_other_comps_mark=True
+                                ),
+                                "sent_messages": [
+                                    component_to_payload_sync(component)
+                                    for component in message_chain.chain
+                                ],
+                            },
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "SDK after_message_sent dispatch failed for proactive send: %s",
+                            exc,
+                        )
                 return True
         logger.warning(
             f"cannot find platform for session {str(session)}, message not sent"

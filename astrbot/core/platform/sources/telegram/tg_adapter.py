@@ -3,8 +3,9 @@ import os
 import re
 import sys
 import uuid
+from collections.abc import Sequence
 from contextlib import suppress
-from typing import cast
+from typing import Protocol, cast
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import BotCommand, Update
@@ -41,6 +42,14 @@ else:
     from typing_extensions import override
 
 
+class _CaptionEntityLike(Protocol):
+    # Telegram stubs expose caption_entities as tuples, so this helper only
+    # relies on the fields we actually read instead of a concrete container type.
+    type: str
+    offset: int
+    length: int
+
+
 @register_platform_adapter("telegram", "telegram 适配器")
 class TelegramPlatformAdapter(Platform):
     def __init__(
@@ -51,6 +60,8 @@ class TelegramPlatformAdapter(Platform):
     ) -> None:
         super().__init__(platform_config, event_queue)
         self.settings = platform_settings
+        self.client_self_id = uuid.uuid4().hex[:8]
+        self.sdk_plugin_bridge = None
 
         base_url = self.config.get(
             "telegram_api_base_url",
@@ -355,6 +366,31 @@ class TelegramPlatformAdapter(Platform):
                             )
                         command_dict.setdefault(cmd_name, description)
 
+        sdk_bridge = getattr(self, "sdk_plugin_bridge", None)
+        if sdk_bridge is not None:
+            for item in sdk_bridge.list_native_command_candidates("telegram"):
+                cmd_name = str(item.get("name", "")).strip()
+                if not cmd_name or cmd_name in skip_commands:
+                    continue
+                if not re.match(r"^[a-z0-9_]+$", cmd_name) or len(cmd_name) > 32:
+                    continue
+
+                description = str(item.get("description") or "").strip()
+                if not description:
+                    if item.get("is_group"):
+                        description = f"Command group: {cmd_name}"
+                    else:
+                        description = f"Command: {cmd_name}"
+                if len(description) > 30:
+                    description = description[:30] + "..."
+
+                if cmd_name in command_dict:
+                    logger.warning(
+                        f"命令名 '{cmd_name}' 重复注册，将使用首次注册的定义: "
+                        f"'{command_dict[cmd_name]}'"
+                    )
+                command_dict.setdefault(cmd_name, description)
+
         commands_a = sorted(command_dict.keys())
         return [BotCommand(cmd, command_dict[cmd]) for cmd in commands_a]
 
@@ -441,21 +477,6 @@ class TelegramPlatformAdapter(Platform):
         if not update.message:
             logger.warning("Received an update without a message.")
             return None
-
-        def _apply_caption() -> None:
-            if not update.message:
-                return
-            if update.message.caption:
-                message.message_str = update.message.caption
-                message.message.append(Comp.Plain(message.message_str))
-            if update.message.caption and update.message.caption_entities:
-                for entity in update.message.caption_entities:
-                    if entity.type == "mention":
-                        name = update.message.caption[
-                            entity.offset + 1 : entity.offset + entity.length
-                        ]
-                        message.message.append(Comp.At(qq=name, name=name))
-
         message = AstrBotMessage()
         message.session_id = str(update.message.chat.id)
 
@@ -575,7 +596,11 @@ class TelegramPlatformAdapter(Platform):
             photo = update.message.photo[-1]  # get the largest photo
             file = await photo.get_file()
             message.message.append(Comp.Image(file=file.file_path, url=file.file_path))
-            _apply_caption()
+            self._append_caption_components(
+                message,
+                update.message.caption,
+                update.message.caption_entities,
+            )
 
         elif update.message.sticker:
             # 将sticker当作图片处理
@@ -598,7 +623,11 @@ class TelegramPlatformAdapter(Platform):
                 message.message.append(
                     Comp.File(file=file_path, name=file_name, url=file_path)
                 )
-                _apply_caption()
+            self._append_caption_components(
+                message,
+                update.message.caption,
+                update.message.caption_entities,
+            )
 
         elif update.message.video:
             file = await update.message.video.get_file()
@@ -610,9 +639,39 @@ class TelegramPlatformAdapter(Platform):
                 )
             else:
                 message.message.append(Comp.Video(file=file_path, path=file.file_path))
-                _apply_caption()
+            self._append_caption_components(
+                message,
+                update.message.caption,
+                update.message.caption_entities,
+            )
 
         return message
+
+    @staticmethod
+    def _append_caption_components(
+        message: AstrBotMessage,
+        caption: str | None,
+        caption_entities: Sequence[_CaptionEntityLike] | None,
+    ) -> None:
+        """Keep media captions aligned with photo/document/video conversions."""
+
+        if not caption:
+            return
+
+        # Telegram attaches captions to multiple media types; keeping the shared
+        # conversion here prevents photo/document/video from drifting again.
+        message.message_str = caption
+        message.message.append(Comp.Plain(message.message_str))
+
+        if not caption_entities:
+            return
+
+        for entity in caption_entities:
+            if entity.type == "mention":
+                name = message.message_str[
+                    entity.offset + 1 : entity.offset + entity.length
+                ]
+                message.message.append(Comp.At(qq=name, name=name))
 
     async def handle_media_group_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
