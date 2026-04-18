@@ -52,7 +52,6 @@ from astrbot_sdk.runtime.loader import (
 )
 from astrbot_sdk.runtime.supervisor import SupervisorRuntime
 
-from astrbot.core.sdk_bridge.plugin_bridge import SdkPluginBridge
 from tests.test_sdk.unit._context_api_roundtrip import build_roundtrip_runtime
 
 
@@ -154,16 +153,6 @@ def _register_plugin_session(runtime, supervisor: SupervisorRuntime, session) ->
             "name": session.plugin.name,
             "display_name": session.plugin.name,
             "description": "dynamic registration probe",
-            "acknowledge_global_mcp_risk": any(
-                bool(
-                    getattr(
-                        instance.__class__,
-                        "__astrbot_acknowledge_global_mcp_risk__",
-                        False,
-                    )
-                )
-                for instance in session.loaded_plugin.instances
-            ),
         }
     )
     for descriptor in session.provided_capabilities:
@@ -337,25 +326,6 @@ async def test_plugin_teardown_clears_dynamic_skill_registration(
 
     remaining_skills = await runtime.make_context(session.plugin.name).skills.list()
     assert remaining_skills == []
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_local_mcp_dynamic_registration_is_currently_unsupported(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime = build_roundtrip_runtime(monkeypatch, tmp_path=tmp_path)
-    descriptor_names = {descriptor.name for descriptor in runtime.bridge.descriptors()}
-
-    assert "mcp.local.register" not in descriptor_names
-    assert "mcp.local.unregister" not in descriptor_names
-    assert "mcp.global.register" not in descriptor_names
-    assert "mcp.global.unregister" not in descriptor_names
-    assert hasattr(SdkPluginBridge, "register_local_mcp_server") is False
-    assert hasattr(SdkPluginBridge, "unregister_local_mcp_server") is False
-    assert hasattr(SdkPluginBridge, "enable_local_mcp_server") is True
-    assert hasattr(SdkPluginBridge, "disable_local_mcp_server") is True
 
 
 @pytest.mark.unit

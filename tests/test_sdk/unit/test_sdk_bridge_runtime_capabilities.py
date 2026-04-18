@@ -90,7 +90,6 @@ from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.platform.platform_metadata import PlatformMetadata
 from astrbot.core.provider.entities import ProviderRequest as CoreProviderRequest
-from astrbot.core.sdk_bridge import plugin_bridge as plugin_bridge_module
 from astrbot.core.sdk_bridge.event_payload import (
     build_inbound_event_snapshot,
     sanitize_sdk_extras,
@@ -832,14 +831,6 @@ class _CancelableSession:
         self.stop = AsyncMock()
 
 
-class _TemporaryClient:
-    def __init__(self) -> None:
-        self.cleaned = False
-
-    async def cleanup(self) -> None:
-        self.cleaned = True
-
-
 class _ScheduleDispatchSession:
     def __init__(self, bridge: SdkPluginBridge) -> None:
         self.bridge = bridge
@@ -1270,31 +1261,6 @@ async def test_schedule_handler_tracks_request_scope_for_proactive_send() -> Non
     assert star_context.sent_messages[0][1].get_plain_text() == "scheduled hello"
     assert session.event_capability_results == [{"supported": False}]
     assert bridge.resolve_request_session(session.request_ids[0]) is None
-
-
-@pytest.mark.unit
-def test_terminate_stale_mcp_pid_uses_taskkill_on_windows(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    bridge = SdkPluginBridge(_OverlayFakeStarContext())
-    captured: dict[str, object] = {}
-
-    def _fake_run(*args, **kwargs):
-        captured["args"] = args
-        captured["kwargs"] = kwargs
-        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr(plugin_bridge_module.os, "name", "nt", raising=False)
-    monkeypatch.setattr(plugin_bridge_module.subprocess, "run", _fake_run)
-    monkeypatch.setattr(
-        plugin_bridge_module.os,
-        "kill",
-        lambda *_args, **_kwargs: pytest.fail("os.kill should not be used on Windows"),
-    )
-
-    bridge._terminate_stale_mcp_pid(321)
-
-    assert captured["args"] == (["taskkill", "/PID", "321", "/T", "/F"],)
 
 
 @pytest.mark.unit
@@ -2010,15 +1976,11 @@ async def test_sdk_bridge_handle_worker_closed_retries_once() -> None:
     )
     bridge._records = {"sdk-demo": record}
     bridge._cancel_plugin_requests = AsyncMock()  # type: ignore[method-assign]
-    bridge._close_temporary_mcp_sessions = AsyncMock()  # type: ignore[method-assign]
-    bridge._shutdown_local_mcp_servers = AsyncMock()  # type: ignore[method-assign]
     bridge._load_or_reload_plugin = AsyncMock()  # type: ignore[method-assign]
 
     await bridge._handle_worker_closed("sdk-demo")
 
     bridge._cancel_plugin_requests.assert_awaited_once_with("sdk-demo")
-    bridge._close_temporary_mcp_sessions.assert_awaited_once_with("sdk-demo")
-    bridge._shutdown_local_mcp_servers.assert_awaited_once_with(record)
     bridge._load_or_reload_plugin.assert_awaited_once_with(
         plugin,
         load_order=3,
@@ -2042,8 +2004,6 @@ async def test_sdk_bridge_handle_worker_closed_skips_retry_for_non_running_state
     )
     bridge._records = {"sdk-demo": record}
     bridge._cancel_plugin_requests = AsyncMock()  # type: ignore[method-assign]
-    bridge._close_temporary_mcp_sessions = AsyncMock()  # type: ignore[method-assign]
-    bridge._shutdown_local_mcp_servers = AsyncMock()  # type: ignore[method-assign]
     bridge._load_or_reload_plugin = AsyncMock()  # type: ignore[method-assign]
 
     await bridge._handle_worker_closed("sdk-demo")
@@ -2067,8 +2027,6 @@ async def test_sdk_bridge_handle_worker_closed_marks_record_failed_after_retry()
     bridge._http_routes = {"sdk-demo": [types.SimpleNamespace(route="/health")]}
     bridge._session_waiters = {"sdk-demo": {"waiter"}}
     bridge._cancel_plugin_requests = AsyncMock()  # type: ignore[method-assign]
-    bridge._close_temporary_mcp_sessions = AsyncMock()  # type: ignore[method-assign]
-    bridge._shutdown_local_mcp_servers = AsyncMock()  # type: ignore[method-assign]
     bridge._unregister_schedule_jobs = AsyncMock()  # type: ignore[method-assign]
     bridge._load_or_reload_plugin = AsyncMock()  # type: ignore[method-assign]
 
@@ -2104,8 +2062,6 @@ async def test_sdk_bridge_handle_worker_closed_clears_registered_skills_on_failu
     )
     bridge._records = {"sdk-demo": record}
     bridge._cancel_plugin_requests = AsyncMock()  # type: ignore[method-assign]
-    bridge._close_temporary_mcp_sessions = AsyncMock()  # type: ignore[method-assign]
-    bridge._shutdown_local_mcp_servers = AsyncMock()  # type: ignore[method-assign]
     bridge._unregister_schedule_jobs = AsyncMock()  # type: ignore[method-assign]
     published: list[str] = []
     monkeypatch.setattr(
@@ -2368,18 +2324,11 @@ async def test_sdk_bridge_stop_cleans_runtime_state() -> None:
     record = types.SimpleNamespace(
         plugin_id="sdk-demo",
         session=session,
-        local_mcp_servers={},
     )
     bridge._records = {"sdk-demo": record}
     bridge._http_routes = {"sdk-demo": [types.SimpleNamespace(route="/health")]}
     bridge._session_waiters = {"sdk-demo": {"waiter"}}
     bridge._schedule_job_ids = {"sdk-demo": {"job-1"}}
-    bridge._temporary_mcp_sessions = {
-        "temp-1": types.SimpleNamespace(
-            plugin_id="sdk-demo",
-            client=_TemporaryClient(),
-        )
-    }
 
     await bridge.stop()
     await asyncio.sleep(0)
@@ -2394,7 +2343,6 @@ async def test_sdk_bridge_stop_cleans_runtime_state() -> None:
     assert bridge._http_routes == {}
     assert bridge._session_waiters == {}
     assert bridge._schedule_job_ids == {}
-    assert bridge._temporary_mcp_sessions == {}
     assert cleanup_task.cancelled() is True
     assert bridge._started is False
     assert bridge._stopping is False

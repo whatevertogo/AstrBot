@@ -97,22 +97,6 @@ class FakeRuntimeSP:
         return [SimpleNamespace(key=key) for key in keys]
 
 
-class FakeFileTokenService:
-    def __init__(self) -> None:
-        self._registered: dict[str, str] = {}
-        self._counter = 0
-
-    async def register_file(self, path: str, timeout: float | None = None) -> str:
-        del timeout
-        self._counter += 1
-        token = f"file-token-{self._counter}"
-        self._registered[token] = str(Path(path))
-        return token
-
-    async def handle_file(self, token: str) -> str:
-        return self._registered[str(token)]
-
-
 class FakeConfig(dict[str, Any]):
     def __init__(self) -> None:
         super().__init__(
@@ -254,9 +238,6 @@ class FakePluginBridge:
             "version": str(metadata.get("version", "1.0.0")),
             "enabled": bool(metadata.get("enabled", True)),
             "reserved": bool(metadata.get("reserved", False)),
-            "acknowledge_global_mcp_risk": bool(
-                metadata.get("acknowledge_global_mcp_risk", False)
-            ),
             "support_platforms": list(metadata.get("support_platforms", [])),
         }
         self._plugin_configs.setdefault(plugin_id, dict(config or {}))
@@ -558,10 +539,6 @@ class FakePluginBridge:
 
     def list_registered_skills(self, plugin_id: str) -> list[dict[str, str]]:
         return [dict(item) for item in self._skill_records.get(plugin_id, [])]
-
-    def acknowledges_global_mcp_risk(self, plugin_id: str) -> bool:
-        metadata = self._plugin_metadata.get(str(plugin_id), {})
-        return bool(metadata.get("acknowledge_global_mcp_risk", False))
 
     def remove_plugin(self, plugin_id: str) -> None:
         normalized_plugin_id = str(plugin_id)
@@ -1137,7 +1114,6 @@ class RoundTripRuntime:
     star_context: FakeStarContext
     provider_manager: FakeProviderManager
     chat_provider: FakeChatProvider
-    file_token_service: FakeFileTokenService
     config: FakeConfig
     message_history_manager: FakeMessageHistoryManager
 
@@ -1216,7 +1192,6 @@ def build_roundtrip_runtime(
     tmp_path,
 ) -> RoundTripRuntime:
     runtime_sp = FakeRuntimeSP()
-    file_token_service = FakeFileTokenService()
     config = FakeConfig()
     plugin_bridge = FakePluginBridge()
     func_tool_manager = FakeFunctionToolManager()
@@ -1260,7 +1235,6 @@ def build_roundtrip_runtime(
         star_context=star_context,
         provider_manager=provider_manager,
         chat_provider=chat_provider,
-        file_token_service=file_token_service,
         config=config,
         message_history_manager=message_history_manager,
     )

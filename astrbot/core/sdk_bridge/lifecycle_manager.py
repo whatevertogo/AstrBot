@@ -29,7 +29,6 @@ class SdkPluginLifecycleManager:
     async def start(self) -> None:
         if self.bridge._started:
             return
-        self.bridge._sweep_stale_mcp_leases()
         self.bridge._started = True
         self._schedule_background_reload(reset_restart_budget=True)
 
@@ -44,9 +43,7 @@ class SdkPluginLifecycleManager:
             self._startup_task = None
         for plugin_id in list(self.bridge._records.keys()):
             await self.bridge._cancel_plugin_requests(plugin_id)
-            await self.bridge._close_temporary_mcp_sessions(plugin_id)
         for record in list(self.bridge._records.values()):
-            await self.bridge._shutdown_local_mcp_servers(record)
             if record.session is not None:
                 await record.session.stop()
                 record.session = None
@@ -62,7 +59,6 @@ class SdkPluginLifecycleManager:
         self.bridge._http_routes.clear()
         self.bridge._session_waiters.clear()
         self.bridge._schedule_job_ids.clear()
-        self.bridge._temporary_mcp_sessions.clear()
         self.bridge._started = False
         self.bridge._stopping = False
 
@@ -131,11 +127,9 @@ class SdkPluginLifecycleManager:
             if self.bridge._stopping:
                 return
             await self.bridge._cancel_plugin_requests(plugin_id)
-            await self.bridge._close_temporary_mcp_sessions(plugin_id)
             record = self.bridge._records.get(plugin_id)
             if record is None:
                 return
-            await self.bridge._shutdown_local_mcp_servers(record)
             record.session = None
             if record.state in {
                 self.bridge.SDK_STATE_RELOADING,

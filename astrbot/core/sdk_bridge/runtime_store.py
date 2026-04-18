@@ -13,7 +13,6 @@ from astrbot_sdk.protocol.descriptors import HandlerDescriptor
 from astrbot_sdk.runtime.loader import PluginSpec
 from astrbot_sdk.runtime.supervisor import WorkerSession
 
-from astrbot.core.agent.mcp_client import MCPClient
 from astrbot.core.message.message_event_result import MessageEventResult
 
 from .event_payload import InboundEventSnapshot
@@ -82,30 +81,6 @@ class _InFlightRequest:
 
 
 @dataclass(slots=True)
-class _LocalMCPServerRuntime:
-    name: str
-    config: dict[str, Any]
-    active: bool
-    running: bool = False
-    client: MCPClient | None = None
-    tools: list[str] = field(default_factory=list)
-    tool_specs: list[LLMToolSpec] = field(default_factory=list)
-    errlogs: list[str] = field(default_factory=list)
-    last_error: str | None = None
-    ready_event: asyncio.Event = field(default_factory=asyncio.Event)
-    connect_task: asyncio.Task[None] | None = None
-    lease_path: Path | None = None
-
-
-@dataclass(slots=True)
-class _TemporaryMCPSessionRuntime:
-    plugin_id: str
-    name: str
-    client: MCPClient
-    tools: list[str]
-
-
-@dataclass(slots=True)
 class _RequestOverlayState:
     dispatch_token: str
     should_call_llm: bool
@@ -166,8 +141,6 @@ class SdkPluginRecord:
     restart_attempted: bool = False
     failure_reason: str = ""
     issues: list[dict[str, Any]] = field(default_factory=list)
-    local_mcp_servers: dict[str, _LocalMCPServerRuntime] = field(default_factory=dict)
-    acknowledge_global_mcp_risk: bool = False
 
     @property
     def plugin_id(self) -> str:
@@ -201,9 +174,6 @@ class SdkRuntimeStore:
     session_waiters: dict[str, set[str]] = field(default_factory=dict)
     schedule_job_ids: dict[str, set[str]] = field(default_factory=dict)
     discovery_issues: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
-    temporary_mcp_sessions: dict[str, _TemporaryMCPSessionRuntime] = field(
-        default_factory=dict
-    )
 
     def snapshot_records(self) -> list[SdkPluginRecord]:
         with self.mutation_lock:

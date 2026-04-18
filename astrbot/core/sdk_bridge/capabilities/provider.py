@@ -1213,30 +1213,9 @@ class ProviderCapabilityMixin(CapabilityMixinHost):
                 "event": event_payload,
             }
             try:
-                if tool_spec.handler_capability == "internal.mcp.local.execute":
-                    handler_ref = json.loads(tool_spec.handler_ref or "{}")
+                if tool_spec.handler_capability:
                     output = await asyncio.wait_for(
-                        self.execute(
-                            "internal.mcp.local.execute",
-                            {
-                                "plugin_id": plugin_id,
-                                "server_name": str(
-                                    handler_ref.get("server_name", "")
-                                ).strip(),
-                                "tool_name": str(
-                                    handler_ref.get("tool_name", "")
-                                ).strip(),
-                                "tool_args": call_payload["tool_args"],
-                            },
-                            stream=False,
-                            cancel_token=None,
-                            request_id=request_id,
-                        ),
-                        timeout=tool_call_timeout,
-                    )
-                elif tool_spec.handler_capability:
-                    output = await asyncio.wait_for(
-                        record.session.invoke_capability(
+                        session.invoke_capability(
                             tool_spec.handler_capability,
                             call_payload,
                             request_id=request_id,
@@ -1245,7 +1224,7 @@ class ProviderCapabilityMixin(CapabilityMixinHost):
                     )
                 else:
                     output = await asyncio.wait_for(
-                        record.session.invoke_capability(
+                        session.invoke_capability(
                             "internal.llm_tool.execute",
                             call_payload,
                             request_id=request_id,

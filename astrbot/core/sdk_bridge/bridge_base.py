@@ -6,13 +6,12 @@ import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from astrbot_sdk._internal.invocation_context import current_caller_plugin_id
 from astrbot_sdk.errors import AstrBotError
 from astrbot_sdk.runtime.capability_router import CapabilityRouter
 
-from astrbot.core.file_token_service import FileTokenService
 from astrbot.core.message.components import ComponentTypes, Image, Plain
 from astrbot.core.message.message_event_result import MessageChain
 
@@ -36,12 +35,6 @@ def _get_runtime_astrbot_config():
     from astrbot.core import astrbot_config
 
     return astrbot_config
-
-
-def _get_runtime_file_token_service() -> FileTokenService:
-    from astrbot.core import file_token_service
-
-    return cast(FileTokenService, file_token_service)
 
 
 def _get_runtime_tool_types():
