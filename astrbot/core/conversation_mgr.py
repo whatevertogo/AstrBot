@@ -263,6 +263,8 @@ class ConversationManager:
         title: str | None = None,
         persona_id: str | None = None,
         token_usage: int | None = None,
+        *,
+        clear_persona: bool = False,
     ) -> None:
         """更新会话的对话.
 
@@ -273,6 +275,8 @@ class ConversationManager:
             token_usage (int | None): token 使用量。None 表示不更新
 
         """
+        # TODO(compat): Keep clear_persona keyword-only until external plugins
+        # have fully migrated away from positional update_conversation calls.
         if not conversation_id:
             # 如果没有提供 conversation_id，则获取当前的
             conversation_id = await self.get_curr_conversation_id(unified_msg_origin)
@@ -281,6 +285,7 @@ class ConversationManager:
                 cid=conversation_id,
                 title=title,
                 persona_id=persona_id,
+                clear_persona=clear_persona,
                 content=history,
                 token_usage=token_usage,
             )
@@ -327,6 +332,19 @@ class ConversationManager:
             unified_msg_origin=unified_msg_origin,
             conversation_id=conversation_id,
             persona_id=persona_id,
+        )
+
+    async def unset_conversation_persona(
+        self,
+        unified_msg_origin: str,
+        conversation_id: str | None = None,
+    ) -> None:
+        """Clear the conversation-specific persona override and fall back to default."""
+
+        await self.update_conversation(
+            unified_msg_origin=unified_msg_origin,
+            conversation_id=conversation_id,
+            clear_persona=True,
         )
 
     async def add_message_pair(

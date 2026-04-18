@@ -76,7 +76,7 @@ const enabledConfigTags = (tool: ToolItem): BuiltinToolConfigTag[] => {
     <v-data-table
       :headers="toolHeaders"
       :items="items"
-      item-value="name"
+      item-value="tool_key"
       hover
       show-expand
       class="tool-table"

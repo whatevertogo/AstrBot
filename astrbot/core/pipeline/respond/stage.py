@@ -7,6 +7,7 @@ import astrbot.core.message.components as Comp
 from astrbot.core import logger
 from astrbot.core.message.components import BaseMessageComponent, ComponentType
 from astrbot.core.message.message_event_result import MessageChain, ResultContentType
+from astrbot.core.message.message_types import sdk_message_type
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.star.star_handler import EventType
 from astrbot.core.utils.path_util import path_Mapping
@@ -52,6 +53,9 @@ class RespondStage(Stage):
     async def initialize(self, ctx: PipelineContext) -> None:
         self.ctx = ctx
         self.config = ctx.astrbot_config
+        self.sdk_plugin_bridge = getattr(
+            ctx.plugin_manager.context, "sdk_plugin_bridge", None
+        )
         self.platform_settings: dict = self.config.get("platform_settings", {})
 
         self.reply_with_mention = ctx.astrbot_config["platform_settings"][
@@ -85,7 +89,12 @@ class RespondStage(Stage):
                 self.interval = [float(t) for t in interval_str_ls]
             except BaseException as e:
                 logger.error(f"解析分段回复的间隔时间失败。{e}")
-            logger.info(f"分段回复间隔时间：{self.interval}")
+                logger.info(f"分段回复间隔时间：{self.interval}")
+
+    def _get_effective_result(self, event: AstrMessageEvent):
+        if self.sdk_plugin_bridge is not None:
+            return self.sdk_plugin_bridge.get_effective_result(event)
+        return event.get_result()
 
     async def _word_cnt(self, text: str) -> int:
         """分段回复 统计字数"""
@@ -127,12 +136,36 @@ class RespondStage(Stage):
         # 如果所有组件都为空
         return True
 
+    @staticmethod
+    def _message_outline_for_sdk_event(
+        chain: MessageChain | list[BaseMessageComponent] | None,
+    ) -> str:
+        if isinstance(chain, MessageChain):
+            return chain.get_plain_text(with_other_comps_mark=True)
+        if isinstance(chain, list):
+            return MessageChain(chain).get_plain_text(with_other_comps_mark=True)
+        return ""
+
+    @staticmethod
+    def _message_payloads_for_sdk_event(
+        chain: MessageChain | list[BaseMessageComponent] | None,
+    ) -> list[dict]:
+        from astrbot_sdk.message.components import component_to_payload_sync
+
+        if isinstance(chain, MessageChain):
+            components = chain.chain
+        elif isinstance(chain, list):
+            components = chain
+        else:
+            components = []
+        return [component_to_payload_sync(component) for component in components]
+
     def is_seg_reply_required(self, event: AstrMessageEvent) -> bool:
         """检查是否需要分段回复"""
         if not self.enable_seg:
             return False
 
-        if (result := event.get_result()) is None:
+        if (result := self._get_effective_result(event)) is None:
             return False
         if self.only_llm_result and not result.is_model_result():
             return False
@@ -166,21 +199,72 @@ class RespondStage(Stage):
 
         return extracted
 
+    def _bind_plugin_log(self):
+        bind = getattr(logger, "bind", None)
+        if callable(bind):
+            return bind(plugin_tag="[Plug]")
+        return logger
+
+    async def _dispatch_after_message_sent(
+        self,
+        event: AstrMessageEvent,
+        result,
+    ) -> bool:
+        if await call_event_hook(event, EventType.OnAfterMessageSentEvent):
+            return True
+
+        if self.sdk_plugin_bridge is not None:
+            try:
+                await self.sdk_plugin_bridge.dispatch_message_event(
+                    "after_message_sent",
+                    event,
+                    {
+                        "session_id": event.unified_msg_origin,
+                        "platform": event.get_platform_name(),
+                        "platform_id": event.get_platform_id(),
+                        "message_type": sdk_message_type(event.get_message_type()),
+                        "sender_name": event.get_sender_name(),
+                        "self_id": event.get_self_id(),
+                        "message_outline": self._message_outline_for_sdk_event(
+                            result.chain
+                        ),
+                        "sent_message_outline": self._message_outline_for_sdk_event(
+                            result.chain
+                        ),
+                        "sent_messages": self._message_payloads_for_sdk_event(
+                            result.chain
+                        ),
+                    },
+                )
+            except Exception as exc:
+                logger.warning(f"SDK after_message_sent dispatch failed: {exc}")
+        return False
+
     async def process(
         self,
         event: AstrMessageEvent,
     ) -> None | AsyncGenerator[None, None]:
-        result = event.get_result()
+        result = self._get_effective_result(event)
         if result is None:
             return
         if event.get_extra("_streaming_finished", False):
             # prevent some plugin make result content type to LLM_RESULT after streaming finished, lead to send again
             return
         if result.result_content_type == ResultContentType.STREAMING_FINISH:
+            logger.info(
+                "Streaming finish reached, dispatching after_message_sent hooks."
+            )
             event.set_extra("_streaming_finished", True)
+            await self._dispatch_after_message_sent(event, result)
+            event.clear_result()
             return
 
-        logger.info(
+        log = (
+            self._bind_plugin_log()
+            if event.get_extra("_sdk_origin_plugin_id")
+            else logger
+        )
+        log.info(
             f"Prepare to send - {event.get_sender_name()}/{event.get_sender_id()}: {event._outline_chain(result.chain)}",
         )
 
@@ -289,7 +373,7 @@ class RespondStage(Stage):
                             exc_info=True,
                         )
 
-        if await call_event_hook(event, EventType.OnAfterMessageSentEvent):
+        if await self._dispatch_after_message_sent(event, result):
             return
 
         event.clear_result()

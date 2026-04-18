@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import json
 import os
@@ -14,6 +15,7 @@ from quart import request
 
 from astrbot.api import sp
 from astrbot.core import DEMO_MODE, file_token_service, logger
+from astrbot.core.config.default import VERSION
 from astrbot.core.core_lifecycle import AstrBotCoreLifecycle
 from astrbot.core.star.filter.command import CommandFilter
 from astrbot.core.star.filter.command_group import CommandGroupFilter
@@ -28,6 +30,7 @@ from astrbot.core.utils.astrbot_path import (
     get_astrbot_data_path,
     get_astrbot_temp_path,
 )
+from astrbot.core.zip_updator import RepoZipUpdator
 
 from .route import Response, Route, RouteContext
 
@@ -88,6 +91,19 @@ class PluginRoute(Route):
         }
 
         self._logo_cache = {}
+        self._remote_doc_cache: dict[tuple[str, str], str] = {}
+        self._repo_updator = RepoZipUpdator()
+
+    def _sdk_bridge(self):
+        return getattr(self.core_lifecycle, "sdk_plugin_bridge", None)
+
+    def _is_sdk_plugin(self, plugin_name: str) -> bool:
+        sdk_bridge = self._sdk_bridge()
+        if sdk_bridge is None:
+            return False
+        return any(
+            plugin["name"] == plugin_name for plugin in sdk_bridge.list_plugins()
+        )
 
     async def check_plugin_compatibility(self):
         try:
@@ -148,9 +164,19 @@ class PluginRoute(Route):
         data = await request.get_json()
         plugin_name = data.get("name", None)
         try:
-            success, message = await self.plugin_manager.reload(plugin_name)
-            if not success:
-                return Response().error(message or "插件重载失败").__dict__
+            if plugin_name and self._is_sdk_plugin(plugin_name):
+                sdk_bridge = self._sdk_bridge()
+                if sdk_bridge is None:
+                    return Response().error("SDK bridge 未初始化").__dict__
+                await sdk_bridge.reload_plugin(plugin_name)
+            else:
+                success, message = await self.plugin_manager.reload(plugin_name)
+                if not success:
+                    return Response().error(message or "插件重载失败").__dict__
+            if plugin_name is None:
+                sdk_bridge = self._sdk_bridge()
+                if sdk_bridge is not None:
+                    await sdk_bridge.reload_all(reset_restart_budget=True)
             return Response().ok(None, "重载成功。").__dict__
         except Exception as e:
             logger.error(f"/api/plugin/reload: {traceback.format_exc()}")
@@ -369,6 +395,105 @@ class PluginRoute(Route):
             return None
         return plugin_dir
 
+    def _resolve_sdk_plugin_dir(self, plugin_name: str) -> Path | None:
+        sdk_bridge = self._sdk_bridge()
+        if sdk_bridge is None:
+            return None
+        records = getattr(sdk_bridge, "_records", None)
+        if not isinstance(records, dict):
+            return None
+        record = records.get(plugin_name)
+        plugin = getattr(record, "plugin", None)
+        plugin_dir = getattr(plugin, "plugin_dir", None)
+        if plugin_dir is None:
+            return None
+        resolved = Path(plugin_dir)
+        if not resolved.is_dir():
+            return None
+        return resolved
+
+    def _find_legacy_plugin(self, plugin_name: str):
+        for plugin in self.plugin_manager.context.get_all_stars():
+            if plugin.name == plugin_name:
+                return plugin
+        return None
+
+    def _resolve_plugin_content_dir(self, plugin_name: str) -> Path | None:
+        for plugin in self.plugin_manager.context.get_all_stars():
+            if plugin.name != plugin_name:
+                continue
+            return self._resolve_plugin_dir(plugin)
+        return self._resolve_sdk_plugin_dir(plugin_name)
+
+    def _resolve_plugin_repo_url(self, plugin_name: str) -> str | None:
+        for plugin in self.plugin_manager.context.get_all_stars():
+            if plugin.name != plugin_name:
+                continue
+            repo = getattr(plugin, "repo", None)
+            if isinstance(repo, str) and repo.strip():
+                return repo.strip()
+
+        sdk_bridge = self._sdk_bridge()
+        if sdk_bridge is not None:
+            get_plugin_metadata = getattr(sdk_bridge, "get_plugin_metadata", None)
+            if callable(get_plugin_metadata):
+                metadata = get_plugin_metadata(plugin_name)
+                if isinstance(metadata, dict):
+                    repo = metadata.get("repo")
+                    if isinstance(repo, str) and repo.strip():
+                        return repo.strip()
+            records = getattr(sdk_bridge, "_records", None)
+            if isinstance(records, dict):
+                record = records.get(plugin_name)
+                plugin = getattr(record, "plugin", None)
+                manifest = getattr(plugin, "manifest_data", None)
+                if isinstance(manifest, dict):
+                    repo = manifest.get("repo")
+                    if isinstance(repo, str) and repo.strip():
+                        return repo.strip()
+        return None
+
+    async def _fetch_github_repo_readme(self, repo_url: str) -> str:
+        cache_key = ("readme", repo_url)
+        cached = self._remote_doc_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        owner, repo, branch = self._repo_updator.parse_github_url(repo_url)
+        params = {"ref": branch} if branch else None
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"AstrBot/{VERSION}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        api_url = f"https://api.github.com/repos/{owner}/{repo}/readme"
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        connector = aiohttp.TCPConnector(ssl=ssl_context)
+
+        async with (
+            aiohttp.ClientSession(
+                trust_env=True,
+                connector=connector,
+                headers=headers,
+            ) as session,
+            session.get(api_url, params=params) as response,
+        ):
+            if response.status != 200:
+                message = await response.text()
+                raise ValueError(
+                    f"GitHub README 获取失败，状态码 {response.status}: {message}"
+                )
+            payload = await response.json()
+
+        encoding = str(payload.get("encoding") or "").lower()
+        content = payload.get("content")
+        if encoding != "base64" or not isinstance(content, str):
+            raise ValueError("GitHub README 返回格式不受支持。")
+
+        decoded = base64.b64decode(content).decode("utf-8")
+        self._remote_doc_cache[cache_key] = decoded
+        return decoded
+
     def _get_plugin_installed_at(self, plugin) -> str | None:
         plugin_dir = self._resolve_plugin_dir(plugin)
         if plugin_dir is None:
@@ -422,6 +547,12 @@ class PluginRoute(Route):
             ):
                 continue
             _plugin_resp.append(_t)
+        sdk_bridge = self._sdk_bridge()
+        if sdk_bridge is not None:
+            for plugin in sdk_bridge.list_plugins():
+                if plugin_name and plugin["name"] != plugin_name:
+                    continue
+                _plugin_resp.append(plugin)
         return (
             Response()
             .ok(_plugin_resp, message=self.plugin_manager.failed_plugin_info)
@@ -517,6 +648,8 @@ class PluginRoute(Route):
                 ignore_version_check=ignore_version_check,
             )
             # self.core_lifecycle.restart()
+            if plugin_info and plugin_info.get("type") == "sdk":
+                logger.info("SDK 插件 %s 安装成功", plugin_info.get("name"))
             logger.info(f"安装插件 {repo_url} 成功。")
             return Response().ok(plugin_info, "安装成功。").__dict__
         except PluginVersionIncompatibleError as e:
@@ -558,6 +691,8 @@ class PluginRoute(Route):
                 ignore_version_check=ignore_version_check,
             )
             # self.core_lifecycle.restart()
+            if plugin_info and plugin_info.get("type") == "sdk":
+                logger.info("SDK 插件 %s 上传安装成功", plugin_info.get("name"))
             logger.info(f"安装插件 {file.filename} 成功")
             return Response().ok(plugin_info, "安装成功。").__dict__
         except PluginVersionIncompatibleError as e:
@@ -585,6 +720,10 @@ class PluginRoute(Route):
         plugin_name = post_data["name"]
         delete_config = post_data.get("delete_config", False)
         delete_data = post_data.get("delete_data", False)
+        if self._is_sdk_plugin(plugin_name):
+            return Response().error(
+                "SDK 插件在 MVP 中不支持卸载，请手动移除目录"
+            ).__dict__, 400
         try:
             logger.info(f"正在卸载插件 {plugin_name}")
             await self.plugin_manager.uninstall_plugin(
@@ -637,6 +776,8 @@ class PluginRoute(Route):
         post_data = await request.get_json()
         plugin_name = post_data["name"]
         proxy: str = post_data.get("proxy", None)
+        if self._is_sdk_plugin(plugin_name):
+            return Response().error("SDK 插件在 MVP 中不支持更新").__dict__, 400
         try:
             logger.info(f"正在更新插件 {plugin_name}")
             await self.plugin_manager.update_plugin(plugin_name, proxy)
@@ -711,6 +852,19 @@ class PluginRoute(Route):
 
         post_data = await request.get_json()
         plugin_name = post_data["name"]
+        if self._is_sdk_plugin(plugin_name):
+            sdk_bridge = self._sdk_bridge()
+            if sdk_bridge is None:
+                return Response().error("SDK bridge 未初始化").__dict__, 500
+            try:
+                await sdk_bridge.turn_off_plugin(plugin_name)
+            except ValueError as exc:
+                return Response().error(str(exc)).__dict__, 404
+            except Exception as exc:
+                logger.error(f"/api/plugin/off: {traceback.format_exc()}")
+                return Response().error(str(exc)).__dict__
+            logger.info(f"停用 SDK 插件 {plugin_name} 。")
+            return Response().ok(None, "停用成功。").__dict__
         try:
             await self.plugin_manager.turn_off_plugin(plugin_name)
             logger.info(f"停用插件 {plugin_name} 。")
@@ -729,9 +883,22 @@ class PluginRoute(Route):
 
         post_data = await request.get_json()
         plugin_name = post_data["name"]
+        if self._is_sdk_plugin(plugin_name):
+            sdk_bridge = self._sdk_bridge()
+            if sdk_bridge is None:
+                return Response().error("SDK bridge 未初始化").__dict__, 500
+            try:
+                await sdk_bridge.turn_on_plugin(plugin_name)
+            except ValueError as exc:
+                return Response().error(str(exc)).__dict__, 404
+            except Exception as exc:
+                logger.error(f"/api/plugin/on: {traceback.format_exc()}")
+                return Response().error(str(exc)).__dict__
+            logger.info(f"启用 SDK 插件 {plugin_name}")
+            return Response().ok(None, "启用成功。").__dict__
         try:
             await self.plugin_manager.turn_on_plugin(plugin_name)
-            logger.info(f"启用插件 {plugin_name} 。")
+            logger.info(f"启用插件 {plugin_name}")
             return Response().ok(None, "启用成功。").__dict__
         except Exception as e:
             logger.error(f"/api/plugin/on: {traceback.format_exc()}")
@@ -739,50 +906,83 @@ class PluginRoute(Route):
 
     async def get_plugin_readme(self):
         plugin_name = request.args.get("name")
+        repo_url = str(request.args.get("repo_url") or "").strip() or None
         logger.debug(f"正在获取插件 {plugin_name} 的README文件内容")
 
-        if not plugin_name:
-            logger.warning("插件名称为空")
-            return Response().error("插件名称不能为空").__dict__
+        if not plugin_name and not repo_url:
+            logger.warning("插件名称和仓库地址均为空")
+            return Response().error("插件名称或仓库地址不能为空").__dict__
 
-        plugin_obj = None
-        for plugin in self.plugin_manager.context.get_all_stars():
-            if plugin.name == plugin_name:
-                plugin_obj = plugin
-                break
+        legacy_plugin = self._find_legacy_plugin(plugin_name) if plugin_name else None
+        if legacy_plugin is not None:
+            if not legacy_plugin.root_dir_name:
+                logger.warning(f"插件 {plugin_name} 目录不存在")
+                return Response().error(f"插件 {plugin_name} 目录不存在").__dict__
 
-        if not plugin_obj:
-            logger.warning(f"插件 {plugin_name} 不存在")
-            return Response().error(f"插件 {plugin_name} 不存在").__dict__
+            if legacy_plugin.reserved:
+                plugin_dir = os.path.join(
+                    self.plugin_manager.reserved_plugin_path,
+                    legacy_plugin.root_dir_name,
+                )
+            else:
+                plugin_dir = os.path.join(
+                    self.plugin_manager.plugin_store_path,
+                    legacy_plugin.root_dir_name,
+                )
 
-        if not plugin_obj.root_dir_name:
-            logger.warning(f"插件 {plugin_name} 目录不存在")
-            return Response().error(f"插件 {plugin_name} 目录不存在").__dict__
+            if not os.path.isdir(plugin_dir):
+                logger.warning(f"无法找到插件目录: {plugin_dir}")
+                return Response().error(f"无法找到插件 {plugin_name} 的目录").__dict__
 
-        if plugin_obj.reserved:
-            plugin_dir = os.path.join(
-                self.plugin_manager.reserved_plugin_path,
-                plugin_obj.root_dir_name,
-            )
-        else:
-            plugin_dir = os.path.join(
-                self.plugin_manager.plugin_store_path,
-                plugin_obj.root_dir_name,
-            )
+            readme_path = os.path.join(plugin_dir, "README.md")
+            if not os.path.isfile(readme_path):
+                logger.warning(f"插件 {plugin_name} 没有README文件")
+                return Response().error(f"插件 {plugin_name} 没有README文件").__dict__
 
-        if not os.path.isdir(plugin_dir):
-            logger.warning(f"无法找到插件目录: {plugin_dir}")
-            return Response().error(f"无法找到插件 {plugin_name} 的目录").__dict__
+            try:
+                with open(readme_path, encoding="utf-8") as f:
+                    readme_content = f.read()
 
-        readme_path = os.path.join(plugin_dir, "README.md")
+                return (
+                    Response()
+                    .ok({"content": readme_content}, "成功获取README内容")
+                    .__dict__
+                )
+            except Exception as e:
+                logger.error(f"/api/plugin/readme: {traceback.format_exc()}")
+                return Response().error(f"读取README文件失败: {e!s}").__dict__
 
-        if not os.path.isfile(readme_path):
+        if repo_url is None and plugin_name:
+            repo_url = self._resolve_plugin_repo_url(plugin_name)
+
+        if repo_url is not None:
+            try:
+                readme_content = await self._fetch_github_repo_readme(repo_url)
+                return (
+                    Response()
+                    .ok({"content": readme_content}, "成功获取README内容")
+                    .__dict__
+                )
+            except Exception as exc:
+                if not plugin_name:
+                    logger.error(f"/api/plugin/readme: {traceback.format_exc()}")
+                    return Response().error(f"读取README文件失败: {exc!s}").__dict__
+                logger.warning(
+                    "从 GitHub 获取 SDK 插件 %s README 失败: %s", plugin_name, exc
+                )
+
+        plugin_dir = self._resolve_sdk_plugin_dir(plugin_name) if plugin_name else None
+        if plugin_dir is None:
+            logger.warning(f"插件 {plugin_name or repo_url} 不存在")
+            return Response().error(f"插件 {plugin_name or repo_url} 不存在").__dict__
+
+        readme_path = plugin_dir / "README.md"
+        if not readme_path.is_file():
             logger.warning(f"插件 {plugin_name} 没有README文件")
             return Response().error(f"插件 {plugin_name} 没有README文件").__dict__
 
         try:
-            with open(readme_path, encoding="utf-8") as f:
-                readme_content = f.read()
+            readme_content = readme_path.read_text(encoding="utf-8")
 
             return (
                 Response()
@@ -805,44 +1005,58 @@ class PluginRoute(Route):
             logger.warning("插件名称为空")
             return Response().error("插件名称不能为空").__dict__
 
-        # 查找插件
-        plugin_obj = None
-        for plugin in self.plugin_manager.context.get_all_stars():
-            if plugin.name == plugin_name:
-                plugin_obj = plugin
-                break
+        legacy_plugin = self._find_legacy_plugin(plugin_name)
+        if legacy_plugin is not None:
+            if not legacy_plugin.root_dir_name:
+                logger.warning(f"插件 {plugin_name} 目录不存在")
+                return Response().error(f"插件 {plugin_name} 目录不存在").__dict__
 
-        if not plugin_obj:
+            if legacy_plugin.reserved:
+                plugin_dir = os.path.join(
+                    self.plugin_manager.reserved_plugin_path,
+                    legacy_plugin.root_dir_name,
+                )
+            else:
+                plugin_dir = os.path.join(
+                    self.plugin_manager.plugin_store_path,
+                    legacy_plugin.root_dir_name,
+                )
+
+            if not os.path.isdir(plugin_dir):
+                logger.warning(f"无法找到插件目录: {plugin_dir}")
+                return Response().error(f"无法找到插件 {plugin_name} 的目录").__dict__
+
+            changelog_names = ["CHANGELOG.md", "changelog.md", "CHANGELOG", "changelog"]
+            for name in changelog_names:
+                changelog_path = os.path.join(plugin_dir, name)
+                if os.path.isfile(changelog_path):
+                    try:
+                        with open(changelog_path, encoding="utf-8") as f:
+                            changelog_content = f.read()
+                        return (
+                            Response()
+                            .ok({"content": changelog_content}, "成功获取更新日志")
+                            .__dict__
+                        )
+                    except Exception as e:
+                        logger.error(f"/api/plugin/changelog: {traceback.format_exc()}")
+                        return Response().error(f"读取更新日志失败: {e!s}").__dict__
+
+            logger.warning(f"插件 {plugin_name} 没有更新日志文件")
+            return Response().ok({"content": None}, "该插件没有更新日志文件").__dict__
+
+        plugin_dir = self._resolve_sdk_plugin_dir(plugin_name)
+        if plugin_dir is None:
             logger.warning(f"插件 {plugin_name} 不存在")
             return Response().error(f"插件 {plugin_name} 不存在").__dict__
-
-        if not plugin_obj.root_dir_name:
-            logger.warning(f"插件 {plugin_name} 目录不存在")
-            return Response().error(f"插件 {plugin_name} 目录不存在").__dict__
-
-        if plugin_obj.reserved:
-            plugin_dir = os.path.join(
-                self.plugin_manager.reserved_plugin_path,
-                plugin_obj.root_dir_name,
-            )
-        else:
-            plugin_dir = os.path.join(
-                self.plugin_manager.plugin_store_path,
-                plugin_obj.root_dir_name,
-            )
-
-        if not os.path.isdir(plugin_dir):
-            logger.warning(f"无法找到插件目录: {plugin_dir}")
-            return Response().error(f"无法找到插件 {plugin_name} 的目录").__dict__
 
         # 尝试多种可能的文件名
         changelog_names = ["CHANGELOG.md", "changelog.md", "CHANGELOG", "changelog"]
         for name in changelog_names:
-            changelog_path = os.path.join(plugin_dir, name)
-            if os.path.isfile(changelog_path):
+            changelog_path = plugin_dir / name
+            if changelog_path.is_file():
                 try:
-                    with open(changelog_path, encoding="utf-8") as f:
-                        changelog_content = f.read()
+                    changelog_content = changelog_path.read_text(encoding="utf-8")
                     return (
                         Response()
                         .ok({"content": changelog_content}, "成功获取更新日志")
