@@ -1,6 +1,6 @@
 [project]
 name = "AstrBot"
-version = "4.23.1"
+version = "4.25.2"
 description = "Easy-to-use multi-platform LLM chatbot and development framework"
 readme = "README.md"
 license = { text = "AGPL-3.0-or-later" }
@@ -30,6 +30,7 @@ dependencies = [
   "httpx[socks]>=0.28.1",
   "lark-oapi>=1.4.15",
   "mcp>=1.8.0",
+  "msgpack>=1.1.1",
   "openai>=1.78.0",
   "ormsgpack>=1.9.1",
   "pillow>=11.2.1",

@@ -1,7 +1,11 @@
 """Tests for astrbot.core.star.base module."""
 
-import pytest
+import json
+import subprocess
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 class TestStarBase:
@@ -146,14 +150,11 @@ class TestStarBase:
 
     def test_star_metadata_registration(self):
         """Test that Star subclass is automatically registered."""
-        from astrbot.core.star import star_map, star_registry
-        from astrbot.core.star.star import StarMetadata
-
-        # Clear any previous registration for this test module
-        module_path = __name__
+        from astrbot.core.star import star_registry
 
         class UniqueTestStar:
             """Not a Star subclass, should not be registered."""
+
             pass
 
         # Verify Star subclass gets registered
@@ -166,6 +167,30 @@ class TestStarBase:
 
 class TestNoCircularImports:
     """Test that there are no circular import issues."""
+
+    def test_import_api_does_not_preload_core_registration(self):
+        """Importing the public API facade should not initialize core registries."""
+        script = """
+import json
+import sys
+
+import astrbot.api
+
+print(json.dumps({
+    "star_register": "astrbot.core.star.register" in sys.modules,
+    "provider": "astrbot.core.provider" in sys.modules,
+}))
+"""
+        output = subprocess.check_output(
+            [sys.executable, "-c", script],
+            text=True,
+        )
+        loaded_modules = json.loads(output)
+
+        assert loaded_modules == {
+            "star_register": False,
+            "provider": False,
+        }
 
     def test_import_star_module(self):
         """Test that star module can be imported without circular import errors."""
@@ -185,8 +210,10 @@ class TestNoCircularImports:
         import astrbot.core.star
 
         # Verify key exports are available
-        from astrbot.core.star import Context, Star, PluginManager
+        from astrbot.core.star import Context, PluginManager, Star
 
+        assert astrbot.core.pipeline is not None
+        assert astrbot.core.star is not None
         assert Context is not None
         assert Star is not None
         assert PluginManager is not None

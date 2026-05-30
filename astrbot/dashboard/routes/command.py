@@ -22,7 +22,7 @@ class CommandRoute(Route):
     def __init__(
         self,
         context: RouteContext,
-        core_lifecycle: AstrBotCoreLifecycle,
+        core_lifecycle: AstrBotCoreLifecycle | None = None,
     ) -> None:
         super().__init__(context)
         self.core_lifecycle = core_lifecycle
@@ -42,7 +42,18 @@ class CommandRoute(Route):
             "disabled": len([cmd for cmd in commands if not cmd["enabled"]]),
             "conflicts": len([cmd for cmd in commands if cmd.get("has_conflict")]),
         }
-        return Response().ok({"items": commands, "summary": summary}).__dict__
+        # 优先从指定 config_id 的配置中读取唤醒词，否则使用默认配置
+        config_id = request.args.get("config_id", "").strip()
+        wake_prefix = self.config.get("wake_prefix", ["/"])
+        if config_id and self.core_lifecycle:
+            acm = getattr(self.core_lifecycle, "astrbot_config_mgr", None)
+            if acm and config_id in acm.confs:
+                wake_prefix = acm.confs[config_id].get("wake_prefix", wake_prefix)
+        return (
+            Response()
+            .ok({"items": commands, "summary": summary, "wake_prefix": wake_prefix})
+            .__dict__
+        )
 
     async def get_conflicts(self):
         conflicts = await _list_dashboard_conflicts(self.core_lifecycle)
