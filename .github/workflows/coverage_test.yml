@@ -28,6 +28,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pytest pytest-asyncio pytest-cov
+          pip install --editable ./astrbot-sdk
           pip install --editable .
 
       - name: Run tests

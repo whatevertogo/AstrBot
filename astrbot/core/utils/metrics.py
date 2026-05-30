@@ -6,10 +6,19 @@ import uuid
 from contextlib import suppress
 from typing import Any
 
-import aiohttp
-
-from astrbot.core import db_helper, logger
 from astrbot.core.config import VERSION
+
+
+def _get_aiohttp():
+    import aiohttp
+
+    return aiohttp
+
+
+def _get_runtime_dependencies():
+    from astrbot.core import db_helper, logger
+
+    return db_helper, logger
 
 
 class Metric:
@@ -106,6 +115,7 @@ class Metric:
 
     @staticmethod
     async def _save_platform_stats(kwargs: dict[str, Any]) -> None:
+        db_helper, logger = _get_runtime_dependencies()
         try:
             if "adapter_name" in kwargs:
                 await db_helper.insert_platform_stats(
@@ -203,6 +213,7 @@ class Metric:
         payload = {"metrics_data": payload_metrics}
 
         try:
+            aiohttp = _get_aiohttp()
             async with aiohttp.ClientSession(trust_env=True) as session:
                 async with session.post(base_url, json=payload, timeout=3) as response:
                     if response.status != 200:

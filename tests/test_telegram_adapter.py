@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import importlib
 import sys
@@ -80,7 +82,7 @@ def _build_context() -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_telegram_document_caption_populates_message_text_and_plain():
+async def test_telegram_document_caption_populates_message_text_and_plain() -> None:
     TelegramPlatformAdapter = _load_telegram_adapter()
     adapter = TelegramPlatformAdapter(
         make_platform_config("telegram"),
@@ -113,7 +115,7 @@ async def test_telegram_document_caption_populates_message_text_and_plain():
 
 
 @pytest.mark.asyncio
-async def test_telegram_video_caption_populates_message_text_and_plain():
+async def test_telegram_video_caption_populates_message_text_and_plain() -> None:
     TelegramPlatformAdapter = _load_telegram_adapter()
     adapter = TelegramPlatformAdapter(
         make_platform_config("telegram"),

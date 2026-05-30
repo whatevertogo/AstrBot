@@ -5,8 +5,6 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-import aiohttp
-
 from astrbot.core.config import VERSION
 from astrbot.core.utils.http_ssl import build_tls_connector
 from astrbot.core.utils.io import download_image_by_url
@@ -22,6 +20,12 @@ JINJA_RAW_OPEN_PATTERN = re.compile(r"{%-?\s*raw\s*-?%}")
 JINJA_RAW_CLOSE_PATTERN = re.compile(r"{%-?\s*endraw\s*-?%}")
 
 logger = logging.getLogger("astrbot")
+
+
+def _get_aiohttp():
+    import aiohttp
+
+    return aiohttp
 
 
 @lru_cache(maxsize=1)
@@ -113,6 +117,7 @@ class NetworkRenderStrategy(RenderStrategy):
     async def get_official_endpoints(self) -> None:
         """获取官方的 t2i 端点列表。"""
         try:
+            aiohttp = _get_aiohttp()
             async with aiohttp.ClientSession(
                 trust_env=True,
                 connector=build_tls_connector(),
@@ -173,6 +178,7 @@ class NetworkRenderStrategy(RenderStrategy):
         last_exception = None
         for endpoint in endpoints:
             try:
+                aiohttp = _get_aiohttp()
                 if return_url:
                     async with (
                         aiohttp.ClientSession(

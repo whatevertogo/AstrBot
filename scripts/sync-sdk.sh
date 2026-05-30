@@ -75,6 +75,25 @@ assert_remote_path() {
   test_git_object_path "$revision" "$path" || fail "Remote snapshot '$revision' is missing '$path'. $reason"
 }
 
+test_subtree_registered() {
+  local prefix="$1"
+  local pattern
+  pattern="^git-subtree-dir:[[:space:]]+${prefix}$"
+
+  git log --format=%B --grep="$pattern" --perl-regexp -n 1 HEAD >/dev/null 2>&1
+}
+
+assert_subtree_registered() {
+  local prefix="$1"
+
+  test_subtree_registered "$prefix" || fail "Path '$prefix' exists locally, but the current branch does not contain git-subtree metadata for it.
+This usually means the SDK snapshot was copied in directly instead of being created with 'git subtree add',
+so 'git subtree pull' cannot work on this branch yet.
+
+Rebootstrap '$prefix' as a real subtree on this branch (or merge/cherry-pick the subtree bootstrap commit)
+before running this sync script again."
+}
+
 should_wait_before_exit() {
   [[ "$no_wait" != "1" ]] || return 1
   [[ -t 0 && -t 1 ]] || return 1
@@ -114,6 +133,7 @@ done
 
 assert_remote_exists "$remote_name"
 assert_clean_worktree
+assert_subtree_registered "$prefix"
 
 echo "Fetching ${remote_name}/${remote_branch}..."
 run_git fetch "$remote_name" "$remote_branch"

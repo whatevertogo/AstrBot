@@ -11,7 +11,6 @@ import uuid
 import zipfile
 from pathlib import Path
 
-import aiohttp
 import certifi
 import psutil
 from PIL import Image
@@ -20,6 +19,12 @@ from .astrbot_path import get_astrbot_data_path, get_astrbot_path, get_astrbot_t
 from .version_comparator import VersionComparator
 
 logger = logging.getLogger("astrbot")
+
+
+def _get_aiohttp():
+    import aiohttp
+
+    return aiohttp
 
 
 def on_error(func, path, exc_info) -> None:
@@ -97,6 +102,7 @@ async def download_image_by_url(
     path: str | None = None,
 ) -> str:
     """下载图片, 返回 path"""
+    aiohttp = _get_aiohttp()
     try:
         ssl_context = ssl.create_default_context(
             cafile=certifi.where(),
@@ -165,6 +171,7 @@ async def download_file(
     progress_callback=None,
 ) -> None:
     """从指定 url 下载文件到指定路径 path"""
+    aiohttp = _get_aiohttp()
     try:
         ssl_context = ssl.create_default_context(
             cafile=certifi.where(),
@@ -421,6 +428,7 @@ async def download_dashboard(
         except BaseException as _:
             if latest:
                 # Resolve latest release tag from GitHub API to construct correct asset URL
+                aiohttp = _get_aiohttp()
                 ssl_context = ssl.create_default_context(cafile=certifi.where())
                 async with aiohttp.ClientSession(
                     connector=aiohttp.TCPConnector(ssl=ssl_context),

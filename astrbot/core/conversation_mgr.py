@@ -4,6 +4,7 @@
 在一个会话中可以建立多个对话, 并且支持对话的切换和删除
 """
 
+import inspect
 import json
 from collections.abc import Awaitable, Callable
 
@@ -263,6 +264,8 @@ class ConversationManager:
         title: str | None = None,
         persona_id: str | None = None,
         token_usage: int | None = None,
+        *,
+        clear_persona: bool = False,
     ) -> None:
         """更新会话的对话.
 
@@ -273,17 +276,32 @@ class ConversationManager:
             token_usage (int | None): token 使用量。None 表示不更新
 
         """
+        # TODO(compat): Keep clear_persona keyword-only until external plugins
+        # have fully migrated away from positional update_conversation calls.
         if not conversation_id:
             # 如果没有提供 conversation_id，则获取当前的
             conversation_id = await self.get_curr_conversation_id(unified_msg_origin)
         if conversation_id:
-            await self.db.update_conversation(
-                cid=conversation_id,
-                title=title,
-                persona_id=persona_id,
-                content=history,
-                token_usage=token_usage,
-            )
+            update_kwargs = {
+                "cid": conversation_id,
+                "title": title,
+                "persona_id": persona_id,
+                "content": history,
+                "token_usage": token_usage,
+            }
+            if clear_persona and self._db_update_supports_clear_persona():
+                update_kwargs["clear_persona"] = True
+            await self.db.update_conversation(**update_kwargs)
+
+    def _db_update_supports_clear_persona(self) -> bool:
+        try:
+            signature = inspect.signature(self.db.update_conversation)
+        except (TypeError, ValueError):
+            return True
+        return "clear_persona" in signature.parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
 
     async def update_conversation_title(
         self,
@@ -327,6 +345,19 @@ class ConversationManager:
             unified_msg_origin=unified_msg_origin,
             conversation_id=conversation_id,
             persona_id=persona_id,
+        )
+
+    async def unset_conversation_persona(
+        self,
+        unified_msg_origin: str,
+        conversation_id: str | None = None,
+    ) -> None:
+        """Clear the conversation-specific persona override and fall back to default."""
+
+        await self.update_conversation(
+            unified_msg_origin=unified_msg_origin,
+            conversation_id=conversation_id,
+            clear_persona=True,
         )
 
     async def add_message_pair(

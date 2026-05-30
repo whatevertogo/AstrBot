@@ -486,24 +486,24 @@ async def _sync_skills_to_sandbox(booter: ComputerBooter) -> None:
     Backward-compatible orchestrator: keep historical behavior while internally
     splitting into `apply` and `scan` phases.
     """
-    sync_skill_dirs = _collect_sync_skill_dirs()
+    skills_root = Path(get_astrbot_skills_path())
+    skill_manager = SkillManager(skills_root=str(skills_root))
 
     temp_dir = Path(get_astrbot_temp_path())
     temp_dir.mkdir(parents=True, exist_ok=True)
-    zip_base = temp_dir / "skills_bundle"
+    bundle_id = uuid.uuid4().hex
+    zip_base = temp_dir / f"skills_bundle_{bundle_id}"
     zip_path = zip_base.with_suffix(".zip")
-    bundle_root = temp_dir / f"skills_bundle_{uuid.uuid4().hex}"
+    bundle_root = temp_dir / f"skills_bundle_{bundle_id}"
 
     try:
-        if sync_skill_dirs:
+        if bundle_root.exists():
+            shutil.rmtree(bundle_root)
+        bundled_sources = skill_manager.materialize_local_skill_bundle(bundle_root)
+        if bundled_sources:
             if zip_path.exists():
                 zip_path.unlink()
-            if bundle_root.exists():
-                shutil.rmtree(bundle_root)
-            bundle_root.mkdir(parents=True)
-            for skill_name, skill_dir in sync_skill_dirs:
-                shutil.copytree(skill_dir, bundle_root / skill_name)
-            shutil.make_archive(str(zip_base), "zip", str(bundle_root))
+            shutil.make_archive(str(zip_base), "zip", root_dir=str(bundle_root))
             remote_zip = Path(SANDBOX_SKILLS_ROOT) / "skills.zip"
             logger.info("Uploading skills bundle to sandbox...")
             await booter.shell.exec(f"mkdir -p {SANDBOX_SKILLS_ROOT}")

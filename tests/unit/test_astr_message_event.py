@@ -14,7 +14,7 @@ from astrbot.core.message.components import (
     Plain,
     Reply,
 )
-from astrbot.core.message.message_event_result import MessageEventResult
+from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
 from astrbot.core.platform.message_type import MessageType
@@ -556,6 +556,35 @@ class TestResultHelpers:
         assert len(result.chain) == 1
         assert isinstance(result.chain[0], Image)
 
+    def test_message_chain_behaves_like_sequence(self):
+        """Test MessageChain exposes the list operations used by core stages."""
+        chain = MessageChain([Plain("Hello"), Plain("World")])
+
+        assert len(chain) == 2
+        assert [
+            component.text for component in chain if isinstance(component, Plain)
+        ] == [
+            "Hello",
+            "World",
+        ]
+
+        chain.insert(1, Plain("SDK"))
+        chain[0] = Plain("Hi")
+
+        assert chain[0].text == "Hi"
+        assert chain[1].text == "SDK"
+
+    def test_outline_chain_accepts_message_chain(self, astr_message_event):
+        """Test _outline_chain accepts MessageChain instances from SDK results."""
+        chain = MessageChain(
+            [Plain("Hello"), Image.fromURL("http://example.com/a.png")]
+        )
+
+        outline = astr_message_event._outline_chain(chain)
+
+        assert "Hello" in outline
+        assert "[图片]" in outline
+
 
 class TestGetResult:
     """Tests for get_result and clear_result methods."""
@@ -590,6 +619,12 @@ class TestShouldCallLlm:
         """Test should_call_llm sets call_llm."""
         astr_message_event.should_call_llm(True)
         assert astr_message_event.call_llm is True
+
+    def test_should_call_default_llm_uses_positive_semantics(self, astr_message_event):
+        """Test the positive helper reports whether default LLM execution is allowed."""
+        assert astr_message_event.should_call_default_llm() is True
+        astr_message_event.disable_default_llm(True)
+        assert astr_message_event.should_call_default_llm() is False
 
 
 class TestRequestLlm:
@@ -639,6 +674,12 @@ class TestSendStreaming:
             await astr_message_event.send_streaming(generator())
 
         assert astr_message_event._has_send_oper is True
+
+    def test_mark_send_operation_helper_sets_flag(self, astr_message_event):
+        """Test explicit send-operation marker updates the tracking flag."""
+        assert astr_message_event.has_send_operation() is False
+        astr_message_event.mark_send_operation()
+        assert astr_message_event.has_send_operation() is True
 
 
 class TestSendTyping:
